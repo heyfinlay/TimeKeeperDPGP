@@ -1,18 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  AlertTriangle,
-  CheckCircle2,
   Clock,
-  Download,
   Flag,
   ListChecks,
-  PauseCircle,
   Play,
-  PlayCircle,
   Save,
   Settings,
   ShieldAlert,
-  TimerReset,
   Users,
   X,
 } from 'lucide-react';
@@ -98,12 +92,26 @@ const DEFAULT_DRIVERS = [
 const EVENT_TYPES = ['Practice', 'Qualifying', 'Race'];
 
 const FLAG_OPTIONS = [
-  { id: 'green', label: 'Green', color: 'bg-green-600 hover:bg-green-700' },
-  { id: 'yellow', label: 'Yellow', color: 'bg-yellow-500 hover:bg-yellow-600' },
-  { id: 'vsc', label: 'VSC', color: 'bg-emerald-600 hover:bg-emerald-700' },
-  { id: 'sc', label: 'SC', color: 'bg-amber-500 hover:bg-amber-600' },
-  { id: 'red', label: 'Red', color: 'bg-red-600 hover:bg-red-700' },
-  { id: 'green-check', label: 'Resume', color: 'bg-blue-600 hover:bg-blue-700' },
+  { id: 'green', label: 'Green', color: 'bg-green-600 hover:bg-green-500' },
+  {
+    id: 'yellow',
+    label: 'Yellow',
+    color: 'bg-yellow-500 text-black hover:bg-yellow-400',
+  },
+  { id: 'sc', label: 'SC', color: 'bg-amber-500 text-black hover:bg-amber-400' },
+  { id: 'vsc', label: 'VSC', color: 'bg-emerald-600 hover:bg-emerald-500' },
+  { id: 'red', label: 'Red', color: 'bg-red-600 hover:bg-red-500' },
+  { id: 'checkered', label: 'Checkered', color: 'bg-violet-600 hover:bg-violet-500' },
+  { id: 'green-check', label: 'Resume', color: 'bg-cyan-500 text-black hover:bg-cyan-400' },
+];
+
+const FLAG_SELECT_OPTIONS = [
+  { id: 'green', label: 'Green' },
+  { id: 'yellow', label: 'Yellow' },
+  { id: 'sc', label: 'SC' },
+  { id: 'vsc', label: 'VSC' },
+  { id: 'red', label: 'Red' },
+  { id: 'checkered', label: 'Checkered' },
 ];
 
 const DRIVER_FLAG_OPTIONS = [
@@ -111,6 +119,8 @@ const DRIVER_FLAG_OPTIONS = [
   { id: 'blue', label: 'Blue Flag' },
   { id: 'blackwhite', label: 'Black & White' },
 ];
+
+const HOTKEYS = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '0'];
 
 const toDriverState = (driver) => ({
   ...driver,
@@ -189,10 +199,12 @@ const TimingPanel = () => {
   const [setupDraft, setSetupDraft] = useState(null);
   const [countdown, setCountdown] = useState(5);
   const [raceTime, setRaceTime] = useState(0);
+  const [recentLapDriverId, setRecentLapDriverId] = useState(null);
 
   const raceStartRef = useRef(null);
   const pauseStartRef = useRef(null);
   const pausedDurationRef = useRef(0);
+  const lapFlashTimeoutRef = useRef(null);
 
   useEffect(() => {
     let interval;
@@ -238,6 +250,15 @@ const TimingPanel = () => {
     window.addEventListener('keydown', handleKeyPress);
     return () => window.removeEventListener('keydown', handleKeyPress);
   }, [drivers, isTiming, isPaused]);
+
+  useEffect(
+    () => () => {
+      if (lapFlashTimeoutRef.current) {
+        clearTimeout(lapFlashTimeoutRef.current);
+      }
+    },
+    [],
+  );
 
   const logAction = (action, marshalId = 'Race Control') => {
     setLogs((prev) => [
@@ -379,6 +400,13 @@ const TimingPanel = () => {
       }),
     );
     setManualLapInputs((prev) => ({ ...prev, [driverId]: '' }));
+    if (lapFlashTimeoutRef.current) {
+      clearTimeout(lapFlashTimeoutRef.current);
+    }
+    setRecentLapDriverId(driverId);
+    lapFlashTimeoutRef.current = setTimeout(() => {
+      setRecentLapDriverId(null);
+    }, 500);
   };
 
   const retireDriver = (driverId) => {
@@ -516,6 +544,13 @@ const TimingPanel = () => {
     return sorted;
   }, [drivers, eventConfig.eventType]);
 
+  const activeFlag = useMemo(
+    () => FLAG_OPTIONS.find((flag) => flag.id === flagStatus),
+    [flagStatus],
+  );
+
+  const flagDropdownValue = flagStatus === 'green-check' ? 'green' : flagStatus;
+
   const openSetup = () => {
     setSetupDraft({
       eventType: eventConfig.eventType,
@@ -640,403 +675,446 @@ const TimingPanel = () => {
   };
 
   return (
-    <div className="min-h-screen bg-gray-900 text-white p-6">
-      <div className="max-w-7xl mx-auto space-y-6">
-        <header className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-          <div>
-            <h1 className="text-3xl font-bold text-blue-400">DayBreak Grand Prix</h1>
-            <p className="text-gray-400">Timing &amp; Scoring Control Panel</p>
-            <p className="text-xs text-gray-500">
-              Every action is logged with marshal accountability.
+    <div className="min-h-screen bg-[#0B0F19] text-white">
+      <header className="sticky top-0 z-30 border-b border-neutral-800 bg-[#0B0F19]/90 backdrop-blur">
+        <div className="mx-auto flex max-w-7xl flex-col gap-4 px-6 py-4 md:grid md:grid-cols-[1fr_auto_1fr] md:items-center">
+          <div className="flex flex-col gap-1">
+            <h1 className="text-2xl font-semibold text-[#9FF7D3]">DayBreak Grand Prix</h1>
+            <p className="text-[11px] uppercase tracking-[0.35em] text-neutral-500">
+              Timing Control Panel
             </p>
           </div>
-          <div className="flex flex-wrap items-center gap-4">
-            <div className="flex items-center gap-2 bg-gray-800 rounded px-4 py-2">
-              <Clock className="w-5 h-5" />
-              <span className="text-2xl font-mono">{formatRaceClock(raceTime)}</span>
-              {isPaused && (
-                <span className="ml-2 rounded bg-amber-500 px-2 py-1 text-xs font-semibold text-black">
-                  PAUSED
+          <div className="flex flex-col items-center justify-center gap-1 text-center">
+            <div className="flex items-center gap-2 text-[#9FF7D3]">
+              <Clock className="h-5 w-5" />
+              <span className="font-mono text-2xl">{formatRaceClock(raceTime)}</span>
+            </div>
+            <span className="text-[11px] uppercase tracking-[0.3em] text-neutral-400">
+              {procedurePhase.replace('-', ' ')}
+              {isPaused ? ' • paused' : ''}
+            </span>
+          </div>
+          <div className="flex items-center justify-end gap-3">
+            <div className="flex items-center gap-2 rounded-full border border-neutral-700 bg-neutral-900/70 px-3 py-1.5 text-[11px] uppercase tracking-wide text-neutral-300">
+              <Flag className="h-4 w-4 text-[#9FF7D3]" />
+              <span>{activeFlag?.label ?? flagStatus}</span>
+            </div>
+            <select
+              value={flagDropdownValue}
+              onChange={(event) => handleFlagChange(event.target.value)}
+              className="rounded-full border border-neutral-700 bg-neutral-900/70 px-3 py-1.5 text-xs uppercase tracking-wide text-neutral-200 focus:outline-none focus:ring-2 focus:ring-[#7C6BFF]"
+            >
+              {FLAG_SELECT_OPTIONS.map((option) => (
+                <option key={option.id} value={option.id}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+            <button
+              onClick={openSetup}
+              className="flex h-9 w-9 items-center justify-center rounded-full border border-neutral-700 bg-neutral-900/80 text-neutral-300 transition hover:border-[#9FF7D3] hover:text-[#9FF7D3]"
+            >
+              <Settings className="h-4 w-4" />
+            </button>
+          </div>
+        </div>
+      </header>
+      <main className="mx-auto max-w-7xl space-y-6 px-6 py-6">
+        <section className="rounded-2xl border border-neutral-800 bg-[#11182c]/80 p-4 shadow-[0_18px_48px_-30px_rgba(124,107,255,0.45)]">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="text-sm text-neutral-400">
+              <span className="font-semibold text-[#9FF7D3]">{eventConfig.eventType}</span>
+              <span className="mx-2 text-neutral-600">•</span>
+              <span>{eventConfig.totalLaps} laps target</span>
+              <span className="mx-2 text-neutral-600">•</span>
+              <span>{eventConfig.totalDuration} min duration</span>
+            </div>
+            <div className="flex flex-wrap gap-2 text-xs">
+              {procedurePhase === 'setup' && (
+                <button
+                  onClick={startWarmup}
+                  className="h-9 rounded-lg border border-neutral-700 bg-[#1a2238] px-3 font-semibold uppercase tracking-wide text-neutral-200 transition hover:border-[#9FF7D3]"
+                >
+                  Warm Up
+                </button>
+              )}
+              {procedurePhase === 'warmup' && (
+                <button
+                  onClick={callFinalCall}
+                  className="h-9 rounded-lg border border-amber-400/40 bg-amber-500/20 px-3 font-semibold uppercase tracking-wide text-amber-200 transition hover:border-amber-200"
+                >
+                  Final Call
+                </button>
+              )}
+              {procedurePhase === 'final-call' && (
+                <span className="flex h-9 items-center justify-center rounded-lg border border-neutral-700 bg-neutral-900/80 px-3 font-semibold uppercase tracking-wide text-neutral-300">
+                  Grid Ready
+                </span>
+              )}
+              {procedurePhase === 'countdown' && (
+                <span className="flex h-9 items-center justify-center rounded-lg border border-neutral-700 bg-neutral-900/80 px-3 font-semibold uppercase tracking-wide text-neutral-300">
+                  Starting in {countdown}s
+                </span>
+              )}
+              {procedurePhase === 'green' && (
+                <button
+                  onClick={finishSession}
+                  className="h-9 rounded-lg border border-[#9FF7D3]/50 bg-[#9FF7D3]/20 px-3 font-semibold uppercase tracking-wide text-[#9FF7D3] transition hover:border-[#9FF7D3]"
+                >
+                  Complete Session
+                </button>
+              )}
+              {procedurePhase === 'complete' && (
+                <span className="flex h-9 items-center justify-center rounded-lg border border-green-400/60 bg-green-500/20 px-3 font-semibold uppercase tracking-wide text-green-200">
+                  Completed
                 </span>
               )}
             </div>
-            <div
-              className={`flex items-center gap-2 rounded px-4 py-2 capitalize ${
-                flagStatus === 'green'
-                  ? 'bg-green-600'
-                  : flagStatus === 'yellow'
-                    ? 'bg-yellow-500 text-black'
-                    : flagStatus === 'red'
-                      ? 'bg-red-600'
-                      : flagStatus === 'sc'
-                        ? 'bg-amber-600'
-                        : flagStatus === 'vsc'
-                          ? 'bg-emerald-600'
-                          : 'bg-blue-600'
-              }`}
+          </div>
+          <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6">
+            <button
+              onClick={initiateCountdown}
+              disabled={procedurePhase !== 'final-call'}
+              className="h-10 rounded-lg border border-[#9FF7D3]/40 bg-[#9FF7D3]/10 px-3 text-xs font-semibold uppercase tracking-wide text-[#9FF7D3] transition hover:border-[#9FF7D3] disabled:cursor-not-allowed disabled:opacity-40"
             >
-              <Flag className="w-5 h-5" />
-              <span className="font-semibold">{flagStatus}</span>
-            </div>
-            <div className="bg-gray-800 px-4 py-2 rounded text-sm">
-              <span className="text-gray-400 mr-2">Session</span>
-              <span className="font-semibold capitalize">{procedurePhase.replace('-', ' ')}</span>
-            </div>
+              Start Timer
+            </button>
+            <button
+              onClick={confirmPause}
+              disabled={!isTiming || isPaused}
+              className="h-10 rounded-lg border border-neutral-700 bg-neutral-900/80 px-3 text-xs font-semibold uppercase tracking-wide text-neutral-200 transition hover:border-[#9FF7D3] disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              Pause Timer
+            </button>
+            <button
+              onClick={resumeTiming}
+              disabled={!isPaused}
+              className="h-10 rounded-lg border border-[#7C6BFF]/50 bg-[#7C6BFF]/20 px-3 text-xs font-semibold uppercase tracking-wide text-[#beb4ff] transition hover:border-[#9FF7D3] disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              Resume Timer
+            </button>
+            <button
+              onClick={finishSession}
+              disabled={procedurePhase !== 'green'}
+              className="h-10 rounded-lg border border-green-400/40 bg-green-500/20 px-3 text-xs font-semibold uppercase tracking-wide text-green-200 transition hover:border-green-200 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              Reset Timer
+            </button>
+            <button
+              onClick={exportResults}
+              className="h-10 rounded-lg border border-neutral-700 bg-neutral-900/80 px-3 text-xs font-semibold uppercase tracking-wide text-neutral-200 transition hover:border-[#9FF7D3]"
+            >
+              Export CSV
+            </button>
             <button
               onClick={openSetup}
-              className="flex items-center gap-2 rounded bg-gray-800 px-4 py-2 hover:bg-gray-700"
+              className="h-10 rounded-lg border border-neutral-700 bg-neutral-900/80 px-3 text-xs font-semibold uppercase tracking-wide text-neutral-200 transition hover:border-[#9FF7D3]"
             >
-              <Settings className="w-4 h-4" />
-              Settings
+              Session Setup
             </button>
-          </div>
-        </header>
-
-        <section className="grid gap-4 md:grid-cols-3">
-          <div className="bg-gray-800 rounded-lg p-4 space-y-4 md:col-span-2">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <p className="text-xs uppercase tracking-wide text-gray-400">
-                  Event Configuration
-                </p>
-                <p className="text-lg font-semibold">
-                  {eventConfig.eventType} • Target {eventConfig.totalLaps} Laps • {eventConfig.totalDuration} min
-                </p>
-              </div>
-              <div className="flex flex-wrap gap-2">
-                {procedurePhase === 'setup' && (
-                  <button
-                    onClick={startWarmup}
-                    className="flex items-center gap-2 rounded bg-blue-600 px-3 py-2 text-sm hover:bg-blue-700"
-                  >
-                    <Play className="w-4 h-4" /> Warm Up
-                  </button>
-                )}
-                {procedurePhase === 'warmup' && (
-                  <button
-                    onClick={callFinalCall}
-                    className="flex items-center gap-2 rounded bg-amber-600 px-3 py-2 text-sm hover:bg-amber-700"
-                  >
-                    <AlertTriangle className="w-4 h-4" /> Final Call
-                  </button>
-                )}
-                {procedurePhase === 'final-call' && (
-                  <button
-                    onClick={initiateCountdown}
-                    className="flex items-center gap-2 rounded bg-orange-600 px-3 py-2 text-sm hover:bg-orange-700"
-                  >
-                    <TimerReset className="w-4 h-4" /> Start Countdown
-                  </button>
-                )}
-                {procedurePhase === 'countdown' && (
-                  <button
-                    disabled
-                    className="flex items-center gap-2 rounded bg-gray-700 px-3 py-2 text-sm"
-                  >
-                    <Clock className="w-4 h-4" /> Starting in {countdown}s
-                  </button>
-                )}
-                {procedurePhase === 'green' && (
-                  <button
-                    onClick={finishSession}
-                    className="flex items-center gap-2 rounded bg-gray-700 px-3 py-2 text-sm hover:bg-gray-600"
-                  >
-                    <Flag className="w-4 h-4" /> Finish Session
-                  </button>
-                )}
-                {procedurePhase === 'complete' && (
-                  <span className="flex items-center gap-2 rounded bg-green-600 px-3 py-2 text-sm">
-                    <CheckCircle2 className="w-4 h-4" /> Completed
-                  </span>
-                )}
-                <button
-                  onClick={exportResults}
-                  className="flex items-center gap-2 rounded bg-gray-700 px-3 py-2 text-sm hover:bg-gray-600"
-                >
-                  <Download className="w-4 h-4" /> Export
-                </button>
-              </div>
-            </div>
-            <div className="flex flex-wrap items-center gap-2">
+            {FLAG_OPTIONS.filter((flag) => flag.id !== 'green-check').map((flag) => (
               <button
-                onClick={confirmPause}
-                disabled={!isTiming || isPaused}
-                className="flex items-center gap-2 rounded bg-gray-700 px-3 py-2 text-sm hover:bg-gray-600 disabled:cursor-not-allowed disabled:opacity-50"
+                key={flag.id}
+                onClick={() => handleFlagChange(flag.id)}
+                className={`h-10 rounded-lg text-xs font-semibold uppercase tracking-wide transition ${flag.color} ${
+                  flagStatus === flag.id ? 'ring-2 ring-offset-2 ring-offset-[#0B0F19]' : ''
+                }`}
               >
-                <PauseCircle className="w-4 h-4" /> Pause Timer
+                {flag.label}
               </button>
+            ))}
+            {procedurePhase === 'suspended' && (
               <button
-                onClick={resumeTiming}
-                disabled={!isPaused}
-                className="flex items-center gap-2 rounded bg-gray-700 px-3 py-2 text-sm hover:bg-gray-600 disabled:cursor-not-allowed disabled:opacity-50"
+                onClick={() => handleFlagChange('green-check')}
+                className={`h-10 rounded-lg text-xs font-semibold uppercase tracking-wide transition ${
+                  FLAG_OPTIONS.find((flag) => flag.id === 'green-check')?.color ?? ''
+                }`}
               >
-                <PlayCircle className="w-4 h-4" /> Resume Timer
+                Resume
               </button>
-            </div>
-            <div>
-              <p className="mb-2 text-sm font-semibold uppercase tracking-wide text-gray-400">
-                Flag Control
-              </p>
-              <div className="flex flex-wrap gap-2">
-                {FLAG_OPTIONS.map((flag) => (
-                  <button
-                    key={flag.id}
-                    onClick={() => handleFlagChange(flag.id)}
-                    className={`rounded px-3 py-2 text-sm font-semibold ${flag.color}`}
-                  >
-                    {flag.label}
-                  </button>
-                ))}
-              </div>
-            </div>
+            )}
           </div>
-
-          <div className="bg-gray-800 rounded-lg p-4 space-y-3">
-            <div className="flex items-center justify-between">
-              <h3 className="text-sm font-semibold uppercase tracking-wide text-gray-400">
-                Marshal Assignments
-              </h3>
-              <Users className="w-4 h-4 text-gray-500" />
-            </div>
-            <ul className="space-y-2 text-sm">
-              {eventConfig.marshals.map((marshal) => {
-                const assignedDrivers = drivers.filter(
-                  (driver) => driver.marshalId === marshal.id,
-                );
-                return (
-                  <li
-                    key={marshal.id}
-                    className="rounded border border-gray-700 p-3 text-gray-300"
-                  >
-                    <div className="flex items-center justify-between text-xs uppercase tracking-wide text-gray-400">
-                      <span>{marshal.name}</span>
-                      <span>{assignedDrivers.length} Drivers</span>
-                    </div>
-                    <div className="mt-2 flex flex-wrap gap-2">
-                      {assignedDrivers.map((driver) => (
-                        <span
-                          key={driver.id}
-                          className="rounded bg-gray-700 px-2 py-1 text-xs"
-                        >
-                          #{driver.number} {driver.name}
-                        </span>
-                      ))}
-                    </div>
-                  </li>
-                );
-              })}
-            </ul>
-          </div>
+          <p className="mt-3 text-[11px] uppercase tracking-[0.2em] text-neutral-500">
+            Keyboard hotkeys 1-0 trigger lap capture for assigned drivers while live.
+          </p>
         </section>
-
-        <section className="grid gap-3 lg:grid-cols-2">
-          {drivers.map((driver) => (
-            <div
-              key={driver.id}
-              className={`rounded-lg border-2 bg-gray-800 p-4 ${
-                driver.status === 'finished'
-                  ? 'border-green-500'
-                  : driver.status === 'retired'
-                    ? 'border-red-500'
-                    : 'border-gray-700'
-              }`}
-            >
-              <div className="flex flex-wrap items-start justify-between gap-2.5">
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => recordLap(driver.id, { source: 'control-panel' })}
-                    disabled={!isTiming || isPaused || driver.status !== 'ontrack'}
-                    className={`flex h-12 w-12 items-center justify-center rounded-lg text-xl font-bold ${
-                      !isTiming || isPaused || driver.status !== 'ontrack'
-                        ? 'bg-gray-700 text-gray-500'
-                        : 'bg-blue-600 hover:bg-blue-700'
-                    }`}
-                  >
-                    {driver.number}
-                  </button>
-                  <div>
-                    <p className="text-xl font-bold">{driver.name}</p>
-                    <p className="text-sm text-gray-400">{driver.team}</p>
-                    <p className="text-xs text-gray-500">Marshal: {getMarshalName(driver.marshalId)}</p>
-                    {driver.driverFlag !== 'none' && (
-                      <span className="mt-1 inline-block rounded bg-amber-500 px-2 py-1 text-xs font-semibold text-black">
-                        {driver.driverFlag.replace('blackwhite', 'Black & White')}
-                      </span>
-                    )}
-                  </div>
-                </div>
-                <div className="flex flex-col items-end gap-2">
-                  <button
-                    onClick={() => retireDriver(driver.id)}
-                    disabled={driver.status === 'retired'}
-                    className="rounded bg-red-600 px-3 py-1 text-xs font-semibold hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    RETIRE
-                  </button>
-                  <button
-                    onClick={() => togglePitStop(driver.id)}
-                    className={`rounded px-3 py-1 text-xs font-semibold ${
-                      driver.pitComplete
-                        ? 'bg-green-600 hover:bg-green-700'
-                        : 'bg-gray-700 hover:bg-gray-600'
-                    }`}
-                  >
-                    {driver.pitComplete ? 'PIT COMPLETE' : 'MARK PIT'}
-                  </button>
-                  <select
-                    value={driver.driverFlag}
-                    onChange={(event) => setDriverFlag(driver.id, event.target.value)}
-                    className="rounded bg-gray-800 px-2 py-1 text-xs"
-                  >
-                    {DRIVER_FLAG_OPTIONS.map((option) => (
-                      <option key={option.id} value={option.id}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
+        <div className="grid gap-6 lg:grid-cols-[3fr_1.15fr]">
+          <div className="space-y-6">
+            <section className="rounded-2xl border border-neutral-800 bg-[#11182c]/80 p-4 shadow-[0_18px_48px_-30px_rgba(159,247,211,0.35)]">
+              <div className="mb-3 flex items-center justify-between">
+                <h2 className="text-sm font-semibold uppercase tracking-[0.3em] text-neutral-400">
+                  Driver Capture
+                </h2>
+                <span className="text-xs text-neutral-500">
+                  Click or use hotkeys to log laps instantly.
+                </span>
               </div>
-              <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
-                <div>
-                  <p className="text-gray-400">Laps</p>
-                  <p className="text-xl font-bold">
-                    {driver.laps}/{eventConfig.totalLaps}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-gray-400">Status</p>
-                  <p className="text-lg font-semibold capitalize">{driver.status}</p>
-                </div>
-                <div>
-                  <p className="text-gray-400">Last Lap</p>
-                  <p className="font-mono text-lg">{formatLapTime(driver.lastLap)}</p>
-                </div>
-                <div>
-                  <p className="text-gray-400">Best Lap</p>
-                  <p className="font-mono text-lg text-green-400">
-                    {formatLapTime(driver.bestLap)}
-                  </p>
-                </div>
-              </div>
-              <div className="mt-4 flex flex-col gap-2">
-                <div className="flex items-center gap-2">
-                  <input
-                    type="text"
-                    value={manualLapInputs[driver.id] ?? ''}
-                    onChange={(event) =>
-                      setManualLapInputs((prev) => ({
-                        ...prev,
-                        [driver.id]: event.target.value,
-                      }))
-                    }
-                    placeholder="Manual lap (m:ss.mmm)"
-                    className="flex-1 rounded bg-gray-800 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
-                  <button
-                    onClick={() => {
-                      const manualTime = parseManualLap(manualLapInputs[driver.id] ?? '');
-                      if (manualTime !== null) {
-                        recordLap(driver.id, { manualTime, source: 'manual-entry' });
-                      }
-                    }}
-                    className="rounded bg-gray-700 px-3 py-2 text-sm hover:bg-gray-600"
-                  >
-                    Log Lap
-                  </button>
-                </div>
-                <p className="text-xs text-gray-500">
-                  Keyboard shortcuts: 1-9,0 trigger lap capture for assigned drivers when the session is live.
-                </p>
-              </div>
-            </div>
-          ))}
-        </section>
-
-        <section className="grid gap-4 lg:grid-cols-3">
-          <div className="rounded-lg bg-gray-800 p-4 lg:col-span-2">
-            <div className="flex items-center justify-between">
-              <h2 className="text-lg font-semibold">Live Timing</h2>
-              <ListChecks className="w-5 h-5 text-gray-500" />
-            </div>
-            <div className="mt-4 overflow-x-auto">
-              <table className="w-full text-left text-sm">
-                <thead className="bg-gray-800 text-xs uppercase tracking-wide text-gray-400">
-                  <tr>
-                    <th className="px-3 py-2">Pos</th>
-                    <th className="px-3 py-2">No.</th>
-                    <th className="px-3 py-2">Driver</th>
-                    <th className="px-3 py-2">Team</th>
-                    <th className="px-3 py-2 text-right">Laps</th>
-                    <th className="px-3 py-2 text-right">Best</th>
-                    <th className="px-3 py-2 text-right">Last</th>
-                    <th className="px-3 py-2 text-right">Interval</th>
-                    <th className="px-3 py-2 text-right">Gap</th>
-                    <th className="px-3 py-2 text-center">Pits</th>
-                    <th className="px-3 py-2 text-center">Status</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {driverTiming.map((driver) => {
-                    const total = driver.lapTimes.reduce(
-                      (sum, time) => sum + time,
-                      0,
-                    );
-                    return (
-                      <tr key={driver.id} className="border-b border-gray-800 text-sm">
-                        <td className="px-3 py-3 font-semibold">{driver.position}</td>
-                        <td className="px-3 py-3">{driver.number}</td>
-                        <td className="px-3 py-3">
-                          <div className="font-semibold">{driver.name}</div>
-                          <div className="text-xs text-gray-500">{getMarshalName(driver.marshalId)}</div>
-                        </td>
-                        <td className="px-3 py-3 text-gray-400">{driver.team}</td>
-                        <td className="px-3 py-3 text-right font-semibold">{driver.laps}</td>
-                        <td className="px-3 py-3 text-right font-mono text-green-400">
-                          {formatLapTime(driver.bestLap)}
-                        </td>
-                        <td className="px-3 py-3 text-right font-mono">
-                          {formatLapTime(driver.lastLap)}
-                        </td>
-                        <td className="px-3 py-3 text-right text-gray-300">{driver.interval}</td>
-                        <td className="px-3 py-3 text-right text-gray-300">{driver.gap}</td>
-                        <td className="px-3 py-3 text-center">{driver.pits}</td>
-                        <td className="px-3 py-3 text-center capitalize">
-                          {driver.status}
-                          <div className="text-xs text-gray-500">
-                            {formatLapTime(total)}
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
+                {drivers.map((driver, index) => {
+                  const canLogLap = isTiming && !isPaused && driver.status === 'ontrack';
+                  const cardHotkey = HOTKEYS[index] ?? null;
+                  const isFlashing = recentLapDriverId === driver.id;
+                  return (
+                    <div
+                      key={driver.id}
+                      className={`flex h-full flex-col justify-between rounded-xl border border-neutral-800 bg-neutral-950/80 p-3 text-left shadow-sm transition hover:border-[#9FF7D3] hover:shadow-md ${
+                        driver.status === 'retired'
+                          ? 'opacity-60'
+                          : driver.status === 'finished'
+                            ? 'border-green-400/60'
+                            : ''
+                      } ${isFlashing ? 'ring-2 ring-[#9FF7D3]/70' : ''}`}
+                    >
+                      <div className="space-y-2">
+                        <div className="flex items-start justify-between gap-2">
+                          <div>
+                            <div className="text-sm font-semibold text-[#9FF7D3]">
+                              #{driver.number} {driver.name}
+                            </div>
+                            <div className="text-[11px] text-neutral-400">{driver.team}</div>
+                            <div className="text-[10px] text-neutral-500">
+                              Marshal: {getMarshalName(driver.marshalId)}
+                            </div>
                           </div>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
+                          <span
+                            className={`rounded-full px-2 py-0.5 text-[10px] uppercase tracking-wide ${
+                              driver.status === 'ontrack'
+                                ? 'bg-[#9FF7D3]/15 text-[#9FF7D3]'
+                                : driver.status === 'retired'
+                                  ? 'bg-red-500/20 text-red-300'
+                                  : driver.status === 'finished'
+                                    ? 'bg-green-500/20 text-green-200'
+                                    : 'bg-neutral-800 text-neutral-400'
+                            }`}
+                          >
+                            {driver.status}
+                          </span>
+                        </div>
+                        {driver.driverFlag !== 'none' && (
+                          <span className="inline-flex rounded-full border border-amber-200/40 bg-amber-400/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-200">
+                            {driver.driverFlag === 'blackwhite' ? 'Black & White' : driver.driverFlag}
+                          </span>
+                        )}
+                        <div className="flex items-center justify-between text-[11px] text-neutral-400">
+                          <span>
+                            Laps:{' '}
+                            <span className="font-semibold text-neutral-100">{driver.laps}</span>
+                          </span>
+                          <span>
+                            Best:{' '}
+                            <span className="font-mono text-[#9FF7D3]">
+                              {formatLapTime(driver.bestLap)}
+                            </span>
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between text-[11px] text-neutral-400">
+                          <span>
+                            Last:{' '}
+                            <span className="font-mono text-neutral-100">
+                              {formatLapTime(driver.lastLap)}
+                            </span>
+                          </span>
+                          <span>Pits: {driver.pits}</span>
+                        </div>
+                      </div>
+                        <div className="mt-3 space-y-2">
+                          <button
+                            onClick={() => recordLap(driver.id, { source: 'control-panel' })}
+                            disabled={!canLogLap}
+                          className={`w-full rounded-md py-1.5 text-xs font-semibold uppercase tracking-wide transition ${
+                            canLogLap
+                              ? 'bg-[#9FF7D3] text-black hover:bg-[#7eeac3]'
+                              : 'bg-neutral-800 text-neutral-500'
+                          } ${isFlashing ? 'animate-pulse' : ''}`}
+                          >
+                          Log Lap
+                          {cardHotkey ? ` (${cardHotkey})` : ''}
+                        </button>
+                        <div className="flex items-center gap-1">
+                          <input
+                            type="text"
+                            value={manualLapInputs[driver.id] ?? ''}
+                            onChange={(event) =>
+                              setManualLapInputs((prev) => ({
+                                ...prev,
+                                [driver.id]: event.target.value,
+                              }))
+                            }
+                            placeholder="mm:ss.mmm"
+                            className="w-full rounded-md border border-neutral-800 bg-neutral-900 px-2 py-1 text-xs text-neutral-200 placeholder:text-neutral-500 focus:border-[#9FF7D3] focus:outline-none focus:ring-1 focus:ring-[#9FF7D3]"
+                          />
+                          <button
+                            onClick={() => {
+                              const manualTime = parseManualLap(manualLapInputs[driver.id] ?? '');
+                              if (manualTime !== null) {
+                                recordLap(driver.id, { manualTime, source: 'manual-entry' });
+                              }
+                            }}
+                            className="h-8 rounded-md border border-neutral-700 bg-neutral-900 px-2 text-[10px] font-semibold uppercase tracking-wide text-neutral-200 transition hover:border-[#9FF7D3]"
+                          >
+                            Manual
+                          </button>
+                        </div>
+                        <div className="grid grid-cols-2 gap-1">
+                          <button
+                            onClick={() => togglePitStop(driver.id)}
+                            className={`h-8 rounded-md text-[10px] font-semibold uppercase tracking-wide transition ${
+                              driver.pitComplete
+                                ? 'border border-[#9FF7D3]/50 bg-[#9FF7D3]/20 text-[#9FF7D3]'
+                                : 'border border-neutral-700 bg-neutral-900 text-neutral-300 hover:border-[#9FF7D3]'
+                            }`}
+                          >
+                            {driver.pitComplete ? 'Pit Complete' : 'Mark Pit'}
+                          </button>
+                          <button
+                            onClick={() => retireDriver(driver.id)}
+                            disabled={driver.status === 'retired'}
+                            className="h-8 rounded-md border border-red-500/60 bg-red-500/15 text-[10px] font-semibold uppercase tracking-wide text-red-200 transition hover:border-red-300 disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            Retire
+                          </button>
+                        </div>
+                        <select
+                          value={driver.driverFlag}
+                          onChange={(event) => setDriverFlag(driver.id, event.target.value)}
+                          className="w-full rounded-md border border-neutral-800 bg-neutral-900 px-2 py-1 text-[10px] uppercase tracking-wide text-neutral-300 focus:border-[#7C6BFF] focus:outline-none focus:ring-1 focus:ring-[#7C6BFF]"
+                        >
+                          {DRIVER_FLAG_OPTIONS.map((option) => (
+                            <option key={option.id} value={option.id}>
+                              {option.label}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </section>
+            <section className="rounded-2xl border border-neutral-800 bg-[#11182c]/70 p-4">
+              <div className="flex items-center justify-between">
+                <h2 className="text-sm font-semibold uppercase tracking-[0.3em] text-neutral-400">
+                  Live Timing
+                </h2>
+                <ListChecks className="h-4 w-4 text-neutral-500" />
+              </div>
+              <div className="mt-3 overflow-x-auto">
+                <table className="w-full table-fixed border-separate border-spacing-y-1 text-left text-xs">
+                  <thead className="text-[10px] uppercase tracking-[0.25em] text-neutral-500">
+                    <tr>
+                      <th className="px-2 py-1">Pos</th>
+                      <th className="px-2 py-1">No.</th>
+                      <th className="px-2 py-1">Driver</th>
+                      <th className="px-2 py-1">Laps</th>
+                      <th className="px-2 py-1">Best</th>
+                      <th className="px-2 py-1">Last</th>
+                      <th className="px-2 py-1">Gap</th>
+                      <th className="px-2 py-1">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {driverTiming.map((driver) => {
+                      const total = driver.lapTimes.reduce((sum, time) => sum + time, 0);
+                      return (
+                        <tr
+                          key={driver.id}
+                          className="rounded-lg border border-neutral-800 bg-neutral-900/60 text-[11px] text-neutral-200"
+                        >
+                          <td className="px-2 py-2 font-semibold text-[#9FF7D3]">{driver.position}</td>
+                          <td className="px-2 py-2 text-neutral-400">{driver.number}</td>
+                          <td className="px-2 py-2">
+                            <div className="font-semibold text-neutral-100">{driver.name}</div>
+                            <div className="text-[10px] text-neutral-500">
+                              {getMarshalName(driver.marshalId)}
+                            </div>
+                          </td>
+                          <td className="px-2 py-2 text-center font-semibold">{driver.laps}</td>
+                          <td className="px-2 py-2 font-mono text-[#9FF7D3]">
+                            {formatLapTime(driver.bestLap)}
+                          </td>
+                          <td className="px-2 py-2 font-mono text-neutral-200">
+                            {formatLapTime(driver.lastLap)}
+                          </td>
+                          <td className="px-2 py-2 text-neutral-300">{driver.gap}</td>
+                          <td className="px-2 py-2">
+                            <div className="capitalize text-neutral-200">{driver.status}</div>
+                            <div className="text-[10px] text-neutral-500">
+                              {formatLapTime(total)}
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </section>
           </div>
-
-          <div className="rounded-lg bg-gray-800 p-4">
-            <div className="flex items-center justify-between">
-              <h2 className="text-lg font-semibold">Control Log</h2>
-              <ShieldAlert className="w-5 h-5 text-gray-500" />
-            </div>
-            <ul className="mt-4 space-y-3 text-xs">
-              {logs.length === 0 && (
-                <li className="text-gray-500">No race control actions recorded yet.</li>
-              )}
-              {logs.map((log) => (
-                <li key={log.id} className="rounded border border-gray-700 p-3">
-                  <div className="flex items-center justify-between text-[10px] uppercase tracking-wide text-gray-500">
-                    <span>{log.marshalId}</span>
-                    <span>{log.timestamp.toLocaleTimeString()}</span>
-                  </div>
-                  <p className="mt-1 text-sm text-gray-200">{log.action}</p>
-                </li>
-              ))}
-            </ul>
-          </div>
-        </section>
-      </div>
-
+          <aside className="space-y-6">
+            <section className="rounded-2xl border border-neutral-800 bg-[#11182c]/80 p-4">
+              <div className="flex items-center justify-between">
+                <h3 className="text-sm font-semibold uppercase tracking-[0.3em] text-neutral-400">
+                  Marshal Assignments
+                </h3>
+                <Users className="h-4 w-4 text-neutral-500" />
+              </div>
+              <ul className="mt-3 space-y-2 text-xs text-neutral-300">
+                {eventConfig.marshals.map((marshal) => {
+                  const assignedDrivers = drivers.filter((driver) => driver.marshalId === marshal.id);
+                  return (
+                    <li
+                      key={marshal.id}
+                      className="rounded-xl border border-neutral-800 bg-neutral-950/70 p-3 shadow-sm"
+                    >
+                      <div className="flex items-center justify-between text-[10px] uppercase tracking-wide text-neutral-500">
+                        <span>{marshal.name}</span>
+                        <span>{assignedDrivers.length} Drivers</span>
+                      </div>
+                      <div className="mt-2 flex flex-wrap gap-1 text-[11px] text-neutral-300">
+                        {assignedDrivers.map((driver) => (
+                          <span
+                            key={driver.id}
+                            className="rounded-full border border-neutral-700 bg-neutral-900 px-2 py-0.5"
+                          >
+                            #{driver.number} {driver.name}
+                          </span>
+                        ))}
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+            </section>
+            <section className="rounded-2xl border border-neutral-800 bg-[#11182c]/80 p-4">
+              <div className="flex items-center justify-between">
+                <h3 className="text-sm font-semibold uppercase tracking-[0.3em] text-neutral-400">
+                  Control Log
+                </h3>
+                <ShieldAlert className="h-4 w-4 text-neutral-500" />
+              </div>
+              <ul className="mt-3 space-y-2 text-[11px] text-neutral-200">
+                {logs.length === 0 && (
+                  <li className="rounded-lg border border-neutral-800 bg-neutral-900/60 p-3 text-neutral-500">
+                    No race control actions recorded yet.
+                  </li>
+                )}
+                {logs.map((log) => (
+                  <li
+                    key={log.id}
+                    className="rounded-lg border border-neutral-800 bg-neutral-950/70 p-3 shadow-sm"
+                  >
+                    <div className="flex items-center justify-between text-[10px] uppercase tracking-wide text-neutral-500">
+                      <span>{log.marshalId}</span>
+                      <span>{log.timestamp.toLocaleTimeString()}</span>
+                    </div>
+                    <p className="mt-1 text-[11px] text-neutral-100">{log.action}</p>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          </aside>
+        </div>
+      </main>
       {showSetup && setupDraft && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
           <div className="max-h-[90vh] w-full max-w-4xl overflow-y-auto rounded-lg bg-gray-800 p-6">
