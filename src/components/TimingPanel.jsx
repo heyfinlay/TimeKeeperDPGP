@@ -7,6 +7,11 @@ import {
   Settings,
   Download,
   X,
+  LayoutGrid,
+  Rows,
+  Ban,
+  Car,
+  TimerReset,
 } from 'lucide-react';
 
 const TimingPanel = () => {
@@ -27,6 +32,7 @@ const TimingPanel = () => {
       currentLapStart: null,
       status: 'active',
       bestLap: null,
+      inPit: false,
     },
     {
       id: 2,
@@ -38,6 +44,7 @@ const TimingPanel = () => {
       currentLapStart: null,
       status: 'active',
       bestLap: null,
+      inPit: false,
     },
     {
       id: 3,
@@ -49,6 +56,7 @@ const TimingPanel = () => {
       currentLapStart: null,
       status: 'active',
       bestLap: null,
+      inPit: false,
     },
     {
       id: 4,
@@ -60,6 +68,7 @@ const TimingPanel = () => {
       currentLapStart: null,
       status: 'active',
       bestLap: null,
+      inPit: false,
     },
     {
       id: 5,
@@ -71,6 +80,7 @@ const TimingPanel = () => {
       currentLapStart: null,
       status: 'active',
       bestLap: null,
+      inPit: false,
     },
     {
       id: 6,
@@ -82,8 +92,59 @@ const TimingPanel = () => {
       currentLapStart: null,
       status: 'active',
       bestLap: null,
+      inPit: false,
+    },
+    {
+      id: 7,
+      number: 7,
+      name: 'Driver 7',
+      team: 'Team Delta',
+      laps: 0,
+      lapTimes: [],
+      currentLapStart: null,
+      status: 'active',
+      bestLap: null,
+      inPit: false,
+    },
+    {
+      id: 8,
+      number: 8,
+      name: 'Driver 8',
+      team: 'Team Delta',
+      laps: 0,
+      lapTimes: [],
+      currentLapStart: null,
+      status: 'active',
+      bestLap: null,
+      inPit: false,
+    },
+    {
+      id: 9,
+      number: 9,
+      name: 'Driver 9',
+      team: 'Team Echo',
+      laps: 0,
+      lapTimes: [],
+      currentLapStart: null,
+      status: 'active',
+      bestLap: null,
+      inPit: false,
+    },
+    {
+      id: 10,
+      number: 10,
+      name: 'Driver 10',
+      team: 'Team Echo',
+      laps: 0,
+      lapTimes: [],
+      currentLapStart: null,
+      status: 'active',
+      bestLap: null,
+      inPit: false,
     },
   ]);
+
+  const [compactView, setCompactView] = useState(false);
 
   const [showSetup, setShowSetup] = useState(false);
   const [showResults, setShowResults] = useState(false);
@@ -157,6 +218,7 @@ const TimingPanel = () => {
         ...d,
         currentLapStart: Date.now(),
         status: 'active',
+        inPit: false,
       })),
     );
   };
@@ -196,7 +258,26 @@ const TimingPanel = () => {
   const markDNF = (driverId) => {
     setDrivers((prev) =>
       prev.map((driver) =>
-        driver.id === driverId ? { ...driver, status: 'dnf' } : driver,
+        driver.id === driverId
+          ? {
+              ...driver,
+              status: 'dnf',
+              inPit: false,
+            }
+          : driver,
+      ),
+    );
+  };
+
+  const togglePitStatus = (driverId) => {
+    setDrivers((prev) =>
+      prev.map((driver) =>
+        driver.id === driverId
+          ? {
+              ...driver,
+              inPit: !driver.inPit,
+            }
+          : driver,
       ),
     );
   };
@@ -272,37 +353,53 @@ const TimingPanel = () => {
   };
 
   return (
-    <div className="min-h-screen bg-gray-900 text-white p-4">
-      <div className="max-w-7xl mx-auto mb-6">
-        <div className="flex items-center justify-between mb-4">
-          <div>
-            <h1 className="text-3xl font-bold text-blue-400">DayBreak Grand Prix</h1>
-            <p className="text-gray-400">Timing &amp; Scoring Panel</p>
-          </div>
-
-          <div className="flex items-center gap-4">
-            <div className="flex items-center gap-2">
-              <Clock className="w-5 h-5" />
-              <span className="text-2xl font-mono">{formatRaceTime(raceTime)}</span>
+    <div className="min-h-screen bg-gray-900 text-white">
+      <div className="max-w-7xl mx-auto px-4 pb-6 space-y-4">
+        <header className="sticky top-0 z-40 -mx-4 px-4 py-4 bg-gray-900/95 backdrop-blur border-b border-gray-800">
+          <div className="flex flex-wrap items-center justify-between gap-4">
+            <div>
+              <h1 className="text-3xl font-bold text-blue-400">DayBreak Grand Prix</h1>
+              <p className="text-gray-400 text-sm">Timing &amp; Scoring Panel</p>
             </div>
 
-            <div
-              className={`flex items-center gap-2 px-4 py-2 rounded ${getFlagColor()}`}
-            >
-              <Flag className="w-5 h-5" />
-              <span className="font-bold uppercase">{flagStatus}</span>
+            <div className="flex flex-wrap items-center gap-3">
+              <div className="flex items-center gap-2 rounded border border-gray-700 px-3 py-2">
+                <Clock className="w-4 h-4" />
+                <span className="text-xl font-mono">{formatRaceTime(raceTime)}</span>
+              </div>
+
+              <div
+                className={`flex items-center gap-2 px-3 py-2 rounded border border-gray-700 ${getFlagColor()}`}
+              >
+                <Flag className="w-4 h-4" />
+                <span className="text-sm font-bold uppercase">{flagStatus}</span>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setCompactView((prev) => !prev)}
+                  className="flex items-center gap-2 rounded bg-gray-800 px-3 py-2 text-sm hover:bg-gray-700"
+                >
+                  {compactView ? (
+                    <Rows className="w-4 h-4" />
+                  ) : (
+                    <LayoutGrid className="w-4 h-4" />
+                  )}
+                  <span>{compactView ? 'Expanded View' : 'Compact View'}</span>
+                </button>
+
+                <button
+                  onClick={() => setShowSetup(true)}
+                  className="p-2 rounded bg-gray-800 hover:bg-gray-700"
+                >
+                  <Settings className="w-5 h-5" />
+                </button>
+              </div>
             </div>
-
-            <button
-              onClick={() => setShowSetup(true)}
-              className="p-2 bg-gray-700 hover:bg-gray-600 rounded"
-            >
-              <Settings className="w-5 h-5" />
-            </button>
           </div>
-        </div>
+        </header>
 
-        <div className="bg-gray-800 rounded-lg p-4 mb-4">
+        <div className="bg-gray-800/80 rounded-lg border border-gray-700 p-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-4">
               <span className="text-lg font-bold">Race Control:</span>
@@ -335,11 +432,11 @@ const TimingPanel = () => {
               </span>
             </div>
 
-            <div className="flex gap-2">
+            <div className="flex gap-2 text-sm">
               {racePhase === 'setup' && (
                 <button
                   onClick={startWarmup}
-                  className="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded flex items-center gap-2"
+                  className="px-3 py-2 bg-blue-600 hover:bg-blue-700 rounded flex items-center gap-2"
                 >
                   <Play className="w-4 h-4" />
                   Start Warm Up
@@ -349,7 +446,7 @@ const TimingPanel = () => {
               {racePhase === 'warmup' && (
                 <button
                   onClick={callFinalCall}
-                  className="px-4 py-2 bg-yellow-600 hover:bg-yellow-700 rounded flex items-center gap-2"
+                  className="px-3 py-2 bg-yellow-600 hover:bg-yellow-700 rounded flex items-center gap-2"
                 >
                   <AlertTriangle className="w-4 h-4" />
                   Final Call
@@ -359,7 +456,7 @@ const TimingPanel = () => {
               {racePhase === 'finalcall' && (
                 <button
                   onClick={initiateCountdown}
-                  className="px-4 py-2 bg-orange-600 hover:bg-orange-700 rounded flex items-center gap-2"
+                  className="px-3 py-2 bg-orange-600 hover:bg-orange-700 rounded flex items-center gap-2"
                 >
                   <Clock className="w-4 h-4" />
                   Initiate Start (5s)
@@ -388,7 +485,7 @@ const TimingPanel = () => {
                   </button>
                   <button
                     onClick={finishRace}
-                    className="px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded flex items-center gap-2"
+                    className="px-3 py-2 bg-gray-700 hover:bg-gray-600 rounded flex items-center gap-2"
                   >
                     <Flag className="w-4 h-4" />
                     Finish Race
@@ -399,7 +496,7 @@ const TimingPanel = () => {
               {racePhase === 'finished' && (
                 <button
                   onClick={() => setShowResults(true)}
-                  className="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded"
+                  className="px-3 py-2 bg-blue-600 hover:bg-blue-700 rounded"
                 >
                   View Results
                 </button>
@@ -408,77 +505,124 @@ const TimingPanel = () => {
           </div>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div
+          className={`grid gap-3 ${
+            compactView
+              ? 'grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4'
+              : 'grid-cols-1 md:grid-cols-2 xl:grid-cols-3'
+          }`}
+        >
           {drivers.map((driver) => (
             <div
               key={driver.id}
-              className={`bg-gray-800 rounded-lg p-4 border-2 ${
+              className={`rounded-lg border ${
                 driver.status === 'finished'
-                  ? 'border-green-500'
+                  ? 'border-green-500/80'
                   : driver.status === 'dnf'
-                    ? 'border-red-500'
-                    : 'border-gray-700'
-              }`}
+                    ? 'border-red-500/80'
+                    : driver.inPit
+                      ? 'border-yellow-400/80'
+                      : 'border-gray-700'
+              } bg-gray-800/80 ${compactView ? 'p-3 space-y-2' : 'p-4 space-y-3'}`}
             >
-              <div className="flex items-start justify-between mb-3">
+              <div className="flex items-start justify-between gap-3">
                 <div className="flex items-center gap-3">
                   <button
                     onClick={() => recordLap(driver.id)}
                     disabled={racePhase !== 'racing' || driver.status !== 'active'}
-                    className={`w-16 h-16 rounded-lg text-2xl font-bold flex items-center justify-center ${
+                    className={`flex h-14 w-14 items-center justify-center rounded-lg text-xl font-bold transition ${
                       racePhase === 'racing' && driver.status === 'active'
-                        ? 'bg-blue-600 hover:bg-blue-700 cursor-pointer'
-                        : 'bg-gray-700 cursor-not-allowed'
+                        ? 'bg-blue-600 hover:bg-blue-700'
+                        : 'bg-gray-700 text-gray-400'
                     }`}
+                    title="Log Lap"
                   >
                     {driver.number}
                   </button>
 
-                  <div>
-                    <div className="text-xl font-bold">{driver.name}</div>
-                    <div className="text-sm text-gray-400">{driver.team}</div>
-                    {driver.status !== 'active' && (
-                      <div
-                        className={`text-sm font-bold ${
-                          driver.status === 'finished'
-                            ? 'text-green-400'
-                            : 'text-red-400'
-                        }`}
-                      >
-                        {driver.status.toUpperCase()}
-                      </div>
+                  <div className="space-y-1">
+                    <div
+                      className={`font-semibold ${compactView ? 'text-sm' : 'text-lg'}`}
+                    >
+                      {driver.name}
+                    </div>
+                    {!compactView && (
+                      <div className="text-xs text-gray-400">{driver.team}</div>
                     )}
+                    <div className="flex flex-wrap items-center gap-2 text-[11px] uppercase tracking-wide">
+                      {driver.status !== 'active' && (
+                        <span
+                          className={`font-semibold ${
+                            driver.status === 'finished'
+                              ? 'text-green-400'
+                              : 'text-red-400'
+                          }`}
+                        >
+                          {driver.status}
+                        </span>
+                      )}
+                      {driver.inPit && (
+                        <span className="flex items-center gap-1 text-amber-300">
+                          <Car className="h-3 w-3" /> Pit
+                        </span>
+                      )}
+                    </div>
                   </div>
                 </div>
 
-                {racePhase === 'racing' && driver.status === 'active' && (
+                <div className="flex items-start gap-1 text-gray-400">
+                  <button
+                    onClick={() => togglePitStatus(driver.id)}
+                    className={`rounded bg-gray-700/80 p-2 hover:bg-gray-600 ${
+                      driver.inPit ? 'text-amber-300' : ''
+                    }`}
+                    title={driver.inPit ? 'Release from Pit' : 'Mark in Pit'}
+                  >
+                    <Car className="h-4 w-4" />
+                  </button>
+                  <button
+                    onClick={() => recordLap(driver.id)}
+                    disabled={racePhase !== 'racing' || driver.status !== 'active'}
+                    className={`rounded bg-gray-700/80 p-2 hover:bg-gray-600 ${
+                      racePhase === 'racing' && driver.status === 'active'
+                        ? ''
+                        : 'cursor-not-allowed opacity-50'
+                    }`}
+                    title="Log Lap"
+                  >
+                    <TimerReset className="h-4 w-4" />
+                  </button>
                   <button
                     onClick={() => markDNF(driver.id)}
-                    className="px-2 py-1 bg-red-600 hover:bg-red-700 rounded text-xs"
+                    disabled={driver.status !== 'active'}
+                    className={`rounded bg-gray-700/80 p-2 hover:bg-red-600/80 ${
+                      driver.status === 'active' ? '' : 'cursor-not-allowed opacity-50'
+                    }`}
+                    title="Mark DNF"
                   >
-                    DNF
+                    <Ban className="h-4 w-4" />
                   </button>
-                )}
+                </div>
               </div>
 
-              <div className="grid grid-cols-3 gap-2 text-sm">
-                <div>
-                  <div className="text-gray-400">Laps</div>
-                  <div className="text-xl font-bold">
+              <div className={`grid gap-2 text-xs sm:text-sm ${compactView ? 'grid-cols-3' : 'grid-cols-3'}`}>
+                <div className="rounded bg-gray-900/40 p-2">
+                  <div className="text-gray-400 text-[11px] uppercase">Laps</div>
+                  <div className={`font-bold ${compactView ? 'text-base' : 'text-lg'}`}>
                     {driver.laps}/{totalLaps}
                   </div>
                 </div>
-                <div>
-                  <div className="text-gray-400">Last Lap</div>
-                  <div className="text-lg font-mono">
+                <div className="rounded bg-gray-900/40 p-2">
+                  <div className="text-gray-400 text-[11px] uppercase">Last Lap</div>
+                  <div className={`font-mono ${compactView ? 'text-sm' : 'text-base'}`}>
                     {driver.lapTimes.length > 0
                       ? formatTime(driver.lapTimes[driver.lapTimes.length - 1])
                       : '--:--.---'}
                   </div>
                 </div>
-                <div>
-                  <div className="text-gray-400">Best Lap</div>
-                  <div className="text-lg font-mono text-green-400">
+                <div className="rounded bg-gray-900/40 p-2">
+                  <div className="text-gray-400 text-[11px] uppercase">Best Lap</div>
+                  <div className={`font-mono text-green-400 ${compactView ? 'text-sm' : 'text-base'}`}>
                     {formatTime(driver.bestLap)}
                   </div>
                 </div>
