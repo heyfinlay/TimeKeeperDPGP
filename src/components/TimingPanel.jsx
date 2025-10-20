@@ -829,7 +829,7 @@ const TimingPanel = () => {
           </div>
         </section>
 
-        <section className="grid gap-4 lg:grid-cols-2">
+        <section className="grid gap-3 lg:grid-cols-2">
           {drivers.map((driver) => (
             <div
               key={driver.id}
@@ -841,12 +841,12 @@ const TimingPanel = () => {
                     : 'border-gray-700'
               }`}
             >
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div className="flex items-center gap-3">
+              <div className="flex flex-wrap items-start justify-between gap-2.5">
+                <div className="flex items-center gap-2">
                   <button
                     onClick={() => recordLap(driver.id, { source: 'control-panel' })}
                     disabled={!isTiming || isPaused || driver.status !== 'ontrack'}
-                    className={`flex h-16 w-16 items-center justify-center rounded-lg text-2xl font-bold ${
+                    className={`flex h-12 w-12 items-center justify-center rounded-lg text-xl font-bold ${
                       !isTiming || isPaused || driver.status !== 'ontrack'
                         ? 'bg-gray-700 text-gray-500'
                         : 'bg-blue-600 hover:bg-blue-700'
