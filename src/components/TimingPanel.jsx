@@ -1,15 +1,39 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  AlertTriangle,
+  Car,
   Clock,
   Flag,
+  Gauge,
   ListChecks,
+  Megaphone,
   Play,
   Save,
   Settings,
   ShieldAlert,
+  StopCircle,
   Users,
   X,
 } from 'lucide-react';
+import { formatLapTime, formatRaceClock } from '../utils/time';
+import { TRACK_STATUS_MAP, TRACK_STATUS_OPTIONS } from '../constants/trackStatus';
+import {
+  isSupabaseConfigured,
+  subscribeToTable,
+  supabaseDelete,
+  supabaseInsert,
+  supabaseSelect,
+  supabaseUpsert,
+} from '../lib/supabaseClient';
+import {
+  DEFAULT_SESSION_STATE,
+  SESSION_ROW_ID,
+  createClientId,
+  groupLapRows,
+  hydrateDriverState,
+  sessionRowToState,
+  toDriverRow,
+} from '../utils/raceData';
 
 const DEFAULT_MARSHALS = [
   { id: 'm1', name: 'Marshal 1' },
@@ -122,37 +146,22 @@ const DRIVER_FLAG_OPTIONS = [
 
 const HOTKEYS = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '0'];
 
+const LOG_LIMIT = 200;
+
 const toDriverState = (driver) => ({
   ...driver,
   laps: 0,
   lapTimes: [],
+  lapHistory: [],
   lastLap: null,
   bestLap: null,
+  totalTime: 0,
   pits: 0,
   status: 'ready',
   currentLapStart: null,
   driverFlag: 'none',
   pitComplete: false,
 });
-
-const formatLapTime = (ms) => {
-  if (!Number.isFinite(ms) || ms === null) return '--:--.---';
-  const minutes = Math.floor(ms / 60000);
-  const seconds = Math.floor((ms % 60000) / 1000);
-  const milliseconds = ms % 1000;
-  return `${minutes}:${seconds.toString().padStart(2, '0')}.${milliseconds
-    .toString()
-    .padStart(3, '0')}`;
-};
-
-const formatRaceClock = (ms) => {
-  const totalSeconds = Math.floor(ms / 1000);
-  const minutes = Math.floor(totalSeconds / 60);
-  const seconds = totalSeconds % 60;
-  return `${minutes.toString().padStart(2, '0')}:${seconds
-    .toString()
-    .padStart(2, '0')}`;
-};
 
 const parseManualLap = (input) => {
   const trimmed = input.trim();
@@ -181,43 +190,332 @@ const parseManualLap = (input) => {
 
 const TimingPanel = () => {
   const [eventConfig, setEventConfig] = useState({
-    eventType: 'Race',
-    totalLaps: 25,
-    totalDuration: 45,
+    eventType: DEFAULT_SESSION_STATE.eventType,
+    totalLaps: DEFAULT_SESSION_STATE.totalLaps,
+    totalDuration: DEFAULT_SESSION_STATE.totalDuration,
     marshals: DEFAULT_MARSHALS,
   });
   const [drivers, setDrivers] = useState(
-    DEFAULT_DRIVERS.map((driver) => toDriverState(driver)),
+    DEFAULT_DRIVERS.map((driver) => ({
+      ...toDriverState(driver),
+      lapHistory: [],
+      totalTime: 0,
+    })),
   );
-  const [procedurePhase, setProcedurePhase] = useState('setup');
-  const [isTiming, setIsTiming] = useState(false);
-  const [isPaused, setIsPaused] = useState(false);
-  const [flagStatus, setFlagStatus] = useState('green');
+  const [procedurePhase, setProcedurePhase] = useState(
+    DEFAULT_SESSION_STATE.procedurePhase,
+  );
+  const [isTiming, setIsTiming] = useState(DEFAULT_SESSION_STATE.isTiming);
+  const [isPaused, setIsPaused] = useState(DEFAULT_SESSION_STATE.isPaused);
+  const [flagStatus, setFlagStatus] = useState(DEFAULT_SESSION_STATE.flagStatus);
+  const [trackStatus, setTrackStatus] = useState(DEFAULT_SESSION_STATE.trackStatus);
+  const [announcement, setAnnouncement] = useState(
+    DEFAULT_SESSION_STATE.announcement,
+  );
+  const [announcementDraft, setAnnouncementDraft] = useState(
+    DEFAULT_SESSION_STATE.announcement,
+  );
   const [manualLapInputs, setManualLapInputs] = useState({});
   const [logs, setLogs] = useState([]);
   const [showSetup, setShowSetup] = useState(false);
   const [setupDraft, setSetupDraft] = useState(null);
   const [countdown, setCountdown] = useState(5);
-  const [raceTime, setRaceTime] = useState(0);
+  const [raceTime, setRaceTime] = useState(DEFAULT_SESSION_STATE.raceTime);
   const [recentLapDriverId, setRecentLapDriverId] = useState(null);
+  const [isInitialising, setIsInitialising] = useState(isSupabaseConfigured);
+  const [supabaseError, setSupabaseError] = useState(null);
 
   const raceStartRef = useRef(null);
   const pauseStartRef = useRef(null);
   const pausedDurationRef = useRef(0);
   const lapFlashTimeoutRef = useRef(null);
+  const sessionStateRef = useRef({
+    id: SESSION_ROW_ID,
+    event_type: DEFAULT_SESSION_STATE.eventType,
+    total_laps: DEFAULT_SESSION_STATE.totalLaps,
+    total_duration: DEFAULT_SESSION_STATE.totalDuration,
+    procedure_phase: DEFAULT_SESSION_STATE.procedurePhase,
+    flag_status: DEFAULT_SESSION_STATE.flagStatus,
+    track_status: DEFAULT_SESSION_STATE.trackStatus,
+    announcement: DEFAULT_SESSION_STATE.announcement,
+    is_timing: DEFAULT_SESSION_STATE.isTiming,
+    is_paused: DEFAULT_SESSION_STATE.isPaused,
+    race_time_ms: DEFAULT_SESSION_STATE.raceTime,
+  });
+  const lastRaceTimeSyncRef = useRef(0);
+  const logsRef = useRef([]);
+
+  const applyDriverData = useCallback((driverRows = [], lapRows = []) => {
+    if (!driverRows.length) {
+      return;
+    }
+    const lapMap = groupLapRows(lapRows);
+    setDrivers(driverRows.map((row) => hydrateDriverState(row, lapMap)));
+  }, []);
+
+  const refreshDriversFromSupabase = useCallback(async () => {
+    if (!isSupabaseConfigured) return;
+    try {
+      const [driverRows, lapRows] = await Promise.all([
+        supabaseSelect('drivers', {
+          order: { column: 'number', ascending: true },
+        }),
+        supabaseSelect('laps', {
+          order: { column: 'lap_number', ascending: true },
+        }),
+      ]);
+      if (driverRows?.length) {
+        applyDriverData(driverRows, lapRows ?? []);
+      }
+      setSupabaseError(null);
+    } catch (error) {
+      console.error('Failed to refresh drivers from Supabase', error);
+      setSupabaseError('Unable to refresh drivers from Supabase.');
+    }
+  }, [applyDriverData]);
+
+  const refreshSessionFromSupabase = useCallback(async () => {
+    if (!isSupabaseConfigured) return;
+    try {
+      const rows = await supabaseSelect('session_state', {
+        filters: { id: `eq.${SESSION_ROW_ID}` },
+      });
+      const sessionRow = rows?.[0];
+      if (!sessionRow) return;
+      sessionStateRef.current = sessionRow;
+      const hydrated = sessionRowToState(sessionRow);
+      setEventConfig((prev) => ({
+        ...prev,
+        eventType: hydrated.eventType,
+        totalLaps: hydrated.totalLaps,
+        totalDuration: hydrated.totalDuration,
+      }));
+      setProcedurePhase(hydrated.procedurePhase);
+      setFlagStatus(hydrated.flagStatus);
+      setTrackStatus(hydrated.trackStatus);
+      setAnnouncement(hydrated.announcement);
+      setAnnouncementDraft(hydrated.announcement);
+      setIsTiming(hydrated.isTiming);
+      setIsPaused(hydrated.isPaused);
+      setRaceTime(hydrated.raceTime);
+      setSupabaseError(null);
+    } catch (error) {
+      console.error('Failed to refresh session state from Supabase', error);
+      setSupabaseError('Unable to refresh session state from Supabase.');
+    }
+  }, []);
+
+  const refreshLogsFromSupabase = useCallback(async () => {
+    if (!isSupabaseConfigured) return;
+    try {
+      const rows = await supabaseSelect('race_events', {
+        order: { column: 'created_at', ascending: false },
+        filters: { limit: LOG_LIMIT },
+      });
+      if (!Array.isArray(rows)) return;
+      const mapped = rows.map((row) => ({
+        id: row.id ?? createClientId(),
+        action: row.message ?? '',
+        marshalId: row.marshal_id ?? 'Race Control',
+        timestamp: row.created_at ? new Date(row.created_at) : new Date(),
+      }));
+      const trimmed = mapped.slice(0, LOG_LIMIT);
+      logsRef.current = trimmed;
+      setLogs(trimmed);
+      setSupabaseError(null);
+    } catch (error) {
+      console.error('Failed to refresh race events from Supabase', error);
+      setSupabaseError('Unable to refresh race events from Supabase.');
+    }
+  }, []);
+
+  const bootstrapSupabase = useCallback(async () => {
+    if (!isSupabaseConfigured) {
+      setIsInitialising(false);
+      return;
+    }
+    setIsInitialising(true);
+    try {
+      let driverRows = await supabaseSelect('drivers', {
+        order: { column: 'number', ascending: true },
+      });
+      let lapRows = await supabaseSelect('laps', {
+        order: { column: 'lap_number', ascending: true },
+      });
+      if (!driverRows?.length) {
+        await supabaseUpsert(
+          'drivers',
+          DEFAULT_DRIVERS.map((driver) => ({
+            id: driver.id,
+            number: driver.number,
+            name: driver.name,
+            team: driver.team,
+            marshal_id: driver.marshalId,
+            laps: 0,
+            last_lap_ms: null,
+            best_lap_ms: null,
+            pits: 0,
+            status: 'ready',
+            driver_flag: 'none',
+            pit_complete: false,
+            total_time_ms: 0,
+          })),
+        );
+        driverRows = await supabaseSelect('drivers', {
+          order: { column: 'number', ascending: true },
+        });
+        lapRows = [];
+      }
+      if (driverRows?.length) {
+        applyDriverData(driverRows, lapRows ?? []);
+      }
+      let sessionRows = await supabaseSelect('session_state', {
+        filters: { id: `eq.${SESSION_ROW_ID}` },
+      });
+      let sessionRow = sessionRows?.[0];
+      if (!sessionRow) {
+        sessionRow = {
+          id: SESSION_ROW_ID,
+          event_type: DEFAULT_SESSION_STATE.eventType,
+          total_laps: DEFAULT_SESSION_STATE.totalLaps,
+          total_duration: DEFAULT_SESSION_STATE.totalDuration,
+          procedure_phase: DEFAULT_SESSION_STATE.procedurePhase,
+          flag_status: DEFAULT_SESSION_STATE.flagStatus,
+          track_status: DEFAULT_SESSION_STATE.trackStatus,
+          announcement: DEFAULT_SESSION_STATE.announcement,
+          is_timing: DEFAULT_SESSION_STATE.isTiming,
+          is_paused: DEFAULT_SESSION_STATE.isPaused,
+          race_time_ms: DEFAULT_SESSION_STATE.raceTime,
+          updated_at: new Date().toISOString(),
+        };
+        await supabaseUpsert('session_state', [sessionRow]);
+      }
+      sessionStateRef.current = sessionRow;
+      const hydrated = sessionRowToState(sessionRow);
+      setEventConfig((prev) => ({
+        ...prev,
+        eventType: hydrated.eventType,
+        totalLaps: hydrated.totalLaps,
+        totalDuration: hydrated.totalDuration,
+      }));
+      setProcedurePhase(hydrated.procedurePhase);
+      setFlagStatus(hydrated.flagStatus);
+      setTrackStatus(hydrated.trackStatus);
+      setAnnouncement(hydrated.announcement);
+      setAnnouncementDraft(hydrated.announcement);
+      setIsTiming(hydrated.isTiming);
+      setIsPaused(hydrated.isPaused);
+      setRaceTime(hydrated.raceTime);
+      await refreshLogsFromSupabase();
+      setSupabaseError(null);
+    } catch (error) {
+      console.error('Failed to bootstrap Supabase data', error);
+      setSupabaseError(
+        'Unable to load data from Supabase. Confirm credentials and schema are correct.',
+      );
+    } finally {
+      setIsInitialising(false);
+    }
+  }, [applyDriverData, refreshLogsFromSupabase]);
+
+  const updateSessionState = useCallback(async (patch) => {
+    sessionStateRef.current = {
+      ...sessionStateRef.current,
+      ...patch,
+      id: SESSION_ROW_ID,
+    };
+    if (!isSupabaseConfigured) return;
+    try {
+      await supabaseUpsert('session_state', [
+        {
+          ...sessionStateRef.current,
+          updated_at: new Date().toISOString(),
+        },
+      ]);
+      setSupabaseError(null);
+    } catch (error) {
+      console.error('Failed to update session state', error);
+      setSupabaseError('Unable to update session state in Supabase.');
+    }
+  }, []);
+
+  const syncRaceTimeToSupabase = useCallback(
+    (elapsed) => {
+      if (!isSupabaseConfigured) return;
+      const now = Date.now();
+      if (now - lastRaceTimeSyncRef.current < 1000) {
+        return;
+      }
+      lastRaceTimeSyncRef.current = now;
+      updateSessionState({ race_time_ms: elapsed });
+    },
+    [updateSessionState],
+  );
+
+  const logAction = useCallback(
+    async (action, marshalId = 'Race Control') => {
+      const entry = {
+        id: createClientId(),
+        action,
+        marshalId,
+        timestamp: new Date(),
+      };
+      setLogs((prev) => {
+        const next = [entry, ...prev].slice(0, LOG_LIMIT);
+        logsRef.current = next;
+        return next;
+      });
+      if (isSupabaseConfigured) {
+        try {
+          await supabaseInsert('race_events', [
+            {
+              id: entry.id,
+              message: action,
+              marshal_id: marshalId,
+              created_at: entry.timestamp.toISOString(),
+            },
+          ]);
+          setSupabaseError(null);
+        } catch (error) {
+          console.error('Failed to persist race event', error);
+          setSupabaseError('Unable to store race log in Supabase.');
+        }
+      }
+    },
+    [],
+  );
+
+  const persistDriverState = useCallback(async (driver) => {
+    if (!isSupabaseConfigured) return;
+    try {
+      await supabaseUpsert('drivers', [toDriverRow(driver)]);
+      setSupabaseError(null);
+    } catch (error) {
+      console.error('Failed to persist driver state', error);
+      setSupabaseError('Unable to update driver data in Supabase.');
+    }
+  }, []);
 
   useEffect(() => {
-    let interval;
-    if (isTiming && !isPaused) {
-      interval = setInterval(() => {
-        const now = Date.now();
-        if (raceStartRef.current) {
-          const elapsed = now - raceStartRef.current - pausedDurationRef.current;
-          setRaceTime(elapsed);
-        }
-      }, 100);
+    if (!isTiming || isPaused) {
+      lastRaceTimeSyncRef.current = 0;
+      return () => {};
     }
+    const interval = setInterval(() => {
+      const now = Date.now();
+      if (raceStartRef.current) {
+        const elapsed = now - raceStartRef.current - pausedDurationRef.current;
+        setRaceTime(elapsed);
+        syncRaceTimeToSupabase(elapsed);
+      }
+    }, 100);
     return () => clearInterval(interval);
+  }, [isTiming, isPaused, syncRaceTimeToSupabase]);
+
+  useEffect(() => {
+    if (!isTiming || isPaused) {
+      lastRaceTimeSyncRef.current = 0;
+    }
   }, [isTiming, isPaused]);
 
   useEffect(() => {
@@ -260,35 +558,91 @@ const TimingPanel = () => {
     [],
   );
 
-  const logAction = (action, marshalId = 'Race Control') => {
-    setLogs((prev) => [
-      {
-        id: `${Date.now()}-${Math.random()}`,
-        action,
-        marshalId,
-        timestamp: new Date(),
+  useEffect(() => {
+    bootstrapSupabase();
+  }, [bootstrapSupabase]);
+
+  useEffect(() => {
+    if (!isSupabaseConfigured) {
+      return () => {};
+    }
+    const driverUnsub = subscribeToTable({ table: 'drivers' }, () => {
+      refreshDriversFromSupabase();
+    });
+    const lapUnsub = subscribeToTable({ table: 'laps' }, () => {
+      refreshDriversFromSupabase();
+    });
+    const sessionUnsub = subscribeToTable(
+      { table: 'session_state', filter: `id=eq.${SESSION_ROW_ID}` },
+      (payload) => {
+        if (payload?.new) {
+          sessionStateRef.current = payload.new;
+          const hydrated = sessionRowToState(payload.new);
+          setEventConfig((prev) => ({
+            ...prev,
+            eventType: hydrated.eventType,
+            totalLaps: hydrated.totalLaps,
+            totalDuration: hydrated.totalDuration,
+          }));
+          setProcedurePhase(hydrated.procedurePhase);
+          setFlagStatus(hydrated.flagStatus);
+          setTrackStatus(hydrated.trackStatus);
+          setAnnouncement(hydrated.announcement);
+          setAnnouncementDraft(hydrated.announcement);
+          setIsTiming(hydrated.isTiming);
+          setIsPaused(hydrated.isPaused);
+          setRaceTime(hydrated.raceTime);
+        }
       },
-      ...prev.slice(0, 199),
-    ]);
-  };
+    );
+    const logUnsub = subscribeToTable({ table: 'race_events' }, (payload) => {
+      if (payload?.new) {
+        const entry = {
+          id: payload.new.id ?? createClientId(),
+          action: payload.new.message ?? '',
+          marshalId: payload.new.marshal_id ?? 'Race Control',
+          timestamp: payload.new.created_at
+            ? new Date(payload.new.created_at)
+            : new Date(),
+        };
+        setLogs((prev) => {
+          if (prev.some((log) => log.id === entry.id)) {
+            return prev;
+          }
+          const next = [entry, ...prev].slice(0, LOG_LIMIT);
+          logsRef.current = next;
+          return next;
+        });
+      }
+    });
+    return () => {
+      driverUnsub();
+      lapUnsub();
+      sessionUnsub();
+      logUnsub();
+    };
+  }, [refreshDriversFromSupabase]);
 
   const getMarshalName = (marshalId) =>
     eventConfig.marshals.find((m) => m.id === marshalId)?.name ?? 'Unassigned';
 
   const startWarmup = () => {
     setProcedurePhase('warmup');
-    logAction('Warm up lap started');
+    updateSessionState({ procedure_phase: 'warmup' });
+    void logAction('Warm up lap started');
   };
 
   const callFinalCall = () => {
     setProcedurePhase('final-call');
-    logAction('Final call issued');
+    updateSessionState({ procedure_phase: 'final-call' });
+    void logAction('Final call issued');
   };
 
   const initiateCountdown = () => {
     setCountdown(5);
     setProcedurePhase('countdown');
-    logAction('Race start countdown initiated');
+    updateSessionState({ procedure_phase: 'countdown' });
+    void logAction('Race start countdown initiated');
   };
 
   const goGreen = () => {
@@ -300,14 +654,28 @@ const TimingPanel = () => {
     setIsPaused(false);
     setProcedurePhase('green');
     setFlagStatus('green');
-    setDrivers((prev) =>
-      prev.map((driver) => ({
+    setTrackStatus('green');
+    const now = Date.now();
+    setDrivers((prev) => {
+      const updated = prev.map((driver) => ({
         ...driver,
         status: 'ontrack',
-        currentLapStart: Date.now(),
-      })),
-    );
-    logAction('Session started');
+        currentLapStart: now,
+      }));
+      updated.forEach((driver) => {
+        void persistDriverState(driver);
+      });
+      return updated;
+    });
+    updateSessionState({
+      procedure_phase: 'green',
+      flag_status: 'green',
+      track_status: 'green',
+      is_timing: true,
+      is_paused: false,
+      race_time_ms: 0,
+    });
+    void logAction('Session started');
   };
 
   const confirmPause = () => {
@@ -316,7 +684,8 @@ const TimingPanel = () => {
     if (!confirmed) return;
     pauseStartRef.current = Date.now();
     setIsPaused(true);
-    logAction('Session timer paused');
+    updateSessionState({ is_paused: true });
+    void logAction('Session timer paused');
   };
 
   const resumeTiming = () => {
@@ -325,19 +694,30 @@ const TimingPanel = () => {
     pausedDurationRef.current += pausedFor;
     pauseStartRef.current = null;
     setIsPaused(false);
-    logAction('Session timer resumed');
+    updateSessionState({ is_paused: false });
+    void logAction('Session timer resumed');
   };
 
   const finishSession = () => {
     setProcedurePhase('complete');
     setIsTiming(false);
-    setDrivers((prev) =>
-      prev.map((driver) => ({
+    setIsPaused(false);
+    setDrivers((prev) => {
+      const updated = prev.map((driver) => ({
         ...driver,
         status: driver.status === 'retired' ? 'retired' : 'finished',
-      })),
-    );
-    logAction('Session completed');
+      }));
+      updated.forEach((driver) => {
+        void persistDriverState(driver);
+      });
+      return updated;
+    });
+    updateSessionState({
+      procedure_phase: 'complete',
+      is_timing: false,
+      is_paused: false,
+    });
+    void logAction('Session completed');
   };
 
   const handleFlagChange = (flag) => {
@@ -346,17 +726,28 @@ const TimingPanel = () => {
       if (procedurePhase === 'suspended') {
         setProcedurePhase('green');
       }
-      logAction('Session resumed from suspension');
+      updateSessionState({
+        flag_status: 'green',
+        procedure_phase: procedurePhase === 'suspended' ? 'green' : procedurePhase,
+      });
+      void logAction('Session resumed from suspension');
       return;
     }
     setFlagStatus(flag);
     if (flag === 'red') {
       setProcedurePhase('suspended');
     }
-    logAction(`Flag set to ${flag.toUpperCase()}`);
+    updateSessionState({
+      flag_status: flag,
+      ...(flag === 'red' ? { procedure_phase: 'suspended' } : {}),
+    });
+    void logAction(`Flag set to ${flag.toUpperCase()}`);
   };
 
   const recordLap = (driverId, { manualTime, source } = {}) => {
+    const manualEntry = typeof manualTime === 'number';
+    let updatedDriver = null;
+    const now = Date.now();
     setDrivers((prev) =>
       prev.map((driver) => {
         if (driver.id !== driverId) {
@@ -365,8 +756,7 @@ const TimingPanel = () => {
         if (driver.status === 'retired' || driver.status === 'finished') {
           return driver;
         }
-        const now = Date.now();
-        let lapTime = manualTime ?? null;
+        let lapTime = manualEntry ? manualTime : null;
         if (lapTime === null && driver.currentLapStart) {
           lapTime = now - driver.currentLapStart;
         }
@@ -374,6 +764,15 @@ const TimingPanel = () => {
           return driver;
         }
         const lapTimes = [...driver.lapTimes, lapTime];
+        const lapHistory = [
+          ...driver.lapHistory,
+          {
+            lapNumber: lapTimes.length,
+            lapTime,
+            source: source ?? (manualEntry ? 'manual' : 'automatic'),
+            recordedAt: new Date(),
+          },
+        ];
         const laps = driver.laps + 1;
         const bestLap =
           driver.bestLap === null ? lapTime : Math.min(driver.bestLap, lapTime);
@@ -381,22 +780,19 @@ const TimingPanel = () => {
           eventConfig.eventType === 'Race' && laps >= eventConfig.totalLaps
             ? 'finished'
             : driver.status;
-        const marshalName = getMarshalName(driver.marshalId);
-        logAction(
-          `Lap recorded for #${driver.number} (${formatLapTime(
-            lapTime,
-          )})${source ? ` via ${source}` : ''}`,
-          marshalName,
-        );
-        return {
+        const totalTime = driver.totalTime + lapTime;
+        updatedDriver = {
           ...driver,
           laps,
           lapTimes,
+          lapHistory,
           lastLap: lapTime,
           bestLap,
+          totalTime,
           status,
           currentLapStart: now,
         };
+        return updatedDriver;
       }),
     );
     setManualLapInputs((prev) => ({ ...prev, [driverId]: '' }));
@@ -407,67 +803,127 @@ const TimingPanel = () => {
     lapFlashTimeoutRef.current = setTimeout(() => {
       setRecentLapDriverId(null);
     }, 500);
+    if (updatedDriver) {
+      const marshalName = getMarshalName(updatedDriver.marshalId);
+      void logAction(
+        `Lap recorded for #${updatedDriver.number} (${formatLapTime(
+          updatedDriver.lastLap,
+        )})${source ? ` via ${source}` : ''}`,
+        marshalName,
+      );
+      void persistDriverState(updatedDriver);
+      if (isSupabaseConfigured) {
+        supabaseInsert('laps', [
+          {
+            driver_id: updatedDriver.id,
+            lap_number: updatedDriver.laps,
+            lap_time_ms: updatedDriver.lastLap,
+            source: source ?? (manualEntry ? 'manual' : 'automatic'),
+            recorded_at: new Date().toISOString(),
+          },
+        ])
+          .then(() => setSupabaseError(null))
+          .catch((error) => {
+            console.error('Failed to persist lap', error);
+            setSupabaseError('Unable to store lap in Supabase.');
+          });
+      }
+    }
   };
 
   const retireDriver = (driverId) => {
+    let retiredDriver = null;
     setDrivers((prev) =>
-      prev.map((driver) =>
-        driver.id === driverId
-          ? { ...driver, status: 'retired', currentLapStart: null }
-          : driver,
-      ),
+      prev.map((driver) => {
+        if (driver.id !== driverId) {
+          return driver;
+        }
+        retiredDriver = { ...driver, status: 'retired', currentLapStart: null };
+        return retiredDriver;
+      }),
     );
-    const driver = drivers.find((d) => d.id === driverId);
-    if (driver) {
-      logAction(`Driver #${driver.number} retired`, getMarshalName(driver.marshalId));
+    if (retiredDriver) {
+      void logAction(
+        `Driver #${retiredDriver.number} retired`,
+        getMarshalName(retiredDriver.marshalId),
+      );
+      void persistDriverState(retiredDriver);
     }
   };
 
   const togglePitStop = (driverId) => {
+    let updatedDriver = null;
     setDrivers((prev) =>
-      prev.map((driver) =>
-        driver.id === driverId
-          ? {
-              ...driver,
-              pitComplete: !driver.pitComplete,
-              pits: driver.pitComplete ? driver.pits : driver.pits + 1,
-            }
-          : driver,
-      ),
+      prev.map((driver) => {
+        if (driver.id !== driverId) {
+          return driver;
+        }
+        const nextPitComplete = !driver.pitComplete;
+        updatedDriver = {
+          ...driver,
+          pitComplete: nextPitComplete,
+          pits: driver.pitComplete ? driver.pits : driver.pits + 1,
+        };
+        return updatedDriver;
+      }),
     );
-    const driver = drivers.find((d) => d.id === driverId);
-    if (driver) {
-      logAction(
-        `Pit stop ${driver.pitComplete ? 'cleared' : 'completed'} for #${
-          driver.number
+    if (updatedDriver) {
+      void logAction(
+        `Pit stop ${updatedDriver.pitComplete ? 'completed' : 'cleared'} for #${
+          updatedDriver.number
         }`,
-        getMarshalName(driver.marshalId),
+        getMarshalName(updatedDriver.marshalId),
       );
+      void persistDriverState(updatedDriver);
     }
   };
 
   const setDriverFlag = (driverId, driverFlag) => {
+    let flaggedDriver = null;
     setDrivers((prev) =>
-      prev.map((driver) =>
-        driver.id === driverId ? { ...driver, driverFlag } : driver,
-      ),
+      prev.map((driver) => {
+        if (driver.id !== driverId) {
+          return driver;
+        }
+        flaggedDriver = { ...driver, driverFlag };
+        return flaggedDriver;
+      }),
     );
-    const driver = drivers.find((d) => d.id === driverId);
-    if (driver) {
-      logAction(
-        `Driver alert set to ${driverFlag.toUpperCase()} for #${driver.number}`,
-        getMarshalName(driver.marshalId),
+    if (flaggedDriver) {
+      void logAction(
+        `Driver alert set to ${driverFlag.toUpperCase()} for #${flaggedDriver.number}`,
+        getMarshalName(flaggedDriver.marshalId),
       );
+      void persistDriverState(flaggedDriver);
+    }
+  };
+
+  const updateTrackStatusSelection = (statusId) => {
+    setTrackStatus(statusId);
+    updateSessionState({ track_status: statusId });
+    const statusMeta = TRACK_STATUS_MAP[statusId];
+    void logAction(
+      `Track status set to ${statusMeta ? statusMeta.label : statusId.toUpperCase()}`,
+    );
+  };
+
+  const pushAnnouncement = () => {
+    const trimmed = announcementDraft.trim();
+    setAnnouncement(trimmed);
+    updateSessionState({ announcement: trimmed });
+    if (trimmed) {
+      void logAction(`Announcement: ${trimmed}`);
+    } else {
+      void logAction('Announcements cleared');
     }
   };
 
   const driverTiming = useMemo(() => {
     const metric = (driver) => {
       if (eventConfig.eventType === 'Race') {
-        const totalTime = driver.lapTimes.reduce((sum, time) => sum + time, 0);
         return {
           key: driver.laps,
-          secondary: totalTime,
+          secondary: driver.totalTime,
         };
       }
       const best = driver.bestLap ?? Number.POSITIVE_INFINITY;
@@ -496,14 +952,8 @@ const TimingPanel = () => {
           if (eventConfig.eventType === 'Race') {
             const leader = array[0].driver;
             const leaderLaps = leader.laps;
-            const leaderTotal = leader.lapTimes.reduce(
-              (sum, time) => sum + time,
-              0,
-            );
-            const driverTotal = driver.lapTimes.reduce(
-              (sum, time) => sum + time,
-              0,
-            );
+            const leaderTotal = leader.totalTime;
+            const driverTotal = driver.totalTime;
             const lapDiff = leaderLaps - driver.laps;
             if (lapDiff === 0) {
               gap = `+${formatLapTime(driverTotal - leaderTotal)}`;
@@ -511,10 +961,7 @@ const TimingPanel = () => {
               gap = `-${lapDiff}L`;
             }
             const ahead = array[index - 1].driver;
-            const aheadTotal = ahead.lapTimes.reduce(
-              (sum, time) => sum + time,
-              0,
-            );
+            const aheadTotal = ahead.totalTime;
             const aheadLapDiff = ahead.laps - driver.laps;
             if (aheadLapDiff === 0) {
               interval = `+${formatLapTime(driverTotal - aheadTotal)}`;
@@ -628,29 +1075,64 @@ const TimingPanel = () => {
         return;
       }
     }
+    const nextEventType = setupDraft.eventType;
+    const nextTotalLaps = Number.parseInt(setupDraft.totalLaps, 10) || 0;
+    const nextTotalDuration = Number.parseInt(setupDraft.totalDuration, 10) || 0;
     setEventConfig(({ marshals: _oldMarshals, ...rest }) => ({
       ...rest,
-      eventType: setupDraft.eventType,
-      totalLaps: Number.parseInt(setupDraft.totalLaps, 10) || 0,
-      totalDuration: Number.parseInt(setupDraft.totalDuration, 10) || 0,
+      eventType: nextEventType,
+      totalLaps: nextTotalLaps,
+      totalDuration: nextTotalDuration,
       marshals: setupDraft.marshals,
     }));
-    setDrivers(setupDraft.drivers.map((driver) => toDriverState(driver)));
+    const normalizedDrivers = setupDraft.drivers.map((driver) => toDriverState(driver));
+    setDrivers(normalizedDrivers);
+    setManualLapInputs({});
     setProcedurePhase('setup');
     setIsTiming(false);
     setIsPaused(false);
     setFlagStatus('green');
+    setTrackStatus('green');
     setRaceTime(0);
+    setAnnouncement('');
+    setAnnouncementDraft('');
     setLogs([]);
     setShowSetup(false);
-    logAction('Session configuration updated');
+    updateSessionState({
+      event_type: nextEventType,
+      total_laps: nextTotalLaps,
+      total_duration: nextTotalDuration,
+      procedure_phase: 'setup',
+      flag_status: 'green',
+      track_status: 'green',
+      is_timing: false,
+      is_paused: false,
+      race_time_ms: 0,
+      announcement: '',
+    });
+    void logAction('Session configuration updated');
+    if (isSupabaseConfigured) {
+      supabaseUpsert('drivers', normalizedDrivers.map((driver) => toDriverRow(driver)))
+        .then(() => setSupabaseError(null))
+        .catch((error) => {
+          console.error('Failed to persist driver setup', error);
+          setSupabaseError('Unable to persist driver setup to Supabase.');
+        });
+      normalizedDrivers.forEach((driver) => {
+        supabaseDelete('laps', { filters: { driver_id: `eq.${driver.id}` } }).catch(
+          (error) => {
+            console.error('Failed to clear laps for driver', driver.id, error);
+          },
+        );
+      });
+    }
   };
 
   const exportResults = () => {
     const header = 'Position,Number,Driver,Team,Laps,Best Lap,Last Lap,Total Time,Status\n';
     const rows = driverTiming
       .map((driver) => {
-        const total = driver.lapTimes.reduce((sum, time) => sum + time, 0);
+        const total = driver.totalTime ?? 0;
         return [
           driver.position,
           driver.number,
@@ -673,6 +1155,17 @@ const TimingPanel = () => {
     a.click();
     logAction('Results exported to CSV');
   };
+
+  const trackStatusDetails = TRACK_STATUS_MAP[trackStatus] ?? TRACK_STATUS_OPTIONS[0];
+  const trackStatusIconMap = {
+    flag: Flag,
+    alert: AlertTriangle,
+    gauge: Gauge,
+    car: Car,
+    stop: StopCircle,
+  };
+  const TrackStatusIcon =
+    trackStatusIconMap[trackStatusDetails?.icon ?? 'flag'] ?? trackStatusIconMap.flag;
 
   return (
     <div className="min-h-screen bg-[#0B0F19] text-white">
@@ -720,6 +1213,80 @@ const TimingPanel = () => {
         </div>
       </header>
       <main className="mx-auto max-w-7xl space-y-6 px-6 py-6">
+        {isInitialising && (
+          <div className="rounded-xl border border-neutral-800 bg-neutral-900/70 px-4 py-3 text-sm text-neutral-300">
+            {isSupabaseConfigured
+              ? 'Synchronising with Supabase…'
+              : 'Supabase environment variables are not configured. Running in local-only mode.'}
+          </div>
+        )}
+        {!isSupabaseConfigured && (
+          <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
+            Configure VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY to enable persistence and realtime updates.
+          </div>
+        )}
+        {supabaseError && (
+          <div className="rounded-xl border border-rose-500/40 bg-rose-500/15 px-4 py-3 text-sm text-rose-200">
+            {supabaseError}
+          </div>
+        )}
+        <section className="grid gap-4 lg:grid-cols-[2fr_3fr]">
+          <div className="rounded-2xl border border-neutral-800 bg-[#11182c]/80 p-4 shadow-[0_18px_48px_-30px_rgba(159,247,211,0.25)]">
+            <div className={`flex items-start gap-4 rounded-xl p-4 ${trackStatusDetails.bannerClass}`}>
+              <div className="flex h-12 w-12 items-center justify-center rounded-full bg-neutral-950/50">
+                <TrackStatusIcon className="h-7 w-7" />
+              </div>
+              <div className="space-y-1">
+                <p className="text-xs uppercase tracking-[0.35em] text-neutral-300">Track Status</p>
+                <h3 className="text-lg font-semibold text-white">{trackStatusDetails.label}</h3>
+                <p className="max-w-sm text-sm text-neutral-200/80">
+                  {trackStatusDetails.description}
+                </p>
+              </div>
+            </div>
+            <div className="mt-4 flex flex-wrap gap-2">
+              {TRACK_STATUS_OPTIONS.map((option) => (
+                <button
+                  key={option.id}
+                  onClick={() => updateTrackStatusSelection(option.id)}
+                  className={`rounded-full px-3 py-1.5 text-xs font-semibold uppercase tracking-wide transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-[#0B0F19] ${option.controlClass} ${
+                    trackStatus === option.id ? 'ring-2 ring-offset-2 ring-offset-[#0B0F19]' : ''
+                  }`}
+                >
+                  {option.shortLabel}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="rounded-2xl border border-neutral-800 bg-[#11182c]/80 p-4 shadow-[0_18px_48px_-30px_rgba(124,107,255,0.25)]">
+            <div className="flex items-start gap-3">
+              <div className="rounded-full bg-[#9FF7D3]/20 p-2 text-[#9FF7D3]">
+                <Megaphone className="h-5 w-5" />
+              </div>
+              <div className="space-y-1">
+                <p className="text-xs uppercase tracking-[0.35em] text-neutral-400">Live Announcements</p>
+                <p className="whitespace-pre-line text-sm text-neutral-100">
+                  {announcement ? announcement : 'No active announcements.'}
+                </p>
+              </div>
+            </div>
+            <div className="mt-4 flex flex-col gap-3 sm:flex-row">
+              <input
+                type="text"
+                value={announcementDraft}
+                onChange={(event) => setAnnouncementDraft(event.target.value)}
+                placeholder="Enter live message…"
+                className="flex-1 rounded-lg border border-neutral-700 bg-neutral-900/70 px-3 py-2 text-sm text-neutral-100 focus:outline-none focus:ring-2 focus:ring-[#9FF7D3]"
+              />
+              <button
+                onClick={pushAnnouncement}
+                className="flex items-center justify-center rounded-lg border border-[#9FF7D3]/40 bg-[#9FF7D3]/20 px-4 py-2 text-xs font-semibold uppercase tracking-wide text-[#9FF7D3] transition hover:border-[#9FF7D3]"
+              >
+                Update
+              </button>
+            </div>
+          </div>
+        </section>
         <section className="rounded-2xl border border-neutral-800 bg-[#11182c]/80 p-4 shadow-[0_18px_48px_-30px_rgba(124,107,255,0.45)]">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="text-sm text-neutral-400">
