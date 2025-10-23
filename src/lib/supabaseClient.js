@@ -36,7 +36,12 @@ const request = async (
   { method = 'GET', filters, body, prefer, signal, headers = {}, select, order } = {},
 ) => {
   if (!isSupabaseConfigured) {
-    throw new Error('Supabase is not configured. Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY.');
+    if (process.env.NODE_ENV !== 'production') {
+      console.warn(
+        `Supabase request for "${table}" skipped because credentials are not configured. Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY to enable persistence.`,
+      );
+    }
+    return method === 'GET' ? [] : null;
   }
   const searchParams = parseFilters(filters);
   if (select) {
