@@ -20,6 +20,7 @@ import {
 import { formatLapTime, formatRaceClock } from '../utils/time';
 import { TRACK_STATUS_MAP, TRACK_STATUS_OPTIONS } from '../constants/trackStatus';
 import {
+  isColumnMissingError,
   isSupabaseConfigured,
   subscribeToTable,
   supabaseDelete,
@@ -184,8 +185,11 @@ const TimingPanel = () => {
     refreshSessions,
     isLoading: isSessionLoading,
     error: sessionError,
+    supportsSessions,
+    fallbackToLegacySchema,
   } = useEventSession();
-  const fallbackSessionId = activeSessionId ?? LEGACY_SESSION_ID;
+  const sessionId = activeSessionId ?? LEGACY_SESSION_ID;
+  const fallbackSessionId = sessionId;
 
   const activeSession = useMemo(
     () => sessions.find((session) => session.id === activeSessionId) ?? null,
@@ -193,6 +197,9 @@ const TimingPanel = () => {
   );
 
   const sessionMeta = useMemo(() => {
+    if (!supportsSessions) {
+      return 'Connected to legacy Supabase schema. All data uses the default session.';
+    }
     if (!activeSession) {
       return 'Sessions isolate drivers, laps, and events for each race control shift.';
     }
@@ -204,7 +211,7 @@ const TimingPanel = () => {
       details.push(`Completed ${formatSessionTimestamp(activeSession.ends_at)}`);
     }
     return details.join(' • ');
-  }, [activeSession]);
+  }, [activeSession, supportsSessions]);
 
   const handleSessionChange = useCallback(
     (event) => {
@@ -267,6 +274,47 @@ const TimingPanel = () => {
   const lastRaceTimeSyncRef = useRef(0);
   const logsRef = useRef([]);
 
+  const withSessionFilter = useCallback(
+    (filters = {}, sessionOverride = sessionId) =>
+      supportsSessions ? { ...filters, session_id: `eq.${sessionOverride}` } : { ...filters },
+    [supportsSessions, sessionId],
+  );
+
+  const sanitizeRowForSupabase = useCallback(
+    (row = {}, overrideSessionId = sessionId) => {
+      const next = { ...row };
+      if (supportsSessions) {
+        if (overrideSessionId) {
+          next.session_id = overrideSessionId;
+        }
+        return next;
+      }
+      delete next.session_id;
+      return next;
+    },
+    [supportsSessions, sessionId],
+  );
+
+  const sanitizeRowsForSupabase = useCallback(
+    (rows = [], overrideSessionId = sessionId) =>
+      rows.map((row) =>
+        sanitizeRowForSupabase(row, row?.session_id ?? overrideSessionId),
+      ),
+    [sanitizeRowForSupabase, sessionId],
+  );
+
+  const handleSchemaMismatch = useCallback(
+    (error) => {
+      if (isColumnMissingError(error, 'session_id')) {
+        console.warn('Supabase schema missing session_id column. Falling back to legacy mode.');
+        fallbackToLegacySchema();
+        return true;
+      }
+      return false;
+    },
+    [fallbackToLegacySchema],
+  );
+
   const applyDriverData = useCallback((driverRows = [], lapRows = []) => {
     if (!driverRows.length) {
       return;
@@ -277,15 +325,14 @@ const TimingPanel = () => {
 
   const refreshDriversFromSupabase = useCallback(async () => {
     if (!isSupabaseConfigured) return;
-    const sessionId = activeSessionId ?? LEGACY_SESSION_ID;
     try {
       const [driverRows, lapRows] = await Promise.all([
         supabaseSelect('drivers', {
-          filters: { session_id: `eq.${sessionId}` },
+          filters: withSessionFilter({}, sessionId),
           order: { column: 'number', ascending: true },
         }),
         supabaseSelect('laps', {
-          filters: { session_id: `eq.${sessionId}` },
+          filters: withSessionFilter({}, sessionId),
           order: { column: 'lap_number', ascending: true },
         }),
       ]);
@@ -294,17 +341,20 @@ const TimingPanel = () => {
       }
       setSupabaseError(null);
     } catch (error) {
+      if (handleSchemaMismatch(error)) {
+        setSupabaseError(null);
+        return;
+      }
       console.error('Failed to refresh drivers from Supabase', error);
       setSupabaseError('Unable to refresh drivers from Supabase.');
     }
-  }, [activeSessionId, applyDriverData]);
+  }, [activeSessionId, applyDriverData, handleSchemaMismatch, sessionId, withSessionFilter]);
 
   const refreshSessionFromSupabase = useCallback(async () => {
     if (!isSupabaseConfigured) return;
-    const sessionId = activeSessionId ?? LEGACY_SESSION_ID;
     try {
       const rows = await supabaseSelect('session_state', {
-        filters: { session_id: `eq.${sessionId}` },
+        filters: withSessionFilter({}, sessionId),
       });
       const sessionRow = rows?.[0];
       if (!sessionRow) return;
@@ -331,18 +381,21 @@ const TimingPanel = () => {
       setRaceTime(hydrated.raceTime);
       setSupabaseError(null);
     } catch (error) {
+      if (handleSchemaMismatch(error)) {
+        setSupabaseError(null);
+        return;
+      }
       console.error('Failed to refresh session state from Supabase', error);
       setSupabaseError('Unable to refresh session state from Supabase.');
     }
-  }, [activeSessionId]);
+  }, [activeSessionId, handleSchemaMismatch, sessionId, withSessionFilter]);
 
   const refreshLogsFromSupabase = useCallback(async () => {
     if (!isSupabaseConfigured) return;
-    const sessionId = activeSessionId ?? LEGACY_SESSION_ID;
     try {
       const rows = await supabaseSelect('race_events', {
         order: { column: 'created_at', ascending: false },
-        filters: { limit: LOG_LIMIT, session_id: `eq.${sessionId}` },
+        filters: withSessionFilter({ limit: LOG_LIMIT }, sessionId),
       });
       if (!Array.isArray(rows)) return;
       const mapped = rows.map((row) => ({
@@ -356,49 +409,54 @@ const TimingPanel = () => {
       setLogs(trimmed);
       setSupabaseError(null);
     } catch (error) {
+      if (handleSchemaMismatch(error)) {
+        setSupabaseError(null);
+        return;
+      }
       console.error('Failed to refresh race events from Supabase', error);
       setSupabaseError('Unable to refresh race events from Supabase.');
     }
-  }, [activeSessionId]);
+  }, [activeSessionId, handleSchemaMismatch, sessionId, withSessionFilter]);
 
   const bootstrapSupabase = useCallback(async () => {
     if (!isSupabaseConfigured) {
       setIsInitialising(false);
       return;
     }
-    const sessionId = activeSessionId ?? LEGACY_SESSION_ID;
     setIsInitialising(true);
     try {
       let driverRows = await supabaseSelect('drivers', {
-        filters: { session_id: `eq.${sessionId}` },
+        filters: withSessionFilter({}, sessionId),
         order: { column: 'number', ascending: true },
       });
       let lapRows = await supabaseSelect('laps', {
-        filters: { session_id: `eq.${sessionId}` },
+        filters: withSessionFilter({}, sessionId),
         order: { column: 'lap_number', ascending: true },
       });
       if (!driverRows?.length) {
         await supabaseUpsert(
           'drivers',
-          DEFAULT_DRIVERS.map((driver) => ({
-            id: driver.id,
-            number: driver.number,
-            name: driver.name,
-            team: driver.team,
-            marshal_id: driver.marshalId,
-            laps: 0,
-            last_lap_ms: null,
-            best_lap_ms: null,
-            pits: 0,
-            status: 'ready',
-            driver_flag: 'none',
-            pit_complete: false,
-            total_time_ms: 0,
-            session_id: sessionId,
-          })),
+          sanitizeRowsForSupabase(
+            DEFAULT_DRIVERS.map((driver) => ({
+              id: driver.id,
+              number: driver.number,
+              name: driver.name,
+              team: driver.team,
+              marshal_id: driver.marshalId,
+              laps: 0,
+              last_lap_ms: null,
+              best_lap_ms: null,
+              pits: 0,
+              status: 'ready',
+              driver_flag: 'none',
+              pit_complete: false,
+              total_time_ms: 0,
+            })),
+            sessionId,
+          ),
         );
         driverRows = await supabaseSelect('drivers', {
-          filters: { session_id: `eq.${sessionId}` },
+          filters: withSessionFilter({}, sessionId),
           order: { column: 'number', ascending: true },
         });
         lapRows = [];
@@ -407,7 +465,7 @@ const TimingPanel = () => {
         applyDriverData(driverRows, lapRows ?? []);
       }
       let sessionRows = await supabaseSelect('session_state', {
-        filters: { session_id: `eq.${sessionId}` },
+        filters: withSessionFilter({}, sessionId),
       });
       let sessionRow = sessionRows?.[0];
       if (!sessionRow) {
@@ -426,7 +484,7 @@ const TimingPanel = () => {
           race_time_ms: DEFAULT_SESSION_STATE.raceTime,
           updated_at: new Date().toISOString(),
         };
-        await supabaseUpsert('session_state', [sessionRow]);
+        await supabaseUpsert('session_state', sanitizeRowsForSupabase([sessionRow], sessionId));
       }
       const hydrated = sessionRowToState(sessionRow);
       sessionStateRef.current = {
@@ -451,18 +509,29 @@ const TimingPanel = () => {
       await refreshLogsFromSupabase();
       setSupabaseError(null);
     } catch (error) {
-      console.error('Failed to bootstrap Supabase data', error);
-      setSupabaseError(
-        'Unable to load data from Supabase. Confirm credentials and schema are correct.',
-      );
+      if (handleSchemaMismatch(error)) {
+        setSupabaseError(null);
+      } else {
+        console.error('Failed to bootstrap Supabase data', error);
+        setSupabaseError(
+          'Unable to load data from Supabase. Confirm credentials and schema are correct.',
+        );
+      }
     } finally {
       setIsInitialising(false);
     }
-  }, [activeSessionId, applyDriverData, refreshLogsFromSupabase]);
+  }, [
+    activeSessionId,
+    applyDriverData,
+    handleSchemaMismatch,
+    refreshLogsFromSupabase,
+    sanitizeRowsForSupabase,
+    sessionId,
+    withSessionFilter,
+  ]);
 
   const updateSessionState = useCallback(
     async (patch) => {
-      const sessionId = activeSessionId ?? LEGACY_SESSION_ID;
       sessionStateRef.current = {
         ...sessionStateRef.current,
         ...patch,
@@ -471,19 +540,29 @@ const TimingPanel = () => {
       };
       if (!isSupabaseConfigured) return;
       try {
-        await supabaseUpsert('session_state', [
-          {
-            ...sessionStateRef.current,
-            updated_at: new Date().toISOString(),
-          },
-        ]);
+        await supabaseUpsert(
+          'session_state',
+          sanitizeRowsForSupabase(
+            [
+              {
+                ...sessionStateRef.current,
+                updated_at: new Date().toISOString(),
+              },
+            ],
+            sessionId,
+          ),
+        );
         setSupabaseError(null);
       } catch (error) {
+        if (handleSchemaMismatch(error)) {
+          setSupabaseError(null);
+          return;
+        }
         console.error('Failed to update session state', error);
         setSupabaseError('Unable to update session state in Supabase.');
       }
     },
-    [activeSessionId],
+    [handleSchemaMismatch, sanitizeRowsForSupabase, sessionId],
   );
 
   const syncRaceTimeToSupabase = useCallback(
@@ -515,38 +594,57 @@ const TimingPanel = () => {
       });
       if (isSupabaseConfigured) {
         try {
-          await supabaseInsert('race_events', [
-            {
-              id: entry.id,
-              message: action,
-              marshal_id: marshalId,
-              session_id: sessionId,
-              created_at: entry.timestamp.toISOString(),
-            },
-          ]);
+          await supabaseInsert(
+            'race_events',
+            sanitizeRowsForSupabase(
+              [
+                {
+                  id: entry.id,
+                  message: action,
+                  marshal_id: marshalId,
+                  session_id: sessionId,
+                  created_at: entry.timestamp.toISOString(),
+                },
+              ],
+              sessionId,
+            ),
+          );
           setSupabaseError(null);
         } catch (error) {
+          if (handleSchemaMismatch(error)) {
+            setSupabaseError(null);
+            return;
+          }
           console.error('Failed to persist race event', error);
           setSupabaseError('Unable to store race log in Supabase.');
         }
       }
     },
-    [activeSessionId],
+    [handleSchemaMismatch, sanitizeRowsForSupabase, sessionId],
   );
 
   const persistDriverState = useCallback(
     async (driver) => {
       if (!isSupabaseConfigured) return;
-      const sessionId = activeSessionId ?? driver.sessionId ?? LEGACY_SESSION_ID;
+      const targetSessionId = driver.sessionId ?? sessionId;
       try {
-        await supabaseUpsert('drivers', [toDriverRow({ ...driver, sessionId })]);
+        await supabaseUpsert(
+          'drivers',
+          sanitizeRowsForSupabase([
+            toDriverRow({ ...driver, sessionId: targetSessionId }),
+          ], targetSessionId),
+        );
         setSupabaseError(null);
       } catch (error) {
+        if (handleSchemaMismatch(error)) {
+          setSupabaseError(null);
+          return;
+        }
         console.error('Failed to persist driver state', error);
         setSupabaseError('Unable to update driver data in Supabase.');
       }
     },
-    [activeSessionId],
+    [handleSchemaMismatch, sanitizeRowsForSupabase, sessionId],
   );
 
   useEffect(() => {
@@ -606,21 +704,22 @@ const TimingPanel = () => {
     if (!isSupabaseConfigured) {
       return () => {};
     }
-    const sessionId = activeSessionId ?? LEGACY_SESSION_ID;
+    const subscriptionConfig = (table) =>
+      supportsSessions ? { table, filter: `session_id=eq.${sessionId}` } : { table };
     const driverUnsub = subscribeToTable(
-      { table: 'drivers', filter: `session_id=eq.${sessionId}` },
+      subscriptionConfig('drivers'),
       () => {
         refreshDriversFromSupabase();
       },
     );
     const lapUnsub = subscribeToTable(
-      { table: 'laps', filter: `session_id=eq.${sessionId}` },
+      subscriptionConfig('laps'),
       () => {
         refreshDriversFromSupabase();
       },
     );
     const sessionUnsub = subscribeToTable(
-      { table: 'session_state', filter: `session_id=eq.${sessionId}` },
+      subscriptionConfig('session_state'),
       (payload) => {
         if (payload?.new) {
           const hydrated = sessionRowToState(payload.new);
@@ -647,7 +746,7 @@ const TimingPanel = () => {
       },
     );
     const logUnsub = subscribeToTable(
-      { table: 'race_events', filter: `session_id=eq.${sessionId}` },
+      subscriptionConfig('race_events'),
       (payload) => {
         if (payload?.new) {
           const entry = {
@@ -675,7 +774,7 @@ const TimingPanel = () => {
       sessionUnsub();
       logUnsub();
     };
-  }, [activeSessionId, refreshDriversFromSupabase]);
+  }, [activeSessionId, refreshDriversFromSupabase, sessionId, supportsSessions]);
 
   const getMarshalName = (marshalId) =>
     eventConfig.marshals.find((m) => m.id === marshalId)?.name ?? 'Unassigned';
@@ -926,19 +1025,29 @@ const TimingPanel = () => {
           updatedDriver.lapHistory[
             updatedDriver.lapHistory.length - 1
           ]?.recordedAt?.toISOString?.() ?? new Date().toISOString();
-        const sessionId = activeSessionId ?? updatedDriver.sessionId ?? LEGACY_SESSION_ID;
-        supabaseInsert('laps', [
-          {
-            driver_id: updatedDriver.id,
-            lap_number: updatedDriver.laps,
-            lap_time_ms: updatedDriver.lastLap,
-            source: source ?? (manualEntry ? 'manual' : 'automatic'),
-            session_id: sessionId,
-            recorded_at: recordedAtIso,
-          },
-        ])
+        const targetSessionId = updatedDriver.sessionId ?? sessionId;
+        supabaseInsert(
+          'laps',
+          sanitizeRowsForSupabase(
+            [
+              {
+                driver_id: updatedDriver.id,
+                lap_number: updatedDriver.laps,
+                lap_time_ms: updatedDriver.lastLap,
+                source: source ?? (manualEntry ? 'manual' : 'automatic'),
+                session_id: targetSessionId,
+                recorded_at: recordedAtIso,
+              },
+            ],
+            targetSessionId,
+          ),
+        )
           .then(() => setSupabaseError(null))
           .catch((error) => {
+            if (handleSchemaMismatch(error)) {
+              setSupabaseError(null);
+              return;
+            }
             console.error('Failed to persist lap', error);
             setSupabaseError('Unable to store lap in Supabase.');
           });
@@ -1044,28 +1153,35 @@ const TimingPanel = () => {
       );
       void persistDriverState(updatedDriver);
       if (isSupabaseConfigured && removedLapNumber !== null) {
-        const sessionId = activeSessionId ?? updatedDriver.sessionId ?? LEGACY_SESSION_ID;
+        const targetSessionId = updatedDriver.sessionId ?? sessionId;
         supabaseDelete('laps', {
-          filters: {
-            driver_id: `eq.${updatedDriver.id}`,
-            lap_number: `eq.${removedLapNumber}`,
-            session_id: `eq.${sessionId}`,
-          },
+          filters: withSessionFilter(
+            {
+              driver_id: `eq.${updatedDriver.id}`,
+              lap_number: `eq.${removedLapNumber}`,
+            },
+            targetSessionId,
+          ),
         })
           .then(() => setSupabaseError(null))
           .catch((error) => {
+            if (handleSchemaMismatch(error)) {
+              setSupabaseError(null);
+              return;
+            }
             console.error('Failed to invalidate lap in Supabase', error);
             setSupabaseError('Unable to remove lap from Supabase.');
           });
       }
     },
     [
-      activeSessionId,
       getMarshalName,
+      handleSchemaMismatch,
       isSupabaseConfigured,
       logAction,
       persistDriverState,
-      setSupabaseError,
+      sessionId,
+      withSessionFilter,
     ],
   );
 
@@ -1376,21 +1492,29 @@ const TimingPanel = () => {
     if (isSupabaseConfigured) {
       supabaseUpsert(
         'drivers',
-        normalizedDrivers.map((driver) => toDriverRow({ ...driver, sessionId })),
+        sanitizeRowsForSupabase(
+          normalizedDrivers.map((driver) => toDriverRow({ ...driver, sessionId })),
+          sessionId,
+        ),
       )
         .then(() => setSupabaseError(null))
         .catch((error) => {
+          if (handleSchemaMismatch(error)) {
+            setSupabaseError(null);
+            return;
+          }
           console.error('Failed to persist driver setup', error);
           setSupabaseError('Unable to persist driver setup to Supabase.');
         });
       normalizedDrivers.forEach((driver) => {
         supabaseDelete('laps', {
-          filters: { driver_id: `eq.${driver.id}`, session_id: `eq.${sessionId}` },
-        }).catch(
-          (error) => {
-            console.error('Failed to clear laps for driver', driver.id, error);
-          },
-        );
+          filters: withSessionFilter({ driver_id: `eq.${driver.id}` }, sessionId),
+        }).catch((error) => {
+          if (handleSchemaMismatch(error)) {
+            return;
+          }
+          console.error('Failed to clear laps for driver', driver.id, error);
+        });
       });
     }
   };

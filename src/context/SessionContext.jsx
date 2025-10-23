@@ -2,11 +2,13 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import {
   buildStorageObjectUrl,
   isSupabaseConfigured,
+  isTableMissingError,
   supabaseInsert,
   supabaseSelect,
   supabaseStorageUpload,
   supabaseUpdate,
 } from '../lib/supabaseClient';
+import { LEGACY_SESSION_ID } from '../utils/raceData';
 
 const STORAGE_KEY = 'timekeeper.activeSessionId';
 
@@ -20,6 +22,18 @@ const EventSessionContext = createContext({
   createSession: async () => {},
   startSession: async () => {},
   completeSession: async () => {},
+  supportsSessions: true,
+  fallbackToLegacySchema: () => {},
+});
+
+const createLegacySessionRow = () => ({
+  id: LEGACY_SESSION_ID,
+  name: 'Legacy Session',
+  status: 'active',
+  starts_at: null,
+  ends_at: null,
+  created_at: null,
+  updated_at: null,
 });
 
 const encodePath = (sessionId) => sessionId.replaceAll(':', '-');
@@ -118,7 +132,22 @@ export const EventSessionProvider = ({ children }) => {
   );
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [supportsSessions, setSupportsSessions] = useState(true);
   const isCompletingRef = useRef(false);
+
+  const fallbackToLegacySchema = useCallback(() => {
+    const fallbackSession = createLegacySessionRow();
+    setSupportsSessions((prev) => (prev ? false : prev));
+    setSessions((prev) => {
+      if (prev.length === 1 && prev[0]?.id === LEGACY_SESSION_ID) {
+        return prev;
+      }
+      return [fallbackSession];
+    });
+    setActiveSessionId((prev) => (prev === LEGACY_SESSION_ID ? prev : LEGACY_SESSION_ID));
+    setError(null);
+    return [fallbackSession];
+  }, []);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -133,7 +162,11 @@ export const EventSessionProvider = ({ children }) => {
     if (!isSupabaseConfigured) {
       setSessions([]);
       setActiveSessionId(null);
+      setSupportsSessions(true);
       return [];
+    }
+    if (!supportsSessions) {
+      return fallbackToLegacySchema();
     }
     setIsLoading(true);
     try {
@@ -150,13 +183,17 @@ export const EventSessionProvider = ({ children }) => {
       }
       return rows;
     } catch (refreshError) {
+      if (isTableMissingError(refreshError, 'sessions')) {
+        console.warn('Supabase sessions table missing. Falling back to legacy mode.');
+        return fallbackToLegacySchema();
+      }
       console.error('Failed to refresh sessions', refreshError);
       setError('Unable to load sessions from Supabase.');
       return [];
     } finally {
       setIsLoading(false);
     }
-  }, [activeSessionId]);
+  }, [activeSessionId, fallbackToLegacySchema, supportsSessions]);
 
   useEffect(() => {
     if (!isSupabaseConfigured) return;
@@ -170,6 +207,10 @@ export const EventSessionProvider = ({ children }) => {
   const createSession = useCallback(
     async ({ name, startsAt } = {}) => {
       if (!isSupabaseConfigured) return null;
+      if (!supportsSessions) {
+        setError('Session management is unavailable with this Supabase schema.');
+        return null;
+      }
       const now = new Date().toISOString();
       try {
         const rows = await supabaseInsert('sessions', [
@@ -193,12 +234,16 @@ export const EventSessionProvider = ({ children }) => {
         return null;
       }
     },
-    [],
+    [supportsSessions],
   );
 
   const startSession = useCallback(
     async (sessionId) => {
       if (!sessionId || !isSupabaseConfigured) return false;
+      if (!supportsSessions) {
+        setError('Session management is unavailable with this Supabase schema.');
+        return false;
+      }
       try {
         const now = new Date().toISOString();
         await supabaseUpdate(
@@ -221,12 +266,16 @@ export const EventSessionProvider = ({ children }) => {
         return false;
       }
     },
-    [],
+    [supportsSessions],
   );
 
   const completeSession = useCallback(
     async (sessionId) => {
       if (!sessionId || !isSupabaseConfigured || isCompletingRef.current) return false;
+      if (!supportsSessions) {
+        setError('Session management is unavailable with this Supabase schema.');
+        return false;
+      }
       isCompletingRef.current = true;
       try {
         const now = new Date().toISOString();
@@ -272,7 +321,7 @@ export const EventSessionProvider = ({ children }) => {
         isCompletingRef.current = false;
       }
     },
-    [],
+    [supportsSessions],
   );
 
   const value = useMemo(
@@ -286,6 +335,8 @@ export const EventSessionProvider = ({ children }) => {
       createSession,
       startSession,
       completeSession,
+      supportsSessions,
+      fallbackToLegacySchema,
     }),
     [
       sessions,
@@ -297,6 +348,8 @@ export const EventSessionProvider = ({ children }) => {
       createSession,
       startSession,
       completeSession,
+      supportsSessions,
+      fallbackToLegacySchema,
     ],
   );
 

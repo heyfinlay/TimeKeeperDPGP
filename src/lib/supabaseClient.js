@@ -65,7 +65,24 @@ const request = async (
   });
   if (!response.ok) {
     const errorText = await response.text();
-    throw new Error(`Supabase request failed (${response.status}): ${errorText}`);
+    let parsed = null;
+    try {
+      parsed = errorText ? JSON.parse(errorText) : null;
+    } catch (parseError) {
+      parsed = null;
+    }
+    const error = new Error(`Supabase request failed (${response.status}): ${errorText}`);
+    error.status = response.status;
+    if (parsed && typeof parsed === 'object') {
+      error.code = parsed.code;
+      error.details = parsed.details;
+      error.hint = parsed.hint;
+      error.supabase = parsed;
+      if (typeof parsed.message === 'string') {
+        error.supabaseMessage = parsed.message;
+      }
+    }
+    throw error;
   }
   if (response.status === 204) {
     return null;
@@ -264,4 +281,49 @@ export const subscribeToTable = (
 export const supabaseEnvironment = {
   url: SUPABASE_URL,
   anonKey: SUPABASE_ANON_KEY,
+};
+
+const includesCaseInsensitive = (source, search) => {
+  if (!source || !search) return false;
+  return source.toLowerCase().includes(search.toLowerCase());
+};
+
+const extractMessage = (error) => {
+  if (!error) return '';
+  if (typeof error.supabaseMessage === 'string') {
+    return error.supabaseMessage;
+  }
+  if (typeof error.details === 'string') {
+    return error.details;
+  }
+  if (error.supabase && typeof error.supabase.message === 'string') {
+    return error.supabase.message;
+  }
+  if (typeof error.message === 'string') {
+    return error.message;
+  }
+  return '';
+};
+
+export const isTableMissingError = (error, table) => {
+  if (!error) return false;
+  if (error.code === 'PGRST205' || error.status === 404) {
+    if (!table) return true;
+    const message = extractMessage(error);
+    return (
+      includesCaseInsensitive(message, `table '${table}`) ||
+      includesCaseInsensitive(message, `'${table}'`)
+    );
+  }
+  return false;
+};
+
+export const isColumnMissingError = (error, column) => {
+  if (!error) return false;
+  if (error.code === '42703' || error.status === 400) {
+    if (!column) return true;
+    const message = extractMessage(error);
+    return includesCaseInsensitive(message, column);
+  }
+  return false;
 };
