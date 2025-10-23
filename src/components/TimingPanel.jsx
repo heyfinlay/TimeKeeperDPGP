@@ -13,6 +13,7 @@ import {
   Settings,
   ShieldAlert,
   StopCircle,
+  TimerReset,
   Users,
   X,
 } from 'lucide-react';
@@ -225,6 +226,7 @@ const TimingPanel = () => {
   const [recentLapDriverId, setRecentLapDriverId] = useState(null);
   const [isInitialising, setIsInitialising] = useState(isSupabaseConfigured);
   const [supabaseError, setSupabaseError] = useState(null);
+  const [bestLapOverrideDrafts, setBestLapOverrideDrafts] = useState({});
 
   const raceStartRef = useRef(null);
   const pauseStartRef = useRef(null);
@@ -1093,7 +1095,7 @@ const TimingPanel = () => {
     }));
     const normalizedDrivers = setupDraft.drivers.map((driver) => toDriverState(driver));
     setDrivers(normalizedDrivers);
-    setManualLapInputs({});
+    setBestLapOverrideDrafts({});
     setProcedurePhase('setup');
     setIsTiming(false);
     setIsPaused(false);
