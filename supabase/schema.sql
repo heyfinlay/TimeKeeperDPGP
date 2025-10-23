@@ -295,6 +295,18 @@ with check (
   bucket_id = 'session-logs' and public.is_admin()
 );
 
+create policy if not exists "Session members manage session log bucket"
+on storage.objects
+for all
+using (
+  bucket_id = 'session-logs'
+  and public.session_has_access(nullif(split_part(name, '/', 1), '')::uuid)
+)
+with check (
+  bucket_id = 'session-logs'
+  and public.session_has_access(nullif(split_part(name, '/', 1), '')::uuid)
+);
+
 alter publication supabase_realtime add table public.sessions;
 alter publication supabase_realtime add table public.session_members;
 alter publication supabase_realtime add table public.session_logs;
