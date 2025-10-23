@@ -163,6 +163,7 @@ const toDriverState = (driver) => ({
   currentLapStart: null,
   driverFlag: 'none',
   pitComplete: false,
+  hasInvalidToResolve: false,
 });
 
 const parseManualLap = (input) => {
@@ -226,7 +227,7 @@ const TimingPanel = () => {
   const [recentLapDriverId, setRecentLapDriverId] = useState(null);
   const [isInitialising, setIsInitialising] = useState(isSupabaseConfigured);
   const [supabaseError, setSupabaseError] = useState(null);
-  const [bestLapOverrideDrafts, setBestLapOverrideDrafts] = useState({});
+  const [bestLapDrafts, setBestLapDrafts] = useState({});
 
   const raceStartRef = useRef(null);
   const pauseStartRef = useRef(null);
@@ -799,6 +800,7 @@ const TimingPanel = () => {
           totalTime,
           status,
           currentLapStart: now,
+          hasInvalidToResolve: false,
         };
         return updatedDriver;
       }),
@@ -885,6 +887,106 @@ const TimingPanel = () => {
       void persistDriverState(updatedDriver);
     }
   };
+
+  const invalidateLastLap = useCallback(
+    (driverId) => {
+      let updatedDriver = null;
+      let removedLapNumber = null;
+      setDrivers((prev) =>
+        prev.map((driver) => {
+          if (driver.id !== driverId) {
+            return driver;
+          }
+          if (!driver.lapTimes.length) {
+            return driver;
+          }
+          const lapTimes = driver.lapTimes.slice(0, -1);
+          const lapHistory = driver.lapHistory.slice(0, -1);
+          removedLapNumber =
+            driver.lapHistory[driver.lapHistory.length - 1]?.lapNumber ??
+            driver.lapTimes.length;
+          const laps = Math.max(0, driver.laps - 1);
+          const lastLap = lapTimes.length ? lapTimes[lapTimes.length - 1] : null;
+          const bestLap = lapTimes.length ? Math.min(...lapTimes) : null;
+          const totalTime = lapTimes.reduce((sum, time) => sum + time, 0);
+          updatedDriver = {
+            ...driver,
+            lapTimes,
+            lapHistory,
+            laps,
+            lastLap,
+            bestLap,
+            totalTime,
+            hasInvalidToResolve: true,
+            currentLapStart: null,
+          };
+          return updatedDriver;
+        }),
+      );
+      if (!updatedDriver) {
+        return;
+      }
+      const marshalName = getMarshalName(updatedDriver.marshalId);
+      void logAction(
+        `Lap invalidated for #${updatedDriver.number}`,
+        marshalName,
+      );
+      void persistDriverState(updatedDriver);
+      if (isSupabaseConfigured && removedLapNumber !== null) {
+        supabaseDelete('laps', {
+          filters: {
+            driver_id: `eq.${updatedDriver.id}`,
+            lap_number: `eq.${removedLapNumber}`,
+          },
+        })
+          .then(() => setSupabaseError(null))
+          .catch((error) => {
+            console.error('Failed to invalidate lap in Supabase', error);
+            setSupabaseError('Unable to remove lap from Supabase.');
+          });
+      }
+    },
+    [
+      getMarshalName,
+      isSupabaseConfigured,
+      logAction,
+      persistDriverState,
+      setSupabaseError,
+    ],
+  );
+
+  const startLapAfterInvalid = useCallback(
+    (driverId) => {
+      let updatedDriver = null;
+      const now = Date.now();
+      setDrivers((prev) =>
+        prev.map((driver) => {
+          if (driver.id !== driverId) {
+            return driver;
+          }
+          if (!driver.hasInvalidToResolve) {
+            return driver;
+          }
+          updatedDriver = {
+            ...driver,
+            hasInvalidToResolve: false,
+            currentLapStart: now,
+          };
+          return updatedDriver;
+        }),
+      );
+      if (!updatedDriver) {
+        return;
+      }
+      const marshalName = getMarshalName(updatedDriver.marshalId);
+      void logAction(
+        `Lap restarted for #${updatedDriver.number} after invalidation`,
+        marshalName,
+      );
+      void persistDriverState(updatedDriver);
+    },
+    [getMarshalName, logAction, persistDriverState],
+  );
 
   const setDriverFlag = (driverId, driverFlag) => {
     let flaggedDriver = null;
@@ -1095,7 +1197,7 @@ const TimingPanel = () => {
     }));
     const normalizedDrivers = setupDraft.drivers.map((driver) => toDriverState(driver));
     setDrivers(normalizedDrivers);
-    setBestLapOverrideDrafts({});
+    setBestLapDrafts({});
     setProcedurePhase('setup');
     setIsTiming(false);
     setIsPaused(false);
@@ -1439,6 +1541,7 @@ const TimingPanel = () => {
                     const cardHotkey = HOTKEYS[index] ?? null;
                     const isFlashing = recentLapDriverId === driver.id;
                     const marshalName = getMarshalName(driver.marshalId);
+                    const pitMarked = driver.pitComplete;
                     const statusClass =
                       driver.status === 'ontrack'
                         ? 'bg-[#9FF7D3]/15 text-[#9FF7D3]'
@@ -1467,7 +1570,7 @@ const TimingPanel = () => {
                               ? 'border-green-400/60'
                               : ''
                         } ${driver.hasInvalidToResolve ? 'border-amber-400/60' : ''} ${
-                          driver.isInPit ? 'ring-1 ring-amber-400/60' : ''
+                          pitMarked ? 'ring-1 ring-amber-400/60' : ''
                         } ${isFlashing ? 'ring-2 ring-[#9FF7D3]/70' : ''}`}
                       >
                         <div className="space-y-2">
@@ -1478,9 +1581,9 @@ const TimingPanel = () => {
                               </div>
                               <div className="text-[11px] text-neutral-400">{driver.team}</div>
                               <div className="text-[10px] text-neutral-500">Marshal: {marshalName}</div>
-                              {driver.isInPit && (
+                              {pitMarked && (
                                 <div className="text-[10px] font-semibold uppercase tracking-wide text-amber-200">
-                                  In Pit Lane
+                                  Pit Stop Complete
                                 </div>
                               )}
                             </div>
@@ -1528,14 +1631,14 @@ const TimingPanel = () => {
                           </button>
                           <div className="grid grid-cols-2 gap-1">
                             <button
-                              onClick={() => void togglePit(driver.id)}
+                              onClick={() => void togglePitStop(driver.id)}
                               className={`h-8 rounded-md text-[10px] font-semibold uppercase tracking-wide transition ${
-                                driver.isInPit
+                                pitMarked
                                   ? 'border border-amber-300/60 bg-amber-400/20 text-amber-200'
                                   : 'border border-neutral-700 bg-neutral-900 text-neutral-300 hover:border-[#9FF7D3]'
                               }`}
                             >
-                              {driver.isInPit ? 'Clear Pit' : 'Mark Pit'}
+                              {pitMarked ? 'Clear Pit' : 'Mark Pit'}
                             </button>
                             <button
                               onClick={() => retireDriver(driver.id)}
@@ -1577,7 +1680,7 @@ const TimingPanel = () => {
                             />
                             <button
                               onClick={() => {
-                                const parsed = parseLapTimeInput(bestLapDraft);
+                                const parsed = parseManualLap(bestLapDraft);
                                 if (parsed === null || parsed <= 0) {
                                   window.alert('Enter best lap as mm:ss.mmm');
                                   return;

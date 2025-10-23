@@ -70,6 +70,7 @@ export const hydrateDriverState = (driverRow, lapRowsMap) => {
     currentLapStart: null,
     driverFlag: driverRow.driver_flag ?? 'none',
     pitComplete: driverRow.pit_complete ?? false,
+    hasInvalidToResolve: false,
   };
 };
 
