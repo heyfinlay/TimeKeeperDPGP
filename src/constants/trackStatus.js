@@ -11,36 +11,14 @@ export const TRACK_STATUS_OPTIONS = [
     icon: 'flag',
   },
   {
-    id: 'yellow_s1',
-    label: 'Yellow Flag – Sector 1',
-    shortLabel: 'Yellow S1',
+    id: 'yellow',
+    label: 'Yellow Flag',
+    shortLabel: 'Yellow',
     controlClass:
       'bg-amber-400 text-black hover:bg-amber-300 focus-visible:ring-amber-300',
     bannerClass:
       'border border-amber-300/50 bg-amber-400/20 text-amber-100 shadow-[0_0_40px_rgba(251,191,36,0.35)]',
-    description: 'Caution in sector 1. Slow down, no overtaking.',
-    icon: 'alert',
-  },
-  {
-    id: 'yellow_s2',
-    label: 'Yellow Flag – Sector 2',
-    shortLabel: 'Yellow S2',
-    controlClass:
-      'bg-amber-400 text-black hover:bg-amber-300 focus-visible:ring-amber-300',
-    bannerClass:
-      'border border-amber-300/50 bg-amber-400/20 text-amber-100 shadow-[0_0_40px_rgba(251,191,36,0.35)]',
-    description: 'Caution in sector 2. Slow down, no overtaking.',
-    icon: 'alert',
-  },
-  {
-    id: 'yellow_s3',
-    label: 'Yellow Flag – Sector 3',
-    shortLabel: 'Yellow S3',
-    controlClass:
-      'bg-amber-400 text-black hover:bg-amber-300 focus-visible:ring-amber-300',
-    bannerClass:
-      'border border-amber-300/50 bg-amber-400/20 text-amber-100 shadow-[0_0_40px_rgba(251,191,36,0.35)]',
-    description: 'Caution in sector 3. Slow down, no overtaking.',
+    description: 'Caution on circuit. Slow down, no overtaking.',
     icon: 'alert',
   },
   {
@@ -75,6 +53,17 @@ export const TRACK_STATUS_OPTIONS = [
       'border border-rose-400/50 bg-rose-500/20 text-rose-100 shadow-[0_0_40px_rgba(244,63,94,0.35)]',
     description: 'Session suspended. Cars must return to the pit lane.',
     icon: 'stop',
+  },
+  {
+    id: 'checkered',
+    label: 'Checkered Flag',
+    shortLabel: 'Checkered',
+    controlClass:
+      'bg-violet-600 hover:bg-violet-500 focus-visible:ring-violet-400',
+    bannerClass:
+      'border border-violet-400/50 bg-violet-500/20 text-violet-100 shadow-[0_0_40px_rgba(139,92,246,0.35)]',
+    description: 'Session complete. Proceed to the pit lane.',
+    icon: 'flag',
   },
 ];
 

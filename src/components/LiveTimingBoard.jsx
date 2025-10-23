@@ -51,11 +51,20 @@ const LiveTimingBoard = () => {
         supabaseSelect('drivers', { order: { column: 'number', ascending: true } }),
         supabaseSelect('laps', { order: { column: 'lap_number', ascending: true } }),
       ]);
-      const lapMap = groupLapRows(lapRows ?? []);
+      const normalizedLapRows = (lapRows ?? []).map((lap) => ({
+        ...lap,
+        lap_number:
+          typeof lap.lap_number === 'string' ? Number.parseInt(lap.lap_number, 10) : lap.lap_number,
+        lap_time_ms:
+          typeof lap.lap_time_ms === 'string'
+            ? Number.parseInt(lap.lap_time_ms, 10)
+            : lap.lap_time_ms,
+      }));
+      const lapMap = groupLapRows(normalizedLapRows);
       if (Array.isArray(driverRows)) {
         setDrivers(driverRows.map((row) => hydrateDriverState(row, lapMap)));
       }
-      setLaps(lapRows ?? []);
+      setLaps(normalizedLapRows);
       setError(null);
     } catch (refreshError) {
       console.error('Failed to refresh timing data', refreshError);
