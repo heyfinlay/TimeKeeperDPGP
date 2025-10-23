@@ -4,8 +4,6 @@ import LiveTimingBoard from './components/LiveTimingBoard.jsx';
 import { EventSessionProvider } from './context/SessionContext.jsx';
 
 const App = () => {
-  const [view, setView] = useState('control');
-
   return (
     <EventSessionProvider>
       <div className="min-h-screen bg-[#05070F]">
