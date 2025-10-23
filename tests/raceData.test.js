@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import {
   DEFAULT_SESSION_STATE,
+  LEGACY_SESSION_ID,
   groupLapRows,
   hydrateDriverState,
   sessionRowToState,
@@ -46,6 +47,7 @@ describe('hydrateDriverState', () => {
         name: 'Driver',
         team: 'Team',
         marshal_id: 'm1',
+        session_id: 'session-1',
         laps: '2',
         last_lap_ms: '59000',
         best_lap_ms: '58000',
@@ -59,6 +61,7 @@ describe('hydrateDriverState', () => {
     expect(driver.totalTime).toBe(119000);
     expect(driver.lapTimes).toEqual([60000, 59000]);
     expect(driver.lastLap).toBe(59000);
+    expect(driver.sessionId).toBe('session-1');
   });
 });
 
@@ -122,6 +125,7 @@ describe('toDriverRow', () => {
       last_lap_ms: 60500,
       best_lap_ms: 60000,
       total_time_ms: 320000,
+      session_id: LEGACY_SESSION_ID,
     });
     expect(typeof row.updated_at).toBe('string');
   });
