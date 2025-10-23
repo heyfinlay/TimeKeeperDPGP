@@ -561,35 +561,6 @@ const TimingPanel = () => {
     }
   }, [procedurePhase, countdown]);
 
-  useEffect(() => {
-    const handleKeyPress = (event) => {
-      if (!isTiming || isPaused) return;
-      const key = event.key.toLowerCase();
-      let number;
-      if (key >= '1' && key <= '9') {
-        number = Number.parseInt(key, 10);
-      } else if (key === '0') {
-        number = 10;
-      } else {
-        return;
-      }
-      const driver = drivers.find((d) => d.number === number);
-      if (!driver) return;
-      event.preventDefault();
-      if (event.altKey) {
-        void invalidateLastLap(driver.id);
-        return;
-      }
-      if (event.shiftKey) {
-        void togglePit(driver.id);
-        return;
-      }
-      void logLap(driver.id);
-    };
-    window.addEventListener('keydown', handleKeyPress);
-    return () => window.removeEventListener('keydown', handleKeyPress);
-  }, [drivers, invalidateLastLap, isPaused, isTiming, logLap, togglePit]);
-
   useEffect(
     () => () => {
       if (lapFlashTimeoutRef.current) {
@@ -1042,6 +1013,74 @@ const TimingPanel = () => {
     [drivers, isSupabaseConfigured, logAction, refreshDriversFromSupabase],
   );
 
+  const togglePit = useCallback(
+    async (driverId) => {
+      const driver = drivers.find((entry) => entry.id === driverId);
+      if (!driver) return;
+      const nextState = !driver.isInPit;
+      setDrivers((prev) =>
+        prev.map((entry) =>
+          entry.id === driverId
+            ? {
+                ...entry,
+                isInPit: nextState,
+              }
+            : entry,
+        ),
+      );
+
+      if (isSupabaseConfigured) {
+        try {
+          await supabaseUpdate(
+            'drivers',
+            { is_in_pit: nextState },
+            { filters: { id: `eq.${driverId}` } },
+          );
+          setSupabaseError(null);
+        } catch (error) {
+          console.error('Failed to toggle pit status', error);
+          setSupabaseError('Unable to toggle pit status in Supabase.');
+        }
+      }
+
+      const marshalName = getMarshalName(driver.marshalId);
+      void logAction(
+        `Driver #${driver.number} ${nextState ? 'entered' : 'left'} pit lane`,
+        marshalName,
+      );
+    },
+    [drivers, isSupabaseConfigured, logAction],
+  );
+
+  useEffect(() => {
+    const handleKeyPress = (event) => {
+      if (!isTiming || isPaused) return;
+      const key = event.key.toLowerCase();
+      let number;
+      if (key >= '1' && key <= '9') {
+        number = Number.parseInt(key, 10);
+      } else if (key === '0') {
+        number = 10;
+      } else {
+        return;
+      }
+      const driver = drivers.find((d) => d.number === number);
+      if (!driver) return;
+      event.preventDefault();
+      if (event.altKey) {
+        void invalidateLastLap(driver.id);
+        return;
+      }
+      if (event.shiftKey) {
+        void togglePit(driver.id);
+        return;
+      }
+      void logLap(driver.id);
+    };
+    window.addEventListener('keydown', handleKeyPress);
+    return () => window.removeEventListener('keydown', handleKeyPress);
+  }, [drivers, invalidateLastLap, isPaused, isTiming, logLap, togglePit]);
+
   const startLapAfterInvalid = useCallback(
     async (driverId) => {
       const driver = drivers.find((entry) => entry.id === driverId);
@@ -1118,45 +1157,6 @@ const TimingPanel = () => {
       }
     },
     [drivers, isSupabaseConfigured, logAction, refreshDriversFromSupabase],
-  );
-
-  const togglePit = useCallback(
-    async (driverId) => {
-      const driver = drivers.find((entry) => entry.id === driverId);
-      if (!driver) return;
-      const nextState = !driver.isInPit;
-      setDrivers((prev) =>
-        prev.map((entry) =>
-          entry.id === driverId
-            ? {
-                ...entry,
-                isInPit: nextState,
-              }
-            : entry,
-        ),
-      );
-
-      if (isSupabaseConfigured) {
-        try {
-          await supabaseUpdate(
-            'drivers',
-            { is_in_pit: nextState },
-            { filters: { id: `eq.${driverId}` } },
-          );
-          setSupabaseError(null);
-        } catch (error) {
-          console.error('Failed to toggle pit status', error);
-          setSupabaseError('Unable to toggle pit status in Supabase.');
-        }
-      }
-
-      const marshalName = getMarshalName(driver.marshalId);
-      void logAction(
-        `Driver #${driver.number} ${nextState ? 'entered' : 'left'} pit lane`,
-        marshalName,
-      );
-    },
-    [drivers, isSupabaseConfigured, logAction],
   );
 
   const retireDriver = (driverId) => {
