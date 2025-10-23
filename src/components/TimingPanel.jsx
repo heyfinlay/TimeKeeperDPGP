@@ -770,12 +770,23 @@ const TimingPanel = () => {
           return driver;
         }
         let lapTime = manualEntry ? manualTime : null;
+        let nextCurrentLapStart = driver.currentLapStart;
         if (lapTime === null) {
           if (raceElapsed === null) {
             return driver;
           }
-          const previousTotal = driver.totalTime ?? 0;
-          lapTime = raceElapsed - previousTotal;
+          const lapStart =
+            driver.currentLapStart ?? driver.totalTime ?? 0;
+          lapTime = raceElapsed - lapStart;
+          nextCurrentLapStart = raceElapsed;
+        } else {
+          if (raceElapsed !== null) {
+            nextCurrentLapStart = raceElapsed;
+          } else if (driver.currentLapStart !== null) {
+            nextCurrentLapStart = driver.currentLapStart + lapTime;
+          } else {
+            nextCurrentLapStart = (driver.totalTime ?? 0) + lapTime;
+          }
         }
         if (!Number.isFinite(lapTime) || lapTime <= 0) {
           return driver;
@@ -808,7 +819,7 @@ const TimingPanel = () => {
           bestLap,
           totalTime,
           status,
-          currentLapStart: raceElapsed ?? driver.currentLapStart,
+          currentLapStart: nextCurrentLapStart,
           hasInvalidToResolve: false,
         };
         return updatedDriver;
@@ -905,6 +916,11 @@ const TimingPanel = () => {
     (driverId) => {
       let updatedDriver = null;
       let removedLapNumber = null;
+      const now = Date.now();
+      const raceElapsed =
+        raceStartRef.current !== null
+          ? now - raceStartRef.current - pausedDurationRef.current
+          : null;
       setDrivers((prev) =>
         prev.map((driver) => {
           if (driver.id !== driverId) {
@@ -922,6 +938,7 @@ const TimingPanel = () => {
           const lastLap = lapTimes.length ? lapTimes[lapTimes.length - 1] : null;
           const bestLap = lapTimes.length ? Math.min(...lapTimes) : null;
           const totalTime = lapTimes.reduce((sum, time) => sum + time, 0);
+          const resumedLapStart = raceElapsed ?? totalTime;
           updatedDriver = {
             ...driver,
             lapTimes,
@@ -931,7 +948,7 @@ const TimingPanel = () => {
             bestLap,
             totalTime,
             hasInvalidToResolve: true,
-            currentLapStart: null,
+            currentLapStart: resumedLapStart,
           };
           return updatedDriver;
         }),
@@ -984,10 +1001,12 @@ const TimingPanel = () => {
           if (!driver.hasInvalidToResolve) {
             return driver;
           }
+          const nextLapStart =
+            raceElapsed ?? driver.currentLapStart ?? driver.totalTime ?? 0;
           updatedDriver = {
             ...driver,
             hasInvalidToResolve: false,
-            currentLapStart: raceElapsed ?? driver.currentLapStart,
+            currentLapStart: nextLapStart,
           };
           return updatedDriver;
         }),
