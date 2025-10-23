@@ -8,10 +8,12 @@ import {
   ListChecks,
   Megaphone,
   Play,
+  RotateCcw,
   Save,
   Settings,
   ShieldAlert,
   StopCircle,
+  TimerReset,
   Users,
   X,
 } from 'lucide-react';
@@ -26,7 +28,6 @@ import {
   supabaseUpdate,
   supabaseUpsert,
 } from '../lib/supabaseClient';
-import DriverGrid from './timing/DriverGrid';
 import {
   DEFAULT_SESSION_STATE,
   SESSION_ROW_ID,
@@ -170,6 +171,31 @@ const toDriverState = (driver) => ({
   currentLapNumber: driver.currentLapNumber ?? 1,
 });
 
+const parseLapTimeInput = (input) => {
+  const trimmed = input.trim();
+  if (!trimmed) return null;
+  const colonIdx = trimmed.indexOf(':');
+  let minutes = 0;
+  let secondsPart = trimmed;
+  if (colonIdx !== -1) {
+    minutes = Number.parseInt(trimmed.slice(0, colonIdx), 10);
+    secondsPart = trimmed.slice(colonIdx + 1);
+  }
+  if (Number.isNaN(minutes) || minutes < 0) return null;
+  let seconds = 0;
+  let millis = 0;
+  if (secondsPart.includes('.')) {
+    const [secStr, msStr] = secondsPart.split('.');
+    seconds = Number.parseInt(secStr, 10);
+    millis = Number.parseInt(msStr.padEnd(3, '0').slice(0, 3), 10);
+  } else {
+    seconds = Number.parseInt(secondsPart, 10);
+  }
+  if (Number.isNaN(seconds) || seconds < 0) return null;
+  if (Number.isNaN(millis) || millis < 0) millis = 0;
+  return minutes * 60000 + seconds * 1000 + millis;
+};
+
 const TimingPanel = () => {
   const [eventConfig, setEventConfig] = useState({
     eventType: DEFAULT_SESSION_STATE.eventType,
@@ -205,6 +231,7 @@ const TimingPanel = () => {
   const [recentLapDriverId, setRecentLapDriverId] = useState(null);
   const [isInitialising, setIsInitialising] = useState(isSupabaseConfigured);
   const [supabaseError, setSupabaseError] = useState(null);
+  const [bestLapDrafts, setBestLapDrafts] = useState({});
 
   const raceStartRef = useRef(null);
   const pauseStartRef = useRef(null);
@@ -637,6 +664,32 @@ const TimingPanel = () => {
 
   const getMarshalName = (marshalId) =>
     eventConfig.marshals.find((m) => m.id === marshalId)?.name ?? 'Unassigned';
+
+  const overrideBestLap = useCallback(
+    (driverId, lapMs) => {
+      let updatedDriver = null;
+      setDrivers((prev) =>
+        prev.map((driver) => {
+          if (driver.id !== driverId) {
+            return driver;
+          }
+          updatedDriver = {
+            ...driver,
+            bestLap: lapMs,
+          };
+          return updatedDriver;
+        }),
+      );
+      if (!updatedDriver) return;
+      const marshalName = getMarshalName(updatedDriver.marshalId);
+      void logAction(
+        `Best lap overridden for #${updatedDriver.number} (${formatLapTime(lapMs)})`,
+        marshalName,
+      );
+      void persistDriverState(updatedDriver);
+    },
+    [getMarshalName, logAction, persistDriverState],
+  );
 
   const startWarmup = () => {
     setProcedurePhase('warmup');
@@ -1292,41 +1345,6 @@ const TimingPanel = () => {
     return sorted;
   }, [drivers, eventConfig.eventType]);
 
-  const driverCards = useMemo(
-    () =>
-      drivers.map((driver) => ({
-        id: driver.id,
-        number: driver.number,
-        name: driver.name,
-        team: driver.team,
-        lapNumber: driver.currentLapNumber ?? driver.laps + 1,
-        completedLaps: driver.laps,
-        targetLaps: eventConfig.totalLaps,
-        lastLapMs: driver.lastLap,
-        bestLapMs: driver.bestLap,
-        hasInvalidToResolve: driver.hasInvalidToResolve ?? false,
-        isInPit: driver.isInPit ?? false,
-        isRecent: recentLapDriverId === driver.id,
-        marshalName:
-          eventConfig.marshals.find((marshal) => marshal.id === driver.marshalId)?.name ??
-          'Unassigned',
-        status: driver.status,
-        canLogLap:
-          isTiming &&
-          !isPaused &&
-          driver.status === 'ontrack' &&
-          !driver.hasInvalidToResolve,
-      })),
-    [
-      drivers,
-      eventConfig.marshals,
-      eventConfig.totalLaps,
-      isPaused,
-      isTiming,
-      recentLapDriverId,
-    ],
-  );
-
   const activeFlag = useMemo(
     () => FLAG_OPTIONS.find((flag) => flag.id === flagStatus),
     [flagStatus],
@@ -1423,7 +1441,7 @@ const TimingPanel = () => {
     }));
     const normalizedDrivers = setupDraft.drivers.map((driver) => toDriverState(driver));
     setDrivers(normalizedDrivers);
-    setManualLapInputs({});
+    setBestLapDrafts({});
     setProcedurePhase('setup');
     setIsTiming(false);
     setIsPaused(false);
@@ -1752,14 +1770,198 @@ const TimingPanel = () => {
                   Click or use hotkeys to log laps instantly.
                 </span>
               </div>
-              <DriverGrid
-                drivers={driverCards}
-                hotkeys={HOTKEYS}
-                onLogLap={logLap}
-                onInvalidate={invalidateLastLap}
-                onResolveInvalid={startLapAfterInvalid}
-                onTogglePit={togglePit}
-              />
+              {drivers.length === 0 ? (
+                <div className="rounded-2xl border border-white/5 bg-[#0b1022]/80 p-6 text-center text-sm text-white/60">
+                  No drivers configured. Add drivers in setup to begin timing.
+                </div>
+              ) : (
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
+                  {drivers.map((driver, index) => {
+                    const canLogLap =
+                      isTiming &&
+                      !isPaused &&
+                      driver.status === 'ontrack' &&
+                      !driver.hasInvalidToResolve;
+                    const cardHotkey = HOTKEYS[index] ?? null;
+                    const isFlashing = recentLapDriverId === driver.id;
+                    const marshalName = getMarshalName(driver.marshalId);
+                    const statusClass =
+                      driver.status === 'ontrack'
+                        ? 'bg-[#9FF7D3]/15 text-[#9FF7D3]'
+                        : driver.status === 'retired'
+                          ? 'bg-red-500/20 text-red-300'
+                          : driver.status === 'finished'
+                            ? 'bg-green-500/20 text-green-200'
+                            : 'bg-neutral-800 text-neutral-400';
+                    const driverFlagLabel =
+                      driver.driverFlag === 'none'
+                        ? null
+                        :
+                            DRIVER_FLAG_OPTIONS.find((option) => option.id === driver.driverFlag)
+                              ?.label ?? driver.driverFlag;
+                    const lapsDisplay = eventConfig.totalLaps
+                      ? `${driver.laps}/${eventConfig.totalLaps}`
+                      : `${driver.laps}`;
+                    const bestLapDraft = bestLapDrafts[driver.id] ?? '';
+                    return (
+                      <div
+                        key={driver.id}
+                        className={`flex h-full flex-col justify-between rounded-xl border border-neutral-800 bg-neutral-950/80 p-3 text-left shadow-sm transition hover:border-[#9FF7D3] hover:shadow-md ${
+                          driver.status === 'retired'
+                            ? 'opacity-60'
+                            : driver.status === 'finished'
+                              ? 'border-green-400/60'
+                              : ''
+                        } ${driver.hasInvalidToResolve ? 'border-amber-400/60' : ''} ${
+                          driver.isInPit ? 'ring-1 ring-amber-400/60' : ''
+                        } ${isFlashing ? 'ring-2 ring-[#9FF7D3]/70' : ''}`}
+                      >
+                        <div className="space-y-2">
+                          <div className="flex items-start justify-between gap-2">
+                            <div>
+                              <div className="text-sm font-semibold text-[#9FF7D3]">
+                                #{driver.number} {driver.name}
+                              </div>
+                              <div className="text-[11px] text-neutral-400">{driver.team}</div>
+                              <div className="text-[10px] text-neutral-500">Marshal: {marshalName}</div>
+                              {driver.isInPit && (
+                                <div className="text-[10px] font-semibold uppercase tracking-wide text-amber-200">
+                                  In Pit Lane
+                                </div>
+                              )}
+                            </div>
+                            <span className={`rounded-full px-2 py-0.5 text-[10px] uppercase tracking-wide ${statusClass}`}>
+                              {driver.status}
+                            </span>
+                          </div>
+                          {driverFlagLabel && (
+                            <span className="inline-flex rounded-full border border-amber-200/40 bg-amber-400/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-200">
+                              {driverFlagLabel}
+                            </span>
+                          )}
+                          <div className="flex items-center justify-between text-[11px] text-neutral-400">
+                            <span>
+                              Laps: <span className="font-semibold text-neutral-100">{lapsDisplay}</span>
+                            </span>
+                            <span>
+                              Best:{' '}
+                              <span className="font-mono text-[#9FF7D3]">
+                                {formatLapTime(driver.bestLap)}
+                              </span>
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between text-[11px] text-neutral-400">
+                            <span>
+                              Last:{' '}
+                              <span className="font-mono text-neutral-100">
+                                {formatLapTime(driver.lastLap)}
+                              </span>
+                            </span>
+                            <span>Pits: {driver.pits}</span>
+                          </div>
+                        </div>
+                        <div className="mt-3 space-y-2">
+                          <button
+                            onClick={() => void logLap(driver.id)}
+                            disabled={!canLogLap}
+                            className={`w-full rounded-md py-1.5 text-xs font-semibold uppercase tracking-wide transition ${
+                              canLogLap
+                                ? 'bg-[#9FF7D3] text-black hover:bg-[#7eeac3]'
+                                : 'bg-neutral-800 text-neutral-500 disabled:cursor-not-allowed'
+                            } ${isFlashing ? 'animate-pulse' : ''}`}
+                          >
+                            Log Lap{cardHotkey ? ` (${cardHotkey})` : ''}
+                          </button>
+                          <div className="grid grid-cols-2 gap-1">
+                            <button
+                              onClick={() => void togglePit(driver.id)}
+                              className={`h-8 rounded-md text-[10px] font-semibold uppercase tracking-wide transition ${
+                                driver.isInPit
+                                  ? 'border border-amber-300/60 bg-amber-400/20 text-amber-200'
+                                  : 'border border-neutral-700 bg-neutral-900 text-neutral-300 hover:border-[#9FF7D3]'
+                              }`}
+                            >
+                              {driver.isInPit ? 'Clear Pit' : 'Mark Pit'}
+                            </button>
+                            <button
+                              onClick={() => retireDriver(driver.id)}
+                              disabled={driver.status === 'retired'}
+                              className="h-8 rounded-md border border-red-500/60 bg-red-500/15 text-[10px] font-semibold uppercase tracking-wide text-red-200 transition hover:border-red-300 disabled:cursor-not-allowed disabled:opacity-50"
+                            >
+                              Retire
+                            </button>
+                          </div>
+                          <div className="grid grid-cols-2 gap-1">
+                            <button
+                              onClick={() => void invalidateLastLap(driver.id)}
+                              disabled={driver.laps === 0}
+                              className="flex h-8 items-center justify-center gap-1 rounded-md border border-neutral-700 bg-neutral-900 px-2 text-[10px] font-semibold uppercase tracking-wide text-neutral-200 transition hover:border-[#9FF7D3] disabled:cursor-not-allowed disabled:opacity-50"
+                            >
+                              <RotateCcw className="h-3.5 w-3.5" />
+                              Invalidate
+                            </button>
+                            <button
+                              onClick={() => void startLapAfterInvalid(driver.id)}
+                              disabled={!driver.hasInvalidToResolve}
+                              className="h-8 rounded-md border border-amber-300/60 bg-amber-400/10 text-[10px] font-semibold uppercase tracking-wide text-amber-200 transition hover:border-amber-200 disabled:cursor-not-allowed disabled:opacity-50"
+                            >
+                              Start Lap
+                            </button>
+                          </div>
+                          <div className="flex items-center gap-1">
+                            <input
+                              type="text"
+                              value={bestLapDraft}
+                              onChange={(event) =>
+                                setBestLapDrafts((prev) => ({
+                                  ...prev,
+                                  [driver.id]: event.target.value,
+                                }))
+                              }
+                              placeholder="Best lap mm:ss.mmm"
+                              className="w-full rounded-md border border-neutral-800 bg-neutral-900 px-2 py-1 text-[10px] text-neutral-200 placeholder:text-neutral-500 focus:border-[#7C6BFF] focus:outline-none focus:ring-1 focus:ring-[#7C6BFF]"
+                            />
+                            <button
+                              onClick={() => {
+                                const parsed = parseLapTimeInput(bestLapDraft);
+                                if (parsed === null || parsed <= 0) {
+                                  window.alert('Enter best lap as mm:ss.mmm');
+                                  return;
+                                }
+                                void overrideBestLap(driver.id, parsed);
+                                setBestLapDrafts((prev) => ({
+                                  ...prev,
+                                  [driver.id]: '',
+                                }));
+                              }}
+                              className="h-8 rounded-md border border-[#7C6BFF]/60 bg-[#7C6BFF]/10 px-2 text-[10px] font-semibold uppercase tracking-wide text-[#b7b0ff] transition hover:border-[#9b92ff]"
+                            >
+                              Set Best
+                            </button>
+                          </div>
+                          <select
+                            value={driver.driverFlag}
+                            onChange={(event) => setDriverFlag(driver.id, event.target.value)}
+                            className="w-full rounded-md border border-neutral-800 bg-neutral-900 px-2 py-1 text-[10px] uppercase tracking-wide text-neutral-300 focus:border-[#7C6BFF] focus:outline-none focus:ring-1 focus:ring-[#7C6BFF]"
+                          >
+                            {DRIVER_FLAG_OPTIONS.map((option) => (
+                              <option key={option.id} value={option.id}>
+                                {option.label}
+                              </option>
+                            ))}
+                          </select>
+                          {driver.hasInvalidToResolve && (
+                            <div className="flex items-center gap-2 rounded-md border border-amber-300/60 bg-amber-400/10 p-2 text-[10px] text-amber-100">
+                              <TimerReset className="h-3.5 w-3.5" />
+                              <span>Invalidated. Next crossing = START ONLY.</span>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </section>
             <section className="rounded-2xl border border-neutral-800 bg-[#11182c]/70 p-4">
               <div className="flex items-center justify-between">
