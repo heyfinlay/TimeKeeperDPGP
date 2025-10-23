@@ -117,29 +117,6 @@ const DEFAULT_DRIVERS = [
 
 const EVENT_TYPES = ['Practice', 'Qualifying', 'Race'];
 
-const FLAG_OPTIONS = [
-  { id: 'green', label: 'Green', color: 'bg-green-600 hover:bg-green-500' },
-  {
-    id: 'yellow',
-    label: 'Yellow',
-    color: 'bg-yellow-500 text-black hover:bg-yellow-400',
-  },
-  { id: 'sc', label: 'SC', color: 'bg-amber-500 text-black hover:bg-amber-400' },
-  { id: 'vsc', label: 'VSC', color: 'bg-emerald-600 hover:bg-emerald-500' },
-  { id: 'red', label: 'Red', color: 'bg-red-600 hover:bg-red-500' },
-  { id: 'checkered', label: 'Checkered', color: 'bg-violet-600 hover:bg-violet-500' },
-  { id: 'green-check', label: 'Resume', color: 'bg-cyan-500 text-black hover:bg-cyan-400' },
-];
-
-const FLAG_SELECT_OPTIONS = [
-  { id: 'green', label: 'Green' },
-  { id: 'yellow', label: 'Yellow' },
-  { id: 'sc', label: 'SC' },
-  { id: 'vsc', label: 'VSC' },
-  { id: 'red', label: 'Red' },
-  { id: 'checkered', label: 'Checkered' },
-];
-
 const DRIVER_FLAG_OPTIONS = [
   { id: 'none', label: 'No Flag' },
   { id: 'blue', label: 'Blue Flag' },
@@ -210,7 +187,6 @@ const TimingPanel = () => {
   );
   const [isTiming, setIsTiming] = useState(DEFAULT_SESSION_STATE.isTiming);
   const [isPaused, setIsPaused] = useState(DEFAULT_SESSION_STATE.isPaused);
-  const [flagStatus, setFlagStatus] = useState(DEFAULT_SESSION_STATE.flagStatus);
   const [trackStatus, setTrackStatus] = useState(DEFAULT_SESSION_STATE.trackStatus);
   const [announcement, setAnnouncement] = useState(
     DEFAULT_SESSION_STATE.announcement,
@@ -295,7 +271,6 @@ const TimingPanel = () => {
         totalDuration: hydrated.totalDuration,
       }));
       setProcedurePhase(hydrated.procedurePhase);
-      setFlagStatus(hydrated.flagStatus);
       setTrackStatus(hydrated.trackStatus);
       setAnnouncement(hydrated.announcement);
       setAnnouncementDraft(hydrated.announcement);
@@ -403,7 +378,6 @@ const TimingPanel = () => {
         totalDuration: hydrated.totalDuration,
       }));
       setProcedurePhase(hydrated.procedurePhase);
-      setFlagStatus(hydrated.flagStatus);
       setTrackStatus(hydrated.trackStatus);
       setAnnouncement(hydrated.announcement);
       setAnnouncementDraft(hydrated.announcement);
@@ -568,7 +542,6 @@ const TimingPanel = () => {
             totalDuration: hydrated.totalDuration,
           }));
           setProcedurePhase(hydrated.procedurePhase);
-          setFlagStatus(hydrated.flagStatus);
           setTrackStatus(hydrated.trackStatus);
           setAnnouncement(hydrated.announcement);
           setAnnouncementDraft(hydrated.announcement);
@@ -662,7 +635,6 @@ const TimingPanel = () => {
     setIsTiming(true);
     setIsPaused(false);
     setProcedurePhase('green');
-    setFlagStatus('green');
     setTrackStatus('green');
     setDrivers((prev) => {
       const updated = prev.map((driver) => ({
@@ -728,28 +700,31 @@ const TimingPanel = () => {
     void logAction('Session completed');
   };
 
-  const handleFlagChange = (flag) => {
-    if (flag === 'green-check') {
-      setFlagStatus('green');
-      if (procedurePhase === 'suspended') {
-        setProcedurePhase('green');
-      }
-      updateSessionState({
-        flag_status: 'green',
-        procedure_phase: procedurePhase === 'suspended' ? 'green' : procedurePhase,
-      });
+  const handleTrackStatusChange = (statusId, { fromResume } = {}) => {
+    const normalizedStatus = statusId === 'green-check' ? 'green' : statusId;
+    setTrackStatus(normalizedStatus);
+    const sessionPatch = {
+      flag_status: normalizedStatus,
+      track_status: normalizedStatus,
+    };
+    if (normalizedStatus === 'red') {
+      setProcedurePhase('suspended');
+      sessionPatch.procedure_phase = 'suspended';
+    } else if (normalizedStatus === 'green' && procedurePhase === 'suspended') {
+      setProcedurePhase('green');
+      sessionPatch.procedure_phase = 'green';
+    }
+    updateSessionState(sessionPatch);
+    if (statusId === 'green-check' || fromResume) {
       void logAction('Session resumed from suspension');
       return;
     }
-    setFlagStatus(flag);
-    if (flag === 'red') {
-      setProcedurePhase('suspended');
-    }
-    updateSessionState({
-      flag_status: flag,
-      ...(flag === 'red' ? { procedure_phase: 'suspended' } : {}),
-    });
-    void logAction(`Flag set to ${flag.toUpperCase()}`);
+    const statusMeta = TRACK_STATUS_MAP[normalizedStatus];
+    void logAction(
+      `Track status set to ${
+        statusMeta ? statusMeta.label : normalizedStatus.toUpperCase()
+      }`,
+    );
   };
 
   const logLap = (driverId, { manualTime, source } = {}) => {
@@ -1087,15 +1062,6 @@ const TimingPanel = () => {
     }
   };
 
-  const updateTrackStatusSelection = (statusId) => {
-    setTrackStatus(statusId);
-    updateSessionState({ track_status: statusId });
-    const statusMeta = TRACK_STATUS_MAP[statusId];
-    void logAction(
-      `Track status set to ${statusMeta ? statusMeta.label : statusId.toUpperCase()}`,
-    );
-  };
-
   const pushAnnouncement = () => {
     const trimmed = announcementDraft.trim();
     setAnnouncement(trimmed);
@@ -1179,13 +1145,6 @@ const TimingPanel = () => {
 
     return sorted;
   }, [drivers, eventConfig.eventType]);
-
-  const activeFlag = useMemo(
-    () => FLAG_OPTIONS.find((flag) => flag.id === flagStatus),
-    [flagStatus],
-  );
-
-  const flagDropdownValue = flagStatus === 'green-check' ? 'green' : flagStatus;
 
   const openSetup = () => {
     setSetupDraft({
@@ -1280,7 +1239,6 @@ const TimingPanel = () => {
     setProcedurePhase('setup');
     setIsTiming(false);
     setIsPaused(false);
-    setFlagStatus('green');
     setTrackStatus('green');
     setRaceTime(0);
     setAnnouncement('');
@@ -1345,7 +1303,18 @@ const TimingPanel = () => {
     logAction('Results exported to CSV');
   };
 
-  const trackStatusDetails = TRACK_STATUS_MAP[trackStatus] ?? TRACK_STATUS_OPTIONS[0];
+  const trackStatusDetails =
+    TRACK_STATUS_MAP[trackStatus] ??
+    {
+      id: trackStatus,
+      label: trackStatus ? trackStatus.toUpperCase() : 'Unknown',
+      shortLabel: trackStatus ? trackStatus.toUpperCase() : 'N/A',
+      description: 'Current track status is not recognised by this interface.',
+      bannerClass:
+        'border border-neutral-800 bg-neutral-900/70 text-neutral-200 shadow-[0_0_40px_rgba(148,163,184,0.2)]',
+      controlClass: 'bg-neutral-700',
+      icon: 'flag',
+    };
   const trackStatusIconMap = {
     flag: Flag,
     alert: AlertTriangle,
@@ -1379,19 +1348,8 @@ const TimingPanel = () => {
           <div className="flex items-center justify-end gap-3">
             <div className="flex items-center gap-2 rounded-full border border-neutral-700 bg-neutral-900/70 px-3 py-1.5 text-[11px] uppercase tracking-wide text-neutral-300">
               <Flag className="h-4 w-4 text-[#9FF7D3]" />
-              <span>{activeFlag?.label ?? flagStatus}</span>
+              <span>{trackStatusDetails?.label ?? trackStatus}</span>
             </div>
-            <select
-              value={flagDropdownValue}
-              onChange={(event) => handleFlagChange(event.target.value)}
-              className="rounded-full border border-neutral-700 bg-neutral-900/70 px-3 py-1.5 text-xs uppercase tracking-wide text-neutral-200 focus:outline-none focus:ring-2 focus:ring-[#7C6BFF]"
-            >
-              {FLAG_SELECT_OPTIONS.map((option) => (
-                <option key={option.id} value={option.id}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
             <button
               onClick={openSetup}
               className="flex h-9 w-9 items-center justify-center rounded-full border border-neutral-700 bg-neutral-900/80 text-neutral-300 transition hover:border-[#9FF7D3] hover:text-[#9FF7D3]"
@@ -1433,19 +1391,9 @@ const TimingPanel = () => {
                 </p>
               </div>
             </div>
-            <div className="mt-4 flex flex-wrap gap-2">
-              {TRACK_STATUS_OPTIONS.map((option) => (
-                <button
-                  key={option.id}
-                  onClick={() => updateTrackStatusSelection(option.id)}
-                  className={`rounded-full px-3 py-1.5 text-xs font-semibold uppercase tracking-wide transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-[#0B0F19] ${option.controlClass} ${
-                    trackStatus === option.id ? 'ring-2 ring-offset-2 ring-offset-[#0B0F19]' : ''
-                  }`}
-                >
-                  {option.shortLabel}
-                </button>
-              ))}
-            </div>
+            <p className="mt-4 text-[11px] uppercase tracking-[0.25em] text-neutral-500">
+              Track status is controlled from the Race Control panel below.
+            </p>
           </div>
           <div className="rounded-2xl border border-neutral-800 bg-[#11182c]/80 p-4 shadow-[0_18px_48px_-30px_rgba(124,107,255,0.25)]">
             <div className="flex items-start gap-3">
@@ -1568,23 +1516,21 @@ const TimingPanel = () => {
             >
               Session Setup
             </button>
-            {FLAG_OPTIONS.filter((flag) => flag.id !== 'green-check').map((flag) => (
+            {TRACK_STATUS_OPTIONS.map((option) => (
               <button
-                key={flag.id}
-                onClick={() => handleFlagChange(flag.id)}
-                className={`h-10 rounded-lg text-xs font-semibold uppercase tracking-wide transition ${flag.color} ${
-                  flagStatus === flag.id ? 'ring-2 ring-offset-2 ring-offset-[#0B0F19]' : ''
+                key={option.id}
+                onClick={() => handleTrackStatusChange(option.id)}
+                className={`h-10 rounded-lg text-xs font-semibold uppercase tracking-wide transition ${option.controlClass} ${
+                  trackStatus === option.id ? 'ring-2 ring-offset-2 ring-offset-[#0B0F19]' : ''
                 }`}
               >
-                {flag.label}
+                {option.label}
               </button>
             ))}
             {procedurePhase === 'suspended' && (
               <button
-                onClick={() => handleFlagChange('green-check')}
-                className={`h-10 rounded-lg text-xs font-semibold uppercase tracking-wide transition ${
-                  FLAG_OPTIONS.find((flag) => flag.id === 'green-check')?.color ?? ''
-                }`}
+                onClick={() => handleTrackStatusChange('green-check', { fromResume: true })}
+                className="h-10 rounded-lg text-xs font-semibold uppercase tracking-wide transition bg-cyan-500 text-black hover:bg-cyan-400"
               >
                 Resume
               </button>
