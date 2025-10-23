@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle,
   Car,
@@ -36,8 +36,16 @@ const LiveTimingBoard = () => {
   const [drivers, setDrivers] = useState([]);
   const [sessionState, setSessionState] = useState(DEFAULT_SESSION_STATE);
   const [laps, setLaps] = useState([]);
+  const [raceEvents, setRaceEvents] = useState([]);
   const [isLoading, setIsLoading] = useState(isSupabaseConfigured);
   const [error, setError] = useState(null);
+  const [displayRaceTime, setDisplayRaceTime] = useState(
+    DEFAULT_SESSION_STATE.raceTime ?? 0,
+  );
+
+  const animationFrameRef = useRef(null);
+  const intervalRef = useRef(null);
+  const lastTickRef = useRef(null);
 
   const trackStatusDetails =
     TRACK_STATUS_MAP[sessionState.trackStatus] ?? TRACK_STATUS_OPTIONS[0];
@@ -87,6 +95,26 @@ const LiveTimingBoard = () => {
     }
   }, []);
 
+  const refreshRaceEvents = useCallback(async () => {
+    if (!isSupabaseConfigured) return;
+    try {
+      const rows = await supabaseSelect('race_events', {
+        order: { column: 'created_at', ascending: false },
+        filters: { limit: 12 },
+      });
+      if (!Array.isArray(rows)) return;
+      const events = rows.map((row) => ({
+        id: row.id ?? `${row.marshal_id ?? 'race-control'}-${row.created_at ?? Math.random()}`,
+        message: row.message ?? 'Race control update',
+        marshalId: row.marshal_id ?? 'Race Control',
+        timestamp: row.created_at ? new Date(row.created_at) : null,
+      }));
+      setRaceEvents(events);
+    } catch (eventsError) {
+      console.error('Failed to refresh race events', eventsError);
+    }
+  }, []);
+
   const bootstrap = useCallback(async () => {
     if (!isSupabaseConfigured) {
       setIsLoading(false);
@@ -94,9 +122,13 @@ const LiveTimingBoard = () => {
       return;
     }
     setIsLoading(true);
-    await Promise.all([refreshDriverData(), refreshSessionState()]);
+    await Promise.all([
+      refreshDriverData(),
+      refreshSessionState(),
+      refreshRaceEvents(),
+    ]);
     setIsLoading(false);
-  }, [refreshDriverData, refreshSessionState]);
+  }, [refreshDriverData, refreshSessionState, refreshRaceEvents]);
 
   useEffect(() => {
     bootstrap();
@@ -120,12 +152,75 @@ const LiveTimingBoard = () => {
         }
       },
     );
+    const eventsUnsub = subscribeToTable({ table: 'race_events' }, () => {
+      refreshRaceEvents();
+    });
     return () => {
       driverUnsub();
       lapUnsub();
       sessionUnsub();
+      eventsUnsub();
     };
-  }, [refreshDriverData]);
+  }, [refreshDriverData, refreshRaceEvents]);
+
+  const getNow = useCallback(() => {
+    if (typeof performance !== 'undefined' && typeof performance.now === 'function') {
+      return performance.now();
+    }
+    return Date.now();
+  }, []);
+
+  useEffect(() => {
+    setDisplayRaceTime(sessionState.raceTime ?? 0);
+    lastTickRef.current = null;
+  }, [sessionState.raceTime, sessionState.isPaused, sessionState.isTiming]);
+
+  useEffect(() => {
+    const hasWindow = typeof window !== 'undefined';
+    const cleanup = () => {
+      if (animationFrameRef.current !== null && hasWindow) {
+        window.cancelAnimationFrame(animationFrameRef.current);
+      }
+      animationFrameRef.current = null;
+      if (intervalRef.current !== null && hasWindow) {
+        window.clearInterval(intervalRef.current);
+      }
+      intervalRef.current = null;
+    };
+
+    if (!hasWindow) {
+      return cleanup;
+    }
+
+    if (!sessionState.isTiming || sessionState.isPaused) {
+      cleanup();
+      return cleanup;
+    }
+
+    lastTickRef.current = getNow();
+
+    const updateTimer = (currentTime) => {
+      const previous = lastTickRef.current ?? currentTime;
+      const delta = currentTime - previous;
+      lastTickRef.current = currentTime;
+      setDisplayRaceTime((prev) => prev + delta);
+      animationFrameRef.current = window.requestAnimationFrame(updateTimer);
+    };
+
+    if (typeof window.requestAnimationFrame === 'function') {
+      animationFrameRef.current = window.requestAnimationFrame(updateTimer);
+    } else {
+      intervalRef.current = window.setInterval(() => {
+        const currentTime = getNow();
+        const previous = lastTickRef.current ?? currentTime;
+        const delta = currentTime - previous;
+        lastTickRef.current = currentTime;
+        setDisplayRaceTime((prev) => prev + delta);
+      }, 100);
+    }
+
+    return cleanup;
+  }, [getNow, sessionState.isPaused, sessionState.isTiming]);
 
   const leaderboard = useMemo(() => {
     const sorted = [...drivers]
@@ -251,7 +346,7 @@ const LiveTimingBoard = () => {
               </div>
               <div className="flex items-center gap-3 text-[#9FF7D3]">
                 <Clock className="h-6 w-6" />
-                <span className="font-mono text-4xl">{formatRaceClock(sessionState.raceTime)}</span>
+                <span className="font-mono text-4xl">{formatRaceClock(displayRaceTime)}</span>
               </div>
             </div>
           </div>
@@ -267,6 +362,45 @@ const LiveTimingBoard = () => {
             {error}
           </div>
         )}
+
+        <section className="rounded-3xl border border-neutral-800 bg-[#0D1324]/80 p-4 shadow-[0_25px_80px_-60px_rgba(124,107,255,0.35)]">
+          <div className="mb-4 flex items-center justify-between">
+            <h2 className="text-sm font-semibold uppercase tracking-[0.35em] text-neutral-400">
+              Race Control Feed
+            </h2>
+            <span className="text-xs text-neutral-500">
+              {raceEvents.length ? `Latest ${raceEvents.length} updates` : 'Awaiting updates'}
+            </span>
+          </div>
+          <div className="grid gap-2">
+            {raceEvents.length === 0 && (
+              <div className="rounded-xl border border-dashed border-neutral-800/70 bg-neutral-950/40 px-4 py-3 text-sm text-neutral-500">
+                Marshal actions and race control messages will appear here in real time.
+              </div>
+            )}
+            {raceEvents.map((event) => {
+              const timestamp = event.timestamp
+                ? event.timestamp.toLocaleTimeString([], {
+                    hour: '2-digit',
+                    minute: '2-digit',
+                    second: '2-digit',
+                  })
+                : '—';
+              return (
+                <div
+                  key={event.id}
+                  className="flex flex-col gap-1 rounded-xl border border-neutral-800/60 bg-neutral-950/50 px-4 py-3"
+                >
+                  <div className="flex items-center justify-between text-xs uppercase tracking-[0.3em] text-neutral-500">
+                    <span>{event.marshalId}</span>
+                    <span>{timestamp}</span>
+                  </div>
+                  <p className="text-sm text-neutral-200">{event.message}</p>
+                </div>
+              );
+            })}
+          </div>
+        </section>
 
         <section className="rounded-3xl border border-neutral-800 bg-[#0D1324]/80 p-4 shadow-[0_25px_80px_-60px_rgba(159,247,211,0.45)]">
           <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
