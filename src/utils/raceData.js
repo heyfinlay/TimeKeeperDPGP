@@ -21,72 +21,6 @@ export const toDriverRow = (driver) => ({
   updated_at: new Date().toISOString(),
 });
 
-export const groupLapRows = (lapRows = []) => {
-  const byDriver = new Map();
-  lapRows.forEach((lap) => {
-    if (!byDriver.has(lap.driver_id)) {
-      byDriver.set(lap.driver_id, []);
-    }
-    byDriver.get(lap.driver_id).push(lap);
-  });
-  byDriver.forEach((entries, driverId) => {
-    entries.sort((a, b) => a.lap_number - b.lap_number);
-    byDriver.set(
-      driverId,
-      entries.map((entry) => ({
-        lapNumber: entry.lap_number,
-        lapTime: entry.lap_time_ms,
-        source: entry.source ?? 'manual',
-        recordedAt: entry.recorded_at ? new Date(entry.recorded_at) : new Date(),
-      })),
-    );
-  });
-  return byDriver;
-};
-
-export const hydrateDriverState = (driverRow, lapRowsMap) => {
-  const lapEntries = lapRowsMap.get(driverRow.id) ?? [];
-  const lapTimes = lapEntries.map((entry) => entry.lapTime);
-  const laps = driverRow.laps ?? lapTimes.length;
-  const totalTime = driverRow.total_time_ms ?? lapTimes.reduce((sum, time) => sum + time, 0);
-  const lastLap =
-    driverRow.last_lap_ms ?? (lapEntries.length ? lapEntries[lapEntries.length - 1].lapTime : null);
-  const bestLap =
-    driverRow.best_lap_ms ?? (lapTimes.length ? Math.min(...lapTimes) : null);
-  return {
-    id: driverRow.id,
-    number: driverRow.number,
-    name: driverRow.name,
-    team: driverRow.team,
-    marshalId: driverRow.marshal_id,
-    laps,
-    lapTimes,
-    lapHistory: lapEntries,
-    lastLap,
-    bestLap,
-    totalTime,
-    pits: driverRow.pits ?? 0,
-    status: driverRow.status ?? 'ready',
-    currentLapStart: null,
-    driverFlag: driverRow.driver_flag ?? 'none',
-    pitComplete: driverRow.pit_complete ?? false,
-    hasInvalidToResolve: false,
-  };
-};
-
-export const sessionRowToState = (sessionRow) => ({
-  eventType: sessionRow?.event_type ?? 'Race',
-  totalLaps: sessionRow?.total_laps ?? 25,
-  totalDuration: sessionRow?.total_duration ?? 45,
-  procedurePhase: sessionRow?.procedure_phase ?? 'setup',
-  flagStatus: sessionRow?.flag_status ?? 'green',
-  trackStatus: sessionRow?.track_status ?? 'green',
-  announcement: sessionRow?.announcement ?? '',
-  isTiming: sessionRow?.is_timing ?? false,
-  isPaused: sessionRow?.is_paused ?? false,
-  raceTime: sessionRow?.race_time_ms ?? 0,
-});
-
 export const DEFAULT_SESSION_STATE = {
   eventType: 'Race',
   totalLaps: 25,
@@ -99,3 +33,104 @@ export const DEFAULT_SESSION_STATE = {
   isPaused: false,
   raceTime: 0,
 };
+
+const parseInteger = (value) => {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  if (typeof value === 'number') {
+    return Number.isFinite(value) ? value : null;
+  }
+  if (typeof value === 'string' && value.trim() !== '') {
+    const parsed = Number.parseInt(value, 10);
+    return Number.isNaN(parsed) ? null : parsed;
+  }
+  return null;
+};
+
+const coerceBoolean = (value, fallback = false) => {
+  if (typeof value === 'boolean') return value;
+  if (value === null || value === undefined) return fallback;
+  if (value === 'true') return true;
+  if (value === 'false') return false;
+  return fallback;
+};
+
+export const groupLapRows = (lapRows = []) => {
+  const byDriver = new Map();
+  lapRows.forEach((lap) => {
+    if (!byDriver.has(lap.driver_id)) {
+      byDriver.set(lap.driver_id, []);
+    }
+    byDriver.get(lap.driver_id).push(lap);
+  });
+  byDriver.forEach((entries, driverId) => {
+    entries.sort((a, b) => {
+      const aNumber = parseInteger(a.lap_number) ?? 0;
+      const bNumber = parseInteger(b.lap_number) ?? 0;
+      return aNumber - bNumber;
+    });
+    byDriver.set(
+      driverId,
+      entries.map((entry) => ({
+        lapNumber: parseInteger(entry.lap_number) ?? 0,
+        lapTime: parseInteger(entry.lap_time_ms) ?? 0,
+        source: entry.source ?? 'manual',
+        recordedAt: entry.recorded_at ? new Date(entry.recorded_at) : new Date(),
+      })),
+    );
+  });
+  return byDriver;
+};
+
+const resolveTrackStatus = (trackStatus, flagStatus) => {
+  if (trackStatus && flagStatus && trackStatus !== flagStatus) {
+    return flagStatus;
+  }
+  return trackStatus ?? flagStatus ?? DEFAULT_SESSION_STATE.trackStatus;
+};
+
+export const hydrateDriverState = (driverRow, lapRowsMap) => {
+  const lapEntries = lapRowsMap.get(driverRow.id) ?? [];
+  const lapTimes = lapEntries.map((entry) => entry.lapTime);
+  const laps = parseInteger(driverRow.laps) ?? lapTimes.length;
+  const totalTime =
+    parseInteger(driverRow.total_time_ms) ?? lapTimes.reduce((sum, time) => sum + time, 0);
+  const lastLap =
+    parseInteger(driverRow.last_lap_ms) ??
+    (lapEntries.length ? lapEntries[lapEntries.length - 1].lapTime : null);
+  const bestLap =
+    parseInteger(driverRow.best_lap_ms) ?? (lapTimes.length ? Math.min(...lapTimes) : null);
+  return {
+    id: driverRow.id,
+    number: driverRow.number,
+    name: driverRow.name,
+    team: driverRow.team,
+    marshalId: driverRow.marshal_id,
+    laps,
+    lapTimes,
+    lapHistory: lapEntries,
+    lastLap,
+    bestLap,
+    totalTime,
+    pits: parseInteger(driverRow.pits) ?? 0,
+    status: driverRow.status ?? 'ready',
+    currentLapStart: null,
+    driverFlag: driverRow.driver_flag ?? 'none',
+    pitComplete: coerceBoolean(driverRow.pit_complete, false),
+    hasInvalidToResolve: false,
+  };
+};
+
+export const sessionRowToState = (sessionRow) => ({
+  eventType: sessionRow?.event_type ?? 'Race',
+  totalLaps: parseInteger(sessionRow?.total_laps) ?? 25,
+  totalDuration: parseInteger(sessionRow?.total_duration) ?? 45,
+  procedurePhase: sessionRow?.procedure_phase ?? 'setup',
+  flagStatus: sessionRow?.flag_status ?? 'green',
+  trackStatus: resolveTrackStatus(sessionRow?.track_status, sessionRow?.flag_status),
+  announcement: sessionRow?.announcement ?? '',
+  isTiming: coerceBoolean(sessionRow?.is_timing, false),
+  isPaused: coerceBoolean(sessionRow?.is_paused, false),
+  raceTime: parseInteger(sessionRow?.race_time_ms) ?? 0,
+});

@@ -262,8 +262,12 @@ const TimingPanel = () => {
       });
       const sessionRow = rows?.[0];
       if (!sessionRow) return;
-      sessionStateRef.current = sessionRow;
       const hydrated = sessionRowToState(sessionRow);
+      sessionStateRef.current = {
+        ...sessionRow,
+        track_status: hydrated.trackStatus,
+        flag_status: hydrated.flagStatus,
+      };
       setEventConfig((prev) => ({
         ...prev,
         eventType: hydrated.eventType,
@@ -369,8 +373,12 @@ const TimingPanel = () => {
         };
         await supabaseUpsert('session_state', [sessionRow]);
       }
-      sessionStateRef.current = sessionRow;
       const hydrated = sessionRowToState(sessionRow);
+      sessionStateRef.current = {
+        ...sessionRow,
+        track_status: hydrated.trackStatus,
+        flag_status: hydrated.flagStatus,
+      };
       setEventConfig((prev) => ({
         ...prev,
         eventType: hydrated.eventType,
@@ -533,8 +541,12 @@ const TimingPanel = () => {
       { table: 'session_state', filter: `id=eq.${SESSION_ROW_ID}` },
       (payload) => {
         if (payload?.new) {
-          sessionStateRef.current = payload.new;
           const hydrated = sessionRowToState(payload.new);
+          sessionStateRef.current = {
+            ...payload.new,
+            track_status: hydrated.trackStatus,
+            flag_status: hydrated.flagStatus,
+          };
           setEventConfig((prev) => ({
             ...prev,
             eventType: hydrated.eventType,
