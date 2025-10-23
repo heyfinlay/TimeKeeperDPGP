@@ -664,12 +664,11 @@ const TimingPanel = () => {
     setProcedurePhase('green');
     setFlagStatus('green');
     setTrackStatus('green');
-    const now = Date.now();
     setDrivers((prev) => {
       const updated = prev.map((driver) => ({
         ...driver,
         status: 'ontrack',
-        currentLapStart: now,
+        currentLapStart: 0,
       }));
       updated.forEach((driver) => {
         void persistDriverState(driver);
@@ -753,10 +752,15 @@ const TimingPanel = () => {
     void logAction(`Flag set to ${flag.toUpperCase()}`);
   };
 
-  const recordLap = (driverId, { manualTime, source } = {}) => {
-    const manualEntry = typeof manualTime === 'number';
+  const logLap = (driverId, { manualTime, source } = {}) => {
+    const manualEntry =
+      typeof manualTime === 'number' && Number.isFinite(manualTime);
     let updatedDriver = null;
     const now = Date.now();
+    const raceElapsed =
+      raceStartRef.current !== null
+        ? now - raceStartRef.current - pausedDurationRef.current
+        : null;
     setDrivers((prev) =>
       prev.map((driver) => {
         if (driver.id !== driverId) {
@@ -766,12 +770,28 @@ const TimingPanel = () => {
           return driver;
         }
         let lapTime = manualEntry ? manualTime : null;
-        if (lapTime === null && driver.currentLapStart) {
-          lapTime = now - driver.currentLapStart;
+        let nextCurrentLapStart = driver.currentLapStart;
+        if (lapTime === null) {
+          if (raceElapsed === null) {
+            return driver;
+          }
+          const lapStart =
+            driver.currentLapStart ?? driver.totalTime ?? 0;
+          lapTime = raceElapsed - lapStart;
+          nextCurrentLapStart = raceElapsed;
+        } else {
+          if (raceElapsed !== null) {
+            nextCurrentLapStart = raceElapsed;
+          } else if (driver.currentLapStart !== null) {
+            nextCurrentLapStart = driver.currentLapStart + lapTime;
+          } else {
+            nextCurrentLapStart = (driver.totalTime ?? 0) + lapTime;
+          }
         }
-        if (!currentLap) {
-          return;
+        if (!Number.isFinite(lapTime) || lapTime <= 0) {
+          return driver;
         }
+        const recordedAt = new Date();
         const lapTimes = [...driver.lapTimes, lapTime];
         const lapHistory = [
           ...driver.lapHistory,
@@ -779,7 +799,7 @@ const TimingPanel = () => {
             lapNumber: lapTimes.length,
             lapTime,
             source: source ?? (manualEntry ? 'manual' : 'automatic'),
-            recordedAt: new Date(),
+            recordedAt,
           },
         ];
         const laps = driver.laps + 1;
@@ -789,7 +809,7 @@ const TimingPanel = () => {
           eventConfig.eventType === 'Race' && laps >= eventConfig.totalLaps
             ? 'finished'
             : driver.status;
-        const totalTime = driver.totalTime + lapTime;
+        const totalTime = (driver.totalTime ?? 0) + lapTime;
         updatedDriver = {
           ...driver,
           laps,
@@ -799,7 +819,7 @@ const TimingPanel = () => {
           bestLap,
           totalTime,
           status,
-          currentLapStart: now,
+          currentLapStart: nextCurrentLapStart,
           hasInvalidToResolve: false,
         };
         return updatedDriver;
@@ -823,13 +843,17 @@ const TimingPanel = () => {
       );
       void persistDriverState(updatedDriver);
       if (isSupabaseConfigured) {
+        const recordedAtIso =
+          updatedDriver.lapHistory[
+            updatedDriver.lapHistory.length - 1
+          ]?.recordedAt?.toISOString?.() ?? new Date().toISOString();
         supabaseInsert('laps', [
           {
             driver_id: updatedDriver.id,
             lap_number: updatedDriver.laps,
             lap_time_ms: updatedDriver.lastLap,
             source: source ?? (manualEntry ? 'manual' : 'automatic'),
-            recorded_at: new Date().toISOString(),
+            recorded_at: recordedAtIso,
           },
         ])
           .then(() => setSupabaseError(null))
@@ -892,6 +916,11 @@ const TimingPanel = () => {
     (driverId) => {
       let updatedDriver = null;
       let removedLapNumber = null;
+      const now = Date.now();
+      const raceElapsed =
+        raceStartRef.current !== null
+          ? now - raceStartRef.current - pausedDurationRef.current
+          : null;
       setDrivers((prev) =>
         prev.map((driver) => {
           if (driver.id !== driverId) {
@@ -909,6 +938,7 @@ const TimingPanel = () => {
           const lastLap = lapTimes.length ? lapTimes[lapTimes.length - 1] : null;
           const bestLap = lapTimes.length ? Math.min(...lapTimes) : null;
           const totalTime = lapTimes.reduce((sum, time) => sum + time, 0);
+          const resumedLapStart = raceElapsed ?? totalTime;
           updatedDriver = {
             ...driver,
             lapTimes,
@@ -918,7 +948,7 @@ const TimingPanel = () => {
             bestLap,
             totalTime,
             hasInvalidToResolve: true,
-            currentLapStart: null,
+            currentLapStart: resumedLapStart,
           };
           return updatedDriver;
         }),
@@ -959,6 +989,10 @@ const TimingPanel = () => {
     (driverId) => {
       let updatedDriver = null;
       const now = Date.now();
+      const raceElapsed =
+        raceStartRef.current !== null
+          ? now - raceStartRef.current - pausedDurationRef.current
+          : null;
       setDrivers((prev) =>
         prev.map((driver) => {
           if (driver.id !== driverId) {
@@ -967,10 +1001,12 @@ const TimingPanel = () => {
           if (!driver.hasInvalidToResolve) {
             return driver;
           }
+          const nextLapStart =
+            raceElapsed ?? driver.currentLapStart ?? driver.totalTime ?? 0;
           updatedDriver = {
             ...driver,
             hasInvalidToResolve: false,
-            currentLapStart: now,
+            currentLapStart: nextLapStart,
           };
           return updatedDriver;
         }),
@@ -987,6 +1023,49 @@ const TimingPanel = () => {
     },
     [getMarshalName, logAction, persistDriverState],
   );
+
+  useEffect(() => {
+    const handleKeyDown = (event) => {
+      if (event.repeat) return;
+      const target = event.target;
+      if (
+        target instanceof HTMLElement &&
+        (target.tagName === 'INPUT' ||
+          target.tagName === 'TEXTAREA' ||
+          target.isContentEditable)
+      ) {
+        return;
+      }
+      const key = event.key?.toLowerCase?.();
+      const driverIndex = HOTKEYS.indexOf(key);
+      if (driverIndex === -1) {
+        return;
+      }
+      const driver = drivers[driverIndex];
+      if (!driver) {
+        return;
+      }
+      event.preventDefault();
+      if (event.altKey) {
+        invalidateLastLap(driver.id);
+        return;
+      }
+      if (event.shiftKey) {
+        togglePitStop(driver.id);
+        return;
+      }
+      if (driver.hasInvalidToResolve) {
+        startLapAfterInvalid(driver.id);
+        return;
+      }
+      logLap(driver.id, { source: 'hotkey' });
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [drivers, invalidateLastLap, logLap, startLapAfterInvalid, togglePitStop]);
 
   const setDriverFlag = (driverId, driverFlag) => {
     let flaggedDriver = null;
