@@ -14,6 +14,7 @@ import { TRACK_STATUS_MAP, TRACK_STATUS_OPTIONS } from '../constants/trackStatus
 import {
   DEFAULT_SESSION_STATE,
   SESSION_ROW_ID,
+  SESSION_UUID,
   groupLapRows,
   hydrateDriverState,
   sessionRowToState,
@@ -49,6 +50,10 @@ const LiveTimingBoard = () => {
     try {
       const [driverRows, lapRows] = await Promise.all([
         supabaseSelect('drivers', { order: { column: 'number', ascending: true } }),
+        supabaseSelect('laps', {
+          filters: { session_id: `eq.${SESSION_UUID}` },
+          order: { column: 'lap_number', ascending: true },
+        }),
         supabaseSelect('laps', { order: { column: 'lap_number', ascending: true } }),
       ]);
       const lapMap = groupLapRows(lapRows ?? []);
@@ -100,6 +105,10 @@ const LiveTimingBoard = () => {
     const driverUnsub = subscribeToTable({ table: 'drivers' }, () => {
       refreshDriverData();
     });
+    const lapUnsub = subscribeToTable({
+      table: 'laps',
+      filter: `session_id=eq.${SESSION_UUID}`,
+    }, () => {
     const lapUnsub = subscribeToTable({ table: 'laps' }, () => {
       refreshDriverData();
     });
@@ -194,6 +203,18 @@ const LiveTimingBoard = () => {
   const recentLaps = useMemo(() => {
     if (!laps?.length) return [];
     return [...laps]
+      .filter((lap) => lap.duration_ms !== null && lap.invalidated === false)
+      .sort((a, b) => {
+        const aTime = a.ended_at
+          ? new Date(a.ended_at).getTime()
+          : a.started_at
+            ? new Date(a.started_at).getTime()
+            : 0;
+        const bTime = b.ended_at
+          ? new Date(b.ended_at).getTime()
+          : b.started_at
+            ? new Date(b.started_at).getTime()
+            : 0;
       .sort((a, b) => {
         const aTime = a.recorded_at ? new Date(a.recorded_at).getTime() : 0;
         const bTime = b.recorded_at ? new Date(b.recorded_at).getTime() : 0;
@@ -344,6 +365,9 @@ const LiveTimingBoard = () => {
             )}
             {recentLaps.map((lap) => {
               const driver = driverMap.get(lap.driver_id);
+              const recordedSource = lap.ended_at ?? lap.started_at ?? lap.created_at;
+              const recorded = recordedSource
+                ? new Date(recordedSource).toLocaleTimeString([], {
               const recorded = lap.recorded_at
                 ? new Date(lap.recorded_at).toLocaleTimeString([], {
                     hour: '2-digit',
@@ -353,6 +377,7 @@ const LiveTimingBoard = () => {
                 : '—';
               return (
                 <div
+                  key={`${lap.driver_id}-${lap.lap_number}-${recordedSource ?? Math.random()}`}
                   key={`${lap.driver_id}-${lap.lap_number}-${lap.recorded_at ?? Math.random()}`}
                   className="flex items-center justify-between rounded-xl border border-neutral-800/60 bg-neutral-950/50 px-4 py-3"
                 >
@@ -366,6 +391,7 @@ const LiveTimingBoard = () => {
                   </div>
                   <div className="text-right">
                     <p className="font-mono text-lg text-[#9FF7D3]">
+                      {formatLapTime(lap.duration_ms)}
                       {formatLapTime(lap.lap_time_ms)}
                     </p>
                     <p className="text-xs text-neutral-500">{recorded}</p>

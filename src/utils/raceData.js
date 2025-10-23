@@ -1,4 +1,13 @@
 export const SESSION_ROW_ID = 'live-session';
+export const SESSION_UUID = '00000000-0000-4000-8000-000000000001';
+
+export const createUuid = () =>
+  globalThis.crypto?.randomUUID?.() ??
+  'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (char) => {
+    const random = Math.floor(Math.random() * 16);
+    const value = char === 'x' ? random : (random & 0x3) | 0x8;
+    return value.toString(16);
+  });
 
 export const createClientId = () =>
   globalThis.crypto?.randomUUID?.() ??
@@ -18,6 +27,8 @@ export const toDriverRow = (driver) => ({
   driver_flag: driver.driverFlag,
   pit_complete: driver.pitComplete,
   total_time_ms: driver.totalTime ?? driver.lapTimes.reduce((sum, lap) => sum + lap, 0),
+  is_in_pit: driver.isInPit ?? false,
+  pending_invalid: driver.hasInvalidToResolve ?? false,
   updated_at: new Date().toISOString(),
 });
 
@@ -34,6 +45,17 @@ export const groupLapRows = (lapRows = []) => {
     byDriver.set(
       driverId,
       entries.map((entry) => ({
+        id: entry.id,
+        lapNumber: entry.lap_number,
+        duration: entry.duration_ms ?? null,
+        invalidated: entry.invalidated ?? false,
+        startedAt: entry.started_at ? new Date(entry.started_at) : null,
+        endedAt: entry.ended_at ? new Date(entry.ended_at) : null,
+        recordedAt: entry.ended_at
+          ? new Date(entry.ended_at)
+          : entry.started_at
+            ? new Date(entry.started_at)
+            : new Date(),
         lapNumber: entry.lap_number,
         lapTime: entry.lap_time_ms,
         source: entry.source ?? 'manual',
@@ -46,6 +68,23 @@ export const groupLapRows = (lapRows = []) => {
 
 export const hydrateDriverState = (driverRow, lapRowsMap) => {
   const lapEntries = lapRowsMap.get(driverRow.id) ?? [];
+  const completedLaps = lapEntries.filter((entry) => entry.endedAt).length;
+  const validLapEntries = lapEntries.filter(
+    (entry) => entry.endedAt && entry.duration !== null && entry.invalidated === false,
+  );
+  const lapDurations = validLapEntries.map((entry) => entry.duration ?? 0);
+  const filteredLapTimes = lapDurations.filter((time) => typeof time === 'number' && time > 0);
+  const totalTime =
+    driverRow.total_time_ms ?? filteredLapTimes.reduce((sum, time) => sum + (time ?? 0), 0);
+  const lastValidLap = validLapEntries.length ? validLapEntries[validLapEntries.length - 1] : null;
+  const lastLap = driverRow.last_lap_ms ?? lastValidLap?.duration ?? null;
+  const bestLap =
+    driverRow.best_lap_ms ?? (filteredLapTimes.length ? Math.min(...filteredLapTimes) : null);
+  const currentLap = lapEntries.find((entry) => !entry.endedAt) ?? null;
+  const lapNumber =
+    currentLap?.lapNumber ?? (lapEntries.length ? lapEntries[lapEntries.length - 1].lapNumber + 1 : 1);
+  const hasInvalidToResolve = driverRow.pending_invalid ?? false;
+  const isInPit = driverRow.is_in_pit ?? false;
   const lapTimes = lapEntries.map((entry) => entry.lapTime);
   const laps = driverRow.laps ?? lapTimes.length;
   const totalTime = driverRow.total_time_ms ?? lapTimes.reduce((sum, time) => sum + time, 0);
@@ -59,6 +98,8 @@ export const hydrateDriverState = (driverRow, lapRowsMap) => {
     name: driverRow.name,
     team: driverRow.team,
     marshalId: driverRow.marshal_id,
+    laps: completedLaps,
+    lapTimes: filteredLapTimes,
     laps,
     lapTimes,
     lapHistory: lapEntries,
@@ -67,6 +108,12 @@ export const hydrateDriverState = (driverRow, lapRowsMap) => {
     totalTime,
     pits: driverRow.pits ?? 0,
     status: driverRow.status ?? 'ready',
+    currentLapStart: currentLap?.startedAt ?? null,
+    driverFlag: driverRow.driver_flag ?? 'none',
+    pitComplete: driverRow.pit_complete ?? false,
+    isInPit,
+    hasInvalidToResolve,
+    currentLapNumber: lapNumber,
     currentLapStart: null,
     driverFlag: driverRow.driver_flag ?? 'none',
     pitComplete: driverRow.pit_complete ?? false,
