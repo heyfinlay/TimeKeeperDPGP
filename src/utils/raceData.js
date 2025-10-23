@@ -64,10 +64,11 @@ export const groupLapRows = (lapRows = []) => {
 
 export const hydrateDriverState = (driverRow, lapRowsMap) => {
   const lapEntries = lapRowsMap.get(driverRow.id) ?? [];
-  const completedLaps = lapEntries.filter((entry) => entry.endedAt).length;
-  const validLapEntries = lapEntries.filter(
-    (entry) => entry.endedAt && entry.duration !== null && entry.invalidated === false,
+  const completedLapEntries = lapEntries.filter(
+    (entry) => entry.endedAt && entry.invalidated === false,
   );
+  const completedLaps = completedLapEntries.length;
+  const validLapEntries = completedLapEntries.filter((entry) => entry.duration !== null);
   const lapDurations = validLapEntries.map((entry) => entry.duration ?? 0);
   const filteredLapTimes = lapDurations.filter((time) => typeof time === 'number' && time > 0);
   const totalTime =
