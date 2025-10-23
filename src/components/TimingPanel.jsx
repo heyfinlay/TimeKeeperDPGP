@@ -25,15 +25,12 @@ import {
   supabaseDelete,
   supabaseInsert,
   supabaseSelect,
-  supabaseUpdate,
   supabaseUpsert,
 } from '../lib/supabaseClient';
 import {
   DEFAULT_SESSION_STATE,
   SESSION_ROW_ID,
-  SESSION_UUID,
   createClientId,
-  createUuid,
   groupLapRows,
   hydrateDriverState,
   sessionRowToState,
@@ -155,23 +152,20 @@ const LOG_LIMIT = 200;
 
 const toDriverState = (driver) => ({
   ...driver,
-  laps: driver.laps ?? 0,
-  lapTimes: driver.lapTimes ?? [],
-  lapHistory: driver.lapHistory ?? [],
-  lastLap: driver.lastLap ?? null,
-  bestLap: driver.bestLap ?? null,
-  totalTime: driver.totalTime ?? 0,
-  pits: driver.pits ?? 0,
-  status: driver.status ?? 'ready',
-  currentLapStart: driver.currentLapStart ?? null,
-  driverFlag: driver.driverFlag ?? 'none',
-  pitComplete: driver.pitComplete ?? false,
-  isInPit: driver.isInPit ?? false,
-  hasInvalidToResolve: driver.hasInvalidToResolve ?? false,
-  currentLapNumber: driver.currentLapNumber ?? 1,
+  laps: 0,
+  lapTimes: [],
+  lapHistory: [],
+  lastLap: null,
+  bestLap: null,
+  totalTime: 0,
+  pits: 0,
+  status: 'ready',
+  currentLapStart: null,
+  driverFlag: 'none',
+  pitComplete: false,
 });
 
-const parseLapTimeInput = (input) => {
+const parseManualLap = (input) => {
   const trimmed = input.trim();
   if (!trimmed) return null;
   const colonIdx = trimmed.indexOf(':');
@@ -223,6 +217,7 @@ const TimingPanel = () => {
   const [announcementDraft, setAnnouncementDraft] = useState(
     DEFAULT_SESSION_STATE.announcement,
   );
+  const [manualLapInputs, setManualLapInputs] = useState({});
   const [logs, setLogs] = useState([]);
   const [showSetup, setShowSetup] = useState(false);
   const [setupDraft, setSetupDraft] = useState(null);
@@ -264,51 +259,16 @@ const TimingPanel = () => {
   const refreshDriversFromSupabase = useCallback(async () => {
     if (!isSupabaseConfigured) return;
     try {
-      const [driverRowsRaw, lapRowsRaw] = await Promise.all([
+      const [driverRows, lapRows] = await Promise.all([
         supabaseSelect('drivers', {
           order: { column: 'number', ascending: true },
         }),
         supabaseSelect('laps', {
-          filters: { session_id: `eq.${SESSION_UUID}` },
           order: { column: 'lap_number', ascending: true },
         }),
       ]);
-      const driverRows = driverRowsRaw ?? [];
-      let filteredLapRows = lapRowsRaw ?? [];
-      if (driverRows.length) {
-        const pendingStarts = [];
-        driverRows.forEach((driver) => {
-          const driverLaps = filteredLapRows.filter((lap) => lap.driver_id === driver.id);
-          const activeLap = driverLaps.find((lap) => lap.ended_at === null);
-          if (!activeLap) {
-            const lastCompleted = driverLaps
-              .filter((lap) => lap.duration_ms !== null)
-              .sort((a, b) => b.lap_number - a.lap_number)[0];
-            pendingStarts.push({
-              driverId: driver.id,
-              lapNumber: lastCompleted ? lastCompleted.lap_number + 1 : 1,
-            });
-          }
-        });
-        if (pendingStarts.length) {
-          await Promise.all(
-            pendingStarts.map(({ driverId, lapNumber }) =>
-              supabaseInsert('laps', [
-                {
-                  session_id: SESSION_UUID,
-                  driver_id: driverId,
-                  lap_number: lapNumber,
-                  started_at: new Date().toISOString(),
-                },
-              ]),
-            ),
-          );
-          filteredLapRows = await supabaseSelect('laps', {
-            filters: { session_id: `eq.${SESSION_UUID}` },
-            order: { column: 'lap_number', ascending: true },
-          });
-        }
-        applyDriverData(driverRows, filteredLapRows ?? []);
+      if (driverRows?.length) {
+        applyDriverData(driverRows, lapRows ?? []);
       }
       setSupabaseError(null);
     } catch (error) {
@@ -379,25 +339,10 @@ const TimingPanel = () => {
     }
     setIsInitialising(true);
     try {
-      const sessionRowsExisting = await supabaseSelect('sessions', {
-        filters: { id: `eq.${SESSION_UUID}` },
-      });
-      if (!sessionRowsExisting?.length) {
-        await supabaseUpsert('sessions', [
-          {
-            id: SESSION_UUID,
-            name: 'Live Session',
-            phase: DEFAULT_SESSION_STATE.procedurePhase,
-            created_at: new Date().toISOString(),
-            updated_at: new Date().toISOString(),
-          },
-        ]);
-      }
       let driverRows = await supabaseSelect('drivers', {
         order: { column: 'number', ascending: true },
       });
       let lapRows = await supabaseSelect('laps', {
-        filters: { session_id: `eq.${SESSION_UUID}` },
         order: { column: 'lap_number', ascending: true },
       });
       if (!driverRows?.length) {
@@ -417,8 +362,6 @@ const TimingPanel = () => {
             driver_flag: 'none',
             pit_complete: false,
             total_time_ms: 0,
-            is_in_pit: false,
-            pending_invalid: false,
           })),
         );
         driverRows = await supabaseSelect('drivers', {
@@ -608,7 +551,7 @@ const TimingPanel = () => {
     const driverUnsub = subscribeToTable({ table: 'drivers' }, () => {
       refreshDriversFromSupabase();
     });
-    const lapUnsub = subscribeToTable({ table: 'laps', filter: `session_id=eq.${SESSION_UUID}` }, () => {
+    const lapUnsub = subscribeToTable({ table: 'laps' }, () => {
       refreshDriversFromSupabase();
     });
     const sessionUnsub = subscribeToTable(
@@ -809,408 +752,92 @@ const TimingPanel = () => {
     void logAction(`Flag set to ${flag.toUpperCase()}`);
   };
 
-  const logLap = useCallback(
-    async (driverId) => {
-      const driver = drivers.find((entry) => entry.id === driverId);
-      if (!driver) return;
-      if (!isTiming || isPaused) return;
-      if (driver.status === 'retired' || driver.status === 'finished') return;
-      if (driver.hasInvalidToResolve) return;
-
-      const now = Date.now();
-
-      const flashDriver = () => {
-        if (lapFlashTimeoutRef.current) {
-          clearTimeout(lapFlashTimeoutRef.current);
+  const recordLap = (driverId, { manualTime, source } = {}) => {
+    const manualEntry = typeof manualTime === 'number';
+    let updatedDriver = null;
+    const now = Date.now();
+    setDrivers((prev) =>
+      prev.map((driver) => {
+        if (driver.id !== driverId) {
+          return driver;
         }
-        setRecentLapDriverId(driverId);
-        lapFlashTimeoutRef.current = setTimeout(() => {
-          setRecentLapDriverId(null);
-        }, 500);
-      };
-
-      if (!isSupabaseConfigured) {
-        let computedLapDuration = 0;
-        setDrivers((prev) =>
-          prev.map((entry) => {
-            if (entry.id !== driverId) {
-              return entry;
-            }
-            const lapStart = entry.currentLapStart ? entry.currentLapStart.getTime() : now;
-            const lapDuration = Math.max(0, now - lapStart);
-            computedLapDuration = lapDuration;
-            const laps = entry.laps + 1;
-            const bestLap =
-              entry.bestLap === null ? lapDuration : Math.min(entry.bestLap, lapDuration);
-            const status =
-              eventConfig.eventType === 'Race' && laps >= eventConfig.totalLaps
-                ? 'finished'
-                : entry.status;
-            const historyEntry = {
-              lapNumber: laps,
-              duration: lapDuration,
-              invalidated: false,
-              startedAt: entry.currentLapStart ?? new Date(now - lapDuration),
-              endedAt: new Date(),
-              recordedAt: new Date(),
-            };
-            const lapHistory = [...entry.lapHistory, historyEntry];
-            return {
-              ...entry,
-              laps,
-              lapTimes: [...entry.lapTimes, lapDuration],
-              lapHistory,
-              lastLap: lapDuration,
-              bestLap,
-              totalTime: entry.totalTime + lapDuration,
-              status,
-              currentLapStart: new Date(),
-              currentLapNumber: laps + 1,
-            };
-          }),
-        );
-        flashDriver();
-        const marshalName = getMarshalName(driver.marshalId);
-        void logAction(
-          `Lap recorded for #${driver.number} (${formatLapTime(computedLapDuration)})`,
-          marshalName,
-        );
-        return;
-      }
-
-      try {
-        const inProgressRows = await supabaseSelect('laps', {
-          filters: {
-            session_id: `eq.${SESSION_UUID}`,
-            driver_id: `eq.${driverId}`,
-            ended_at: 'is.null',
-            limit: 1,
-          },
-          order: { column: 'lap_number', ascending: false },
-        });
-        let currentLap = inProgressRows?.[0];
-        if (!currentLap) {
-          const completedRows = await supabaseSelect('laps', {
-            filters: {
-              session_id: `eq.${SESSION_UUID}`,
-              driver_id: `eq.${driverId}`,
-              ended_at: 'not.is.null',
-              limit: 1,
-            },
-            order: { column: 'lap_number', ascending: false },
-          });
-          const lastLapNumber = completedRows?.[0]?.lap_number ?? 0;
-          const nextLapNumber = lastLapNumber + 1;
-          await supabaseInsert('laps', [
-            {
-              session_id: SESSION_UUID,
-              driver_id: driverId,
-              lap_number: nextLapNumber,
-              started_at: new Date(now).toISOString(),
-            },
-          ]);
-          const refreshed = await supabaseSelect('laps', {
-            filters: {
-              session_id: `eq.${SESSION_UUID}`,
-              driver_id: `eq.${driverId}`,
-              ended_at: 'is.null',
-              limit: 1,
-            },
-            order: { column: 'lap_number', ascending: false },
-          });
-          currentLap = refreshed?.[0];
+        if (driver.status === 'retired' || driver.status === 'finished') {
+          return driver;
+        }
+        let lapTime = manualEntry ? manualTime : null;
+        if (lapTime === null && driver.currentLapStart) {
+          lapTime = now - driver.currentLapStart;
         }
         if (!currentLap) {
           return;
         }
-        const lapStart = currentLap.started_at
-          ? new Date(currentLap.started_at).getTime()
-          : now;
-        const durationMs = Math.max(0, Math.round(now - lapStart));
-        const endedAtIso = new Date(now).toISOString();
-        await supabaseUpdate(
-          'laps',
+        const lapTimes = [...driver.lapTimes, lapTime];
+        const lapHistory = [
+          ...driver.lapHistory,
           {
-            ended_at: endedAtIso,
-            duration_ms: durationMs,
+            lapNumber: lapTimes.length,
+            lapTime,
+            source: source ?? (manualEntry ? 'manual' : 'automatic'),
+            recordedAt: new Date(),
           },
-          { filters: { id: `eq.${currentLap.id}` } },
-        );
-        await supabaseInsert('laps', [
-          {
-            session_id: SESSION_UUID,
-            driver_id: driverId,
-            lap_number: currentLap.lap_number + 1,
-            started_at: endedAtIso,
-          },
-        ]);
-        flashDriver();
-        const marshalName = getMarshalName(driver.marshalId);
-        void logAction(
-          `Lap recorded for #${driver.number} (${formatLapTime(durationMs)})`,
-          marshalName,
-        );
-        await refreshDriversFromSupabase();
-        setSupabaseError(null);
-      } catch (error) {
-        console.error('Failed to log lap', error);
-        setSupabaseError('Unable to log lap in Supabase.');
-      }
-    },
-    [
-      drivers,
-      eventConfig.eventType,
-      eventConfig.totalLaps,
-      isPaused,
-      isTiming,
-      logAction,
-      refreshDriversFromSupabase,
-    ],
-  );
-
-  const invalidateLastLap = useCallback(
-    async (driverId) => {
-      const driver = drivers.find((entry) => entry.id === driverId);
-      if (!driver) return;
-      if (driver.hasInvalidToResolve) return;
-
-      if (!isSupabaseConfigured) {
-        setDrivers((prev) =>
-          prev.map((entry) => {
-            if (entry.id !== driverId) {
-              return entry;
-            }
-            const history = [...entry.lapHistory];
-            let index = history.length - 1;
-            while (index >= 0) {
-              if (history[index].endedAt) break;
-              index -= 1;
-            }
-            if (index < 0) {
-              return entry;
-            }
-            history[index] = {
-              ...history[index],
-              invalidated: true,
-            };
-            const validLaps = history.filter(
-              (lap) => lap.endedAt && lap.invalidated !== true && typeof lap.duration === 'number',
-            );
-            const bestLap = validLaps.length
-              ? Math.min(...validLaps.map((lap) => lap.duration ?? Number.POSITIVE_INFINITY))
-              : null;
-            const lastValid = validLaps.length ? validLaps[validLaps.length - 1] : null;
-            return {
-              ...entry,
-              lapHistory: history,
-              lastLap: lastValid?.duration ?? null,
-              bestLap: Number.isFinite(bestLap) ? bestLap : null,
-              hasInvalidToResolve: true,
-            };
-          }),
-        );
-        return;
-      }
-
-      try {
-        const lastLapRows = await supabaseSelect('laps', {
-          filters: {
-            session_id: `eq.${SESSION_UUID}`,
-            driver_id: `eq.${driverId}`,
-            ended_at: 'not.is.null',
-            limit: 1,
-          },
-          order: { column: 'lap_number', ascending: false },
-        });
-        const lastLap = lastLapRows?.[0];
-        if (!lastLap) {
-          return;
-        }
-        await supabaseUpdate(
-          'laps',
-          { invalidated: true },
-          { filters: { id: `eq.${lastLap.id}` } },
-        );
-        const inProgressRows = await supabaseSelect('laps', {
-          filters: {
-            session_id: `eq.${SESSION_UUID}`,
-            driver_id: `eq.${driverId}`,
-            ended_at: 'is.null',
-            limit: 1,
-          },
-          order: { column: 'lap_number', ascending: false },
-        });
-        const inProgress = inProgressRows?.[0];
-        if (inProgress && inProgress.started_at === lastLap.ended_at) {
-          await supabaseDelete('laps', { filters: { id: `eq.${inProgress.id}` } });
-        }
-        await supabaseUpdate(
-          'drivers',
-          { pending_invalid: true },
-          { filters: { id: `eq.${driverId}` } },
-        );
-        setDrivers((prev) =>
-          prev.map((entry) =>
-            entry.id === driverId ? { ...entry, hasInvalidToResolve: true } : entry,
-          ),
-        );
-        const marshalName = getMarshalName(driver.marshalId);
-        void logAction(`Lap invalidated for #${driver.number}`, marshalName);
-        await refreshDriversFromSupabase();
-        setSupabaseError(null);
-      } catch (error) {
-        console.error('Failed to invalidate lap', error);
-        setSupabaseError('Unable to invalidate lap in Supabase.');
-      }
-    },
-    [drivers, isSupabaseConfigured, logAction, refreshDriversFromSupabase],
-  );
-
-  const togglePit = useCallback(
-    async (driverId) => {
-      const driver = drivers.find((entry) => entry.id === driverId);
-      if (!driver) return;
-      const nextState = !driver.isInPit;
-      setDrivers((prev) =>
-        prev.map((entry) =>
-          entry.id === driverId
-            ? {
-                ...entry,
-                isInPit: nextState,
-              }
-            : entry,
-        ),
-      );
-
-      if (isSupabaseConfigured) {
-        try {
-          await supabaseUpdate(
-            'drivers',
-            { is_in_pit: nextState },
-            { filters: { id: `eq.${driverId}` } },
-          );
-          setSupabaseError(null);
-        } catch (error) {
-          console.error('Failed to toggle pit status', error);
-          setSupabaseError('Unable to toggle pit status in Supabase.');
-        }
-      }
-
-      const marshalName = getMarshalName(driver.marshalId);
+        ];
+        const laps = driver.laps + 1;
+        const bestLap =
+          driver.bestLap === null ? lapTime : Math.min(driver.bestLap, lapTime);
+        const status =
+          eventConfig.eventType === 'Race' && laps >= eventConfig.totalLaps
+            ? 'finished'
+            : driver.status;
+        const totalTime = driver.totalTime + lapTime;
+        updatedDriver = {
+          ...driver,
+          laps,
+          lapTimes,
+          lapHistory,
+          lastLap: lapTime,
+          bestLap,
+          totalTime,
+          status,
+          currentLapStart: now,
+        };
+        return updatedDriver;
+      }),
+    );
+    setManualLapInputs((prev) => ({ ...prev, [driverId]: '' }));
+    if (lapFlashTimeoutRef.current) {
+      clearTimeout(lapFlashTimeoutRef.current);
+    }
+    setRecentLapDriverId(driverId);
+    lapFlashTimeoutRef.current = setTimeout(() => {
+      setRecentLapDriverId(null);
+    }, 500);
+    if (updatedDriver) {
+      const marshalName = getMarshalName(updatedDriver.marshalId);
       void logAction(
-        `Driver #${driver.number} ${nextState ? 'entered' : 'left'} pit lane`,
+        `Lap recorded for #${updatedDriver.number} (${formatLapTime(
+          updatedDriver.lastLap,
+        )})${source ? ` via ${source}` : ''}`,
         marshalName,
       );
-    },
-    [drivers, isSupabaseConfigured, logAction],
-  );
-
-  useEffect(() => {
-    const handleKeyPress = (event) => {
-      if (!isTiming || isPaused) return;
-      const key = event.key.toLowerCase();
-      let number;
-      if (key >= '1' && key <= '9') {
-        number = Number.parseInt(key, 10);
-      } else if (key === '0') {
-        number = 10;
-      } else {
-        return;
-      }
-      const driver = drivers.find((d) => d.number === number);
-      if (!driver) return;
-      event.preventDefault();
-      if (event.altKey) {
-        void invalidateLastLap(driver.id);
-        return;
-      }
-      if (event.shiftKey) {
-        void togglePit(driver.id);
-        return;
-      }
-      void logLap(driver.id);
-    };
-    window.addEventListener('keydown', handleKeyPress);
-    return () => window.removeEventListener('keydown', handleKeyPress);
-  }, [drivers, invalidateLastLap, isPaused, isTiming, logLap, togglePit]);
-
-  const startLapAfterInvalid = useCallback(
-    async (driverId) => {
-      const driver = drivers.find((entry) => entry.id === driverId);
-      if (!driver) return;
-      if (!driver.hasInvalidToResolve) return;
-
-      if (!isSupabaseConfigured) {
-        setDrivers((prev) =>
-          prev.map((entry) =>
-            entry.id === driverId
-              ? {
-                  ...entry,
-                  hasInvalidToResolve: false,
-                  currentLapStart: new Date(),
-                  currentLapNumber: entry.laps + 1,
-                }
-              : entry,
-          ),
-        );
-        return;
-      }
-
-      try {
-        await supabaseDelete('laps', {
-          filters: {
-            session_id: `eq.${SESSION_UUID}`,
-            driver_id: `eq.${driverId}`,
-            ended_at: 'is.null',
-          },
-        });
-        const lastLapRows = await supabaseSelect('laps', {
-          filters: {
-            session_id: `eq.${SESSION_UUID}`,
-            driver_id: `eq.${driverId}`,
-            ended_at: 'not.is.null',
-            limit: 1,
-          },
-          order: { column: 'lap_number', ascending: false },
-        });
-        const lastLap = lastLapRows?.[0];
-        const nextLapNumber = lastLap ? lastLap.lap_number + 1 : 1;
-        await supabaseInsert('laps', [
+      void persistDriverState(updatedDriver);
+      if (isSupabaseConfigured) {
+        supabaseInsert('laps', [
           {
-            session_id: SESSION_UUID,
-            driver_id: driverId,
-            lap_number: nextLapNumber,
-            started_at: new Date().toISOString(),
+            driver_id: updatedDriver.id,
+            lap_number: updatedDriver.laps,
+            lap_time_ms: updatedDriver.lastLap,
+            source: source ?? (manualEntry ? 'manual' : 'automatic'),
+            recorded_at: new Date().toISOString(),
           },
-        ]);
-        await supabaseUpdate(
-          'drivers',
-          { pending_invalid: false },
-          { filters: { id: `eq.${driverId}` } },
-        );
-        setDrivers((prev) =>
-          prev.map((entry) =>
-            entry.id === driverId
-              ? {
-                  ...entry,
-                  hasInvalidToResolve: false,
-                  currentLapStart: new Date(),
-                  currentLapNumber: entry.laps + 1,
-                }
-              : entry,
-          ),
-        );
-        const marshalName = getMarshalName(driver.marshalId);
-        void logAction(`Invalidation reset for #${driver.number}`, marshalName);
-        await refreshDriversFromSupabase();
-        setSupabaseError(null);
-      } catch (error) {
-        console.error('Failed to restart lap after invalidation', error);
-        setSupabaseError('Unable to restart lap after invalidation.');
+        ])
+          .then(() => setSupabaseError(null))
+          .catch((error) => {
+            console.error('Failed to persist lap', error);
+            setSupabaseError('Unable to store lap in Supabase.');
+          });
       }
-    },
-    [drivers, isSupabaseConfigured, logAction, refreshDriversFromSupabase],
-  );
+    }
+  };
 
   const retireDriver = (driverId) => {
     let retiredDriver = null;
@@ -1229,6 +856,33 @@ const TimingPanel = () => {
         getMarshalName(retiredDriver.marshalId),
       );
       void persistDriverState(retiredDriver);
+    }
+  };
+
+  const togglePitStop = (driverId) => {
+    let updatedDriver = null;
+    setDrivers((prev) =>
+      prev.map((driver) => {
+        if (driver.id !== driverId) {
+          return driver;
+        }
+        const nextPitComplete = !driver.pitComplete;
+        updatedDriver = {
+          ...driver,
+          pitComplete: nextPitComplete,
+          pits: driver.pitComplete ? driver.pits : driver.pits + 1,
+        };
+        return updatedDriver;
+      }),
+    );
+    if (updatedDriver) {
+      void logAction(
+        `Pit stop ${updatedDriver.pitComplete ? 'completed' : 'cleared'} for #${
+          updatedDriver.number
+        }`,
+        getMarshalName(updatedDriver.marshalId),
+      );
+      void persistDriverState(updatedDriver);
     }
   };
 
@@ -1802,7 +1456,7 @@ const TimingPanel = () => {
                     const lapsDisplay = eventConfig.totalLaps
                       ? `${driver.laps}/${eventConfig.totalLaps}`
                       : `${driver.laps}`;
-                    const bestLapDraft = bestLapOverrideDrafts[driver.id] ?? '';
+                    const bestLapDraft = bestLapDrafts[driver.id] ?? '';
                     return (
                       <div
                         key={driver.id}
@@ -1913,7 +1567,7 @@ const TimingPanel = () => {
                               type="text"
                               value={bestLapDraft}
                               onChange={(event) =>
-                                setBestLapOverrideDrafts((prev) => ({
+                                setBestLapDrafts((prev) => ({
                                   ...prev,
                                   [driver.id]: event.target.value,
                                 }))
@@ -1929,7 +1583,7 @@ const TimingPanel = () => {
                                   return;
                                 }
                                 void overrideBestLap(driver.id, parsed);
-                                setBestLapOverrideDrafts((prev) => ({
+                                setBestLapDrafts((prev) => ({
                                   ...prev,
                                   [driver.id]: '',
                                 }));
