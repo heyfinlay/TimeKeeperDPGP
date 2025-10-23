@@ -13,6 +13,9 @@ const REST_ENDPOINT = isSupabaseConfigured
 const REALTIME_ENDPOINT = isSupabaseConfigured
   ? `${SUPABASE_URL.replace('https://', 'wss://').replace(/\/$/, '')}/realtime/v1/websocket`
   : null;
+const STORAGE_ENDPOINT = isSupabaseConfigured
+  ? `${SUPABASE_URL.replace(/\/$/, '')}/storage/v1/object`
+  : null;
 
 const AUTH_HEADERS = isSupabaseConfigured
   ? {
@@ -106,6 +109,44 @@ export const supabaseUpdate = (table, patch, options = {}) =>
 
 export const supabaseDelete = (table, options = {}) =>
   request(table, { method: 'DELETE', ...options });
+
+const encodeStoragePath = (path) =>
+  path
+    .split('/')
+    .map((segment) => encodeURIComponent(segment))
+    .join('/');
+
+export const supabaseStorageUpload = async (
+  bucket,
+  objectPath,
+  body,
+  { contentType = 'application/octet-stream', upsert = true } = {},
+) => {
+  if (!isSupabaseConfigured) {
+    throw new Error('Supabase is not configured. Unable to upload to storage.');
+  }
+  const url = `${STORAGE_ENDPOINT}/${bucket}/${encodeStoragePath(objectPath)}${
+    upsert ? '?upsert=true' : ''
+  }`;
+  const response = await fetch(url, {
+    method: 'PUT',
+    headers: {
+      ...AUTH_HEADERS,
+      'Content-Type': contentType,
+    },
+    body,
+  });
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`Supabase storage upload failed (${response.status}): ${errorText}`);
+  }
+  return response.json().catch(() => null);
+};
+
+export const buildStorageObjectUrl = (bucket, objectPath) => {
+  if (!isSupabaseConfigured) return null;
+  return `${SUPABASE_URL.replace(/\/$/, '')}/storage/v1/object/${bucket}/${objectPath}`;
+};
 
 const HEARTBEAT_INTERVAL = 25000;
 
