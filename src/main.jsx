@@ -33,8 +33,8 @@ const defaultAuthValue = {
   user: null,
   isLoading: false,
   permissions: {
-    isAdmin: true,
-    isMarshal: true,
+    isAdmin: false,
+    isMarshal: false,
   },
 };
 
