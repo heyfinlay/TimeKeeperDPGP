@@ -42,6 +42,7 @@ const request = async (
       );
     }
     return method === 'GET' ? [] : null;
+    throw new Error('Supabase is not configured. Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY.');
   }
   const searchParams = parseFilters(filters);
   if (select) {

@@ -26,6 +26,7 @@ npm run build
 
 1. Create a Supabase project and copy the project URL and anon public key.
 2. Apply the database schema from [`supabase/schema.sql`](./supabase/schema.sql) (see the migration instructions below).
+2. Run the SQL in [`supabase/schema.sql`](./supabase/schema.sql) inside the Supabase SQL editor to provision the required tables (`drivers`, `laps`, `session_state`, `race_events`) and enable realtime streaming.
 3. Set the following environment variables before running the app:
 
    ```bash

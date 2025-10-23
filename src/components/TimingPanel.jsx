@@ -33,6 +33,12 @@ import {
   SESSION_UUID,
   createClientId,
   createUuid,
+  supabaseUpsert,
+} from '../lib/supabaseClient';
+import {
+  DEFAULT_SESSION_STATE,
+  SESSION_ROW_ID,
+  createClientId,
   groupLapRows,
   hydrateDriverState,
   sessionRowToState,
@@ -170,6 +176,44 @@ const toDriverState = (driver) => ({
   currentLapNumber: driver.currentLapNumber ?? 1,
 });
 
+  laps: 0,
+  lapTimes: [],
+  lapHistory: [],
+  lastLap: null,
+  bestLap: null,
+  totalTime: 0,
+  pits: 0,
+  status: 'ready',
+  currentLapStart: null,
+  driverFlag: 'none',
+  pitComplete: false,
+});
+
+const parseManualLap = (input) => {
+  const trimmed = input.trim();
+  if (!trimmed) return null;
+  const colonIdx = trimmed.indexOf(':');
+  let minutes = 0;
+  let secondsPart = trimmed;
+  if (colonIdx !== -1) {
+    minutes = Number.parseInt(trimmed.slice(0, colonIdx), 10);
+    secondsPart = trimmed.slice(colonIdx + 1);
+  }
+  if (Number.isNaN(minutes) || minutes < 0) return null;
+  let seconds = 0;
+  let millis = 0;
+  if (secondsPart.includes('.')) {
+    const [secStr, msStr] = secondsPart.split('.');
+    seconds = Number.parseInt(secStr, 10);
+    millis = Number.parseInt(msStr.padEnd(3, '0').slice(0, 3), 10);
+  } else {
+    seconds = Number.parseInt(secondsPart, 10);
+  }
+  if (Number.isNaN(seconds) || seconds < 0) return null;
+  if (Number.isNaN(millis) || millis < 0) millis = 0;
+  return minutes * 60000 + seconds * 1000 + millis;
+};
+
 const TimingPanel = () => {
   const [eventConfig, setEventConfig] = useState({
     eventType: DEFAULT_SESSION_STATE.eventType,
@@ -197,6 +241,7 @@ const TimingPanel = () => {
   const [announcementDraft, setAnnouncementDraft] = useState(
     DEFAULT_SESSION_STATE.announcement,
   );
+  const [manualLapInputs, setManualLapInputs] = useState({});
   const [logs, setLogs] = useState([]);
   const [showSetup, setShowSetup] = useState(false);
   const [setupDraft, setSetupDraft] = useState(null);
@@ -238,6 +283,7 @@ const TimingPanel = () => {
     if (!isSupabaseConfigured) return;
     try {
       const [driverRowsRaw, lapRowsRaw] = await Promise.all([
+      const [driverRows, lapRows] = await Promise.all([
         supabaseSelect('drivers', {
           order: { column: 'number', ascending: true },
         }),
@@ -513,6 +559,225 @@ const TimingPanel = () => {
           console.error('Failed to persist race event', error);
           setSupabaseError('Unable to store race log in Supabase.');
         }
+          order: { column: 'lap_number', ascending: true },
+        }),
+      ]);
+      if (driverRows?.length) {
+        applyDriverData(driverRows, lapRows ?? []);
+      }
+      setSupabaseError(null);
+    } catch (error) {
+      console.error('Failed to refresh drivers from Supabase', error);
+      setSupabaseError('Unable to refresh drivers from Supabase.');
+    }
+  }, [applyDriverData]);
+
+  const refreshSessionFromSupabase = useCallback(async () => {
+    if (!isSupabaseConfigured) return;
+    try {
+      const rows = await supabaseSelect('session_state', {
+        filters: { id: `eq.${SESSION_ROW_ID}` },
+      });
+      const sessionRow = rows?.[0];
+      if (!sessionRow) return;
+      sessionStateRef.current = sessionRow;
+      const hydrated = sessionRowToState(sessionRow);
+      setEventConfig((prev) => ({
+        ...prev,
+        eventType: hydrated.eventType,
+        totalLaps: hydrated.totalLaps,
+        totalDuration: hydrated.totalDuration,
+      }));
+      setProcedurePhase(hydrated.procedurePhase);
+      setFlagStatus(hydrated.flagStatus);
+      setTrackStatus(hydrated.trackStatus);
+      setAnnouncement(hydrated.announcement);
+      setAnnouncementDraft(hydrated.announcement);
+      setIsTiming(hydrated.isTiming);
+      setIsPaused(hydrated.isPaused);
+      setRaceTime(hydrated.raceTime);
+      setSupabaseError(null);
+    } catch (error) {
+      console.error('Failed to refresh session state from Supabase', error);
+      setSupabaseError('Unable to refresh session state from Supabase.');
+    }
+  }, []);
+
+  const refreshLogsFromSupabase = useCallback(async () => {
+    if (!isSupabaseConfigured) return;
+    try {
+      const rows = await supabaseSelect('race_events', {
+        order: { column: 'created_at', ascending: false },
+        filters: { limit: LOG_LIMIT },
+      });
+      if (!Array.isArray(rows)) return;
+      const mapped = rows.map((row) => ({
+        id: row.id ?? createClientId(),
+        action: row.message ?? '',
+        marshalId: row.marshal_id ?? 'Race Control',
+        timestamp: row.created_at ? new Date(row.created_at) : new Date(),
+      }));
+      const trimmed = mapped.slice(0, LOG_LIMIT);
+      logsRef.current = trimmed;
+      setLogs(trimmed);
+      setSupabaseError(null);
+    } catch (error) {
+      console.error('Failed to refresh race events from Supabase', error);
+      setSupabaseError('Unable to refresh race events from Supabase.');
+    }
+  }, []);
+
+  const bootstrapSupabase = useCallback(async () => {
+    if (!isSupabaseConfigured) {
+      setIsInitialising(false);
+      return;
+    }
+    setIsInitialising(true);
+    try {
+      let driverRows = await supabaseSelect('drivers', {
+        order: { column: 'number', ascending: true },
+      });
+      let lapRows = await supabaseSelect('laps', {
+        order: { column: 'lap_number', ascending: true },
+      });
+      if (!driverRows?.length) {
+        await supabaseUpsert(
+          'drivers',
+          DEFAULT_DRIVERS.map((driver) => ({
+            id: driver.id,
+            number: driver.number,
+            name: driver.name,
+            team: driver.team,
+            marshal_id: driver.marshalId,
+            laps: 0,
+            last_lap_ms: null,
+            best_lap_ms: null,
+            pits: 0,
+            status: 'ready',
+            driver_flag: 'none',
+            pit_complete: false,
+            total_time_ms: 0,
+          })),
+        );
+        driverRows = await supabaseSelect('drivers', {
+          order: { column: 'number', ascending: true },
+        });
+        lapRows = [];
+      }
+      if (driverRows?.length) {
+        applyDriverData(driverRows, lapRows ?? []);
+      }
+      let sessionRows = await supabaseSelect('session_state', {
+        filters: { id: `eq.${SESSION_ROW_ID}` },
+      });
+      let sessionRow = sessionRows?.[0];
+      if (!sessionRow) {
+        sessionRow = {
+          id: SESSION_ROW_ID,
+          event_type: DEFAULT_SESSION_STATE.eventType,
+          total_laps: DEFAULT_SESSION_STATE.totalLaps,
+          total_duration: DEFAULT_SESSION_STATE.totalDuration,
+          procedure_phase: DEFAULT_SESSION_STATE.procedurePhase,
+          flag_status: DEFAULT_SESSION_STATE.flagStatus,
+          track_status: DEFAULT_SESSION_STATE.trackStatus,
+          announcement: DEFAULT_SESSION_STATE.announcement,
+          is_timing: DEFAULT_SESSION_STATE.isTiming,
+          is_paused: DEFAULT_SESSION_STATE.isPaused,
+          race_time_ms: DEFAULT_SESSION_STATE.raceTime,
+          updated_at: new Date().toISOString(),
+        };
+        await supabaseUpsert('session_state', [sessionRow]);
+      }
+      sessionStateRef.current = sessionRow;
+      const hydrated = sessionRowToState(sessionRow);
+      setEventConfig((prev) => ({
+        ...prev,
+        eventType: hydrated.eventType,
+        totalLaps: hydrated.totalLaps,
+        totalDuration: hydrated.totalDuration,
+      }));
+      setProcedurePhase(hydrated.procedurePhase);
+      setFlagStatus(hydrated.flagStatus);
+      setTrackStatus(hydrated.trackStatus);
+      setAnnouncement(hydrated.announcement);
+      setAnnouncementDraft(hydrated.announcement);
+      setIsTiming(hydrated.isTiming);
+      setIsPaused(hydrated.isPaused);
+      setRaceTime(hydrated.raceTime);
+      await refreshLogsFromSupabase();
+      setSupabaseError(null);
+    } catch (error) {
+      console.error('Failed to bootstrap Supabase data', error);
+      setSupabaseError(
+        'Unable to load data from Supabase. Confirm credentials and schema are correct.',
+      );
+    } finally {
+      setIsInitialising(false);
+    }
+  }, [applyDriverData, refreshLogsFromSupabase]);
+
+  const updateSessionState = useCallback(async (patch) => {
+    sessionStateRef.current = {
+      ...sessionStateRef.current,
+      ...patch,
+      id: SESSION_ROW_ID,
+    };
+    if (!isSupabaseConfigured) return;
+    try {
+      await supabaseUpsert('session_state', [
+        {
+          ...sessionStateRef.current,
+          updated_at: new Date().toISOString(),
+        },
+      ]);
+      setSupabaseError(null);
+    } catch (error) {
+      console.error('Failed to update session state', error);
+      setSupabaseError('Unable to update session state in Supabase.');
+    }
+  }, []);
+
+  const syncRaceTimeToSupabase = useCallback(
+    (elapsed) => {
+      if (!isSupabaseConfigured) return;
+      const now = Date.now();
+      if (now - lastRaceTimeSyncRef.current < 1000) {
+        return;
+      }
+      lastRaceTimeSyncRef.current = now;
+      updateSessionState({ race_time_ms: elapsed });
+    },
+    [updateSessionState],
+  );
+
+  const logAction = useCallback(
+    async (action, marshalId = 'Race Control') => {
+      const entry = {
+        id: createClientId(),
+        action,
+        marshalId,
+        timestamp: new Date(),
+      };
+      setLogs((prev) => {
+        const next = [entry, ...prev].slice(0, LOG_LIMIT);
+        logsRef.current = next;
+        return next;
+      });
+      if (isSupabaseConfigured) {
+        try {
+          await supabaseInsert('race_events', [
+            {
+              id: entry.id,
+              message: action,
+              marshal_id: marshalId,
+              created_at: entry.timestamp.toISOString(),
+            },
+          ]);
+          setSupabaseError(null);
+        } catch (error) {
+          console.error('Failed to persist race event', error);
+          setSupabaseError('Unable to store race log in Supabase.');
+        }
       }
     },
     [],
@@ -526,6 +791,14 @@ const TimingPanel = () => {
     } catch (error) {
       console.error('Failed to persist driver state', error);
       setSupabaseError('Unable to update driver data in Supabase.');
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!isTiming || isPaused) {
+      lastRaceTimeSyncRef.current = 0;
+      return () => {};
+    }
     }
   }, []);
 
@@ -611,6 +884,7 @@ const TimingPanel = () => {
       refreshDriversFromSupabase();
     });
     const lapUnsub = subscribeToTable({ table: 'laps', filter: `session_id=eq.${SESSION_UUID}` }, () => {
+    const lapUnsub = subscribeToTable({ table: 'laps' }, () => {
       refreshDriversFromSupabase();
     });
     const sessionUnsub = subscribeToTable(
@@ -895,6 +1169,21 @@ const TimingPanel = () => {
             order: { column: 'lap_number', ascending: false },
           });
           currentLap = refreshed?.[0];
+  const recordLap = (driverId, { manualTime, source } = {}) => {
+    const manualEntry = typeof manualTime === 'number';
+    let updatedDriver = null;
+    const now = Date.now();
+    setDrivers((prev) =>
+      prev.map((driver) => {
+        if (driver.id !== driverId) {
+          return driver;
+        }
+        if (driver.status === 'retired' || driver.status === 'finished') {
+          return driver;
+        }
+        let lapTime = manualEntry ? manualTime : null;
+        if (lapTime === null && driver.currentLapStart) {
+          lapTime = now - driver.currentLapStart;
         }
         if (!currentLap) {
           return;
@@ -1158,6 +1447,73 @@ const TimingPanel = () => {
     },
     [drivers, isSupabaseConfigured, logAction],
   );
+        const lapTimes = [...driver.lapTimes, lapTime];
+        const lapHistory = [
+          ...driver.lapHistory,
+          {
+            lapNumber: lapTimes.length,
+            lapTime,
+            source: source ?? (manualEntry ? 'manual' : 'automatic'),
+            recordedAt: new Date(),
+          },
+        ];
+        const laps = driver.laps + 1;
+        const bestLap =
+          driver.bestLap === null ? lapTime : Math.min(driver.bestLap, lapTime);
+        const status =
+          eventConfig.eventType === 'Race' && laps >= eventConfig.totalLaps
+            ? 'finished'
+            : driver.status;
+        const totalTime = driver.totalTime + lapTime;
+        updatedDriver = {
+          ...driver,
+          laps,
+          lapTimes,
+          lapHistory,
+          lastLap: lapTime,
+          bestLap,
+          totalTime,
+          status,
+          currentLapStart: now,
+        };
+        return updatedDriver;
+      }),
+    );
+    setManualLapInputs((prev) => ({ ...prev, [driverId]: '' }));
+    if (lapFlashTimeoutRef.current) {
+      clearTimeout(lapFlashTimeoutRef.current);
+    }
+    setRecentLapDriverId(driverId);
+    lapFlashTimeoutRef.current = setTimeout(() => {
+      setRecentLapDriverId(null);
+    }, 500);
+    if (updatedDriver) {
+      const marshalName = getMarshalName(updatedDriver.marshalId);
+      void logAction(
+        `Lap recorded for #${updatedDriver.number} (${formatLapTime(
+          updatedDriver.lastLap,
+        )})${source ? ` via ${source}` : ''}`,
+        marshalName,
+      );
+      void persistDriverState(updatedDriver);
+      if (isSupabaseConfigured) {
+        supabaseInsert('laps', [
+          {
+            driver_id: updatedDriver.id,
+            lap_number: updatedDriver.laps,
+            lap_time_ms: updatedDriver.lastLap,
+            source: source ?? (manualEntry ? 'manual' : 'automatic'),
+            recorded_at: new Date().toISOString(),
+          },
+        ])
+          .then(() => setSupabaseError(null))
+          .catch((error) => {
+            console.error('Failed to persist lap', error);
+            setSupabaseError('Unable to store lap in Supabase.');
+          });
+      }
+    }
+  };
 
   const retireDriver = (driverId) => {
     let retiredDriver = null;
@@ -1176,6 +1532,55 @@ const TimingPanel = () => {
         getMarshalName(retiredDriver.marshalId),
       );
       void persistDriverState(retiredDriver);
+    }
+  };
+
+  const setDriverFlag = (driverId, driverFlag) => {
+    let flaggedDriver = null;
+  const togglePitStop = (driverId) => {
+    let updatedDriver = null;
+    setDrivers((prev) =>
+      prev.map((driver) => {
+        if (driver.id !== driverId) {
+          return driver;
+        }
+        flaggedDriver = { ...driver, driverFlag };
+        return flaggedDriver;
+      }),
+    );
+    if (flaggedDriver) {
+      void logAction(
+        `Driver alert set to ${driverFlag.toUpperCase()} for #${flaggedDriver.number}`,
+        getMarshalName(flaggedDriver.marshalId),
+      );
+      void persistDriverState(flaggedDriver);
+    }
+  };
+
+  const updateTrackStatusSelection = (statusId) => {
+    setTrackStatus(statusId);
+    updateSessionState({ track_status: statusId });
+    const statusMeta = TRACK_STATUS_MAP[statusId];
+    void logAction(
+      `Track status set to ${statusMeta ? statusMeta.label : statusId.toUpperCase()}`,
+    );
+        const nextPitComplete = !driver.pitComplete;
+        updatedDriver = {
+          ...driver,
+          pitComplete: nextPitComplete,
+          pits: driver.pitComplete ? driver.pits : driver.pits + 1,
+        };
+        return updatedDriver;
+      }),
+    );
+    if (updatedDriver) {
+      void logAction(
+        `Pit stop ${updatedDriver.pitComplete ? 'completed' : 'cleared'} for #${
+          updatedDriver.number
+        }`,
+        getMarshalName(updatedDriver.marshalId),
+      );
+      void persistDriverState(updatedDriver);
     }
   };
 

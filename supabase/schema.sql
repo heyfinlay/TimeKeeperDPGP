@@ -42,6 +42,18 @@ create index if not exists laps_by_driver_session on public.laps(session_id, dri
 create index if not exists laps_valid on public.laps(session_id, driver_id)
   where invalidated = false and duration_ms is not null;
 
+  updated_at timestamptz default timezone('utc', now())
+);
+
+create table if not exists public.laps (
+  id uuid primary key default gen_random_uuid(),
+  driver_id uuid references public.drivers(id) on delete cascade,
+  lap_number integer not null,
+  lap_time_ms bigint not null,
+  source text,
+  recorded_at timestamptz default timezone('utc', now())
+);
+
 create table if not exists public.session_state (
   id text primary key,
   event_type text,

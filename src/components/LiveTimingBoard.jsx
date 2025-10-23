@@ -54,6 +54,7 @@ const LiveTimingBoard = () => {
           filters: { session_id: `eq.${SESSION_UUID}` },
           order: { column: 'lap_number', ascending: true },
         }),
+        supabaseSelect('laps', { order: { column: 'lap_number', ascending: true } }),
       ]);
       const lapMap = groupLapRows(lapRows ?? []);
       if (Array.isArray(driverRows)) {
@@ -108,6 +109,7 @@ const LiveTimingBoard = () => {
       table: 'laps',
       filter: `session_id=eq.${SESSION_UUID}`,
     }, () => {
+    const lapUnsub = subscribeToTable({ table: 'laps' }, () => {
       refreshDriverData();
     });
     const sessionUnsub = subscribeToTable(
@@ -213,6 +215,9 @@ const LiveTimingBoard = () => {
           : b.started_at
             ? new Date(b.started_at).getTime()
             : 0;
+      .sort((a, b) => {
+        const aTime = a.recorded_at ? new Date(a.recorded_at).getTime() : 0;
+        const bTime = b.recorded_at ? new Date(b.recorded_at).getTime() : 0;
         return bTime - aTime;
       })
       .slice(0, 12);
@@ -363,6 +368,8 @@ const LiveTimingBoard = () => {
               const recordedSource = lap.ended_at ?? lap.started_at ?? lap.created_at;
               const recorded = recordedSource
                 ? new Date(recordedSource).toLocaleTimeString([], {
+              const recorded = lap.recorded_at
+                ? new Date(lap.recorded_at).toLocaleTimeString([], {
                     hour: '2-digit',
                     minute: '2-digit',
                     second: '2-digit',
@@ -371,6 +378,7 @@ const LiveTimingBoard = () => {
               return (
                 <div
                   key={`${lap.driver_id}-${lap.lap_number}-${recordedSource ?? Math.random()}`}
+                  key={`${lap.driver_id}-${lap.lap_number}-${lap.recorded_at ?? Math.random()}`}
                   className="flex items-center justify-between rounded-xl border border-neutral-800/60 bg-neutral-950/50 px-4 py-3"
                 >
                   <div>
@@ -384,6 +392,7 @@ const LiveTimingBoard = () => {
                   <div className="text-right">
                     <p className="font-mono text-lg text-[#9FF7D3]">
                       {formatLapTime(lap.duration_ms)}
+                      {formatLapTime(lap.lap_time_ms)}
                     </p>
                     <p className="text-xs text-neutral-500">{recorded}</p>
                   </div>

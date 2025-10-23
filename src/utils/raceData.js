@@ -56,6 +56,10 @@ export const groupLapRows = (lapRows = []) => {
           : entry.started_at
             ? new Date(entry.started_at)
             : new Date(),
+        lapNumber: entry.lap_number,
+        lapTime: entry.lap_time_ms,
+        source: entry.source ?? 'manual',
+        recordedAt: entry.recorded_at ? new Date(entry.recorded_at) : new Date(),
       })),
     );
   });
@@ -81,6 +85,13 @@ export const hydrateDriverState = (driverRow, lapRowsMap) => {
     currentLap?.lapNumber ?? (lapEntries.length ? lapEntries[lapEntries.length - 1].lapNumber + 1 : 1);
   const hasInvalidToResolve = driverRow.pending_invalid ?? false;
   const isInPit = driverRow.is_in_pit ?? false;
+  const lapTimes = lapEntries.map((entry) => entry.lapTime);
+  const laps = driverRow.laps ?? lapTimes.length;
+  const totalTime = driverRow.total_time_ms ?? lapTimes.reduce((sum, time) => sum + time, 0);
+  const lastLap =
+    driverRow.last_lap_ms ?? (lapEntries.length ? lapEntries[lapEntries.length - 1].lapTime : null);
+  const bestLap =
+    driverRow.best_lap_ms ?? (lapTimes.length ? Math.min(...lapTimes) : null);
   return {
     id: driverRow.id,
     number: driverRow.number,
@@ -89,6 +100,8 @@ export const hydrateDriverState = (driverRow, lapRowsMap) => {
     marshalId: driverRow.marshal_id,
     laps: completedLaps,
     lapTimes: filteredLapTimes,
+    laps,
+    lapTimes,
     lapHistory: lapEntries,
     lastLap,
     bestLap,
@@ -101,6 +114,9 @@ export const hydrateDriverState = (driverRow, lapRowsMap) => {
     isInPit,
     hasInvalidToResolve,
     currentLapNumber: lapNumber,
+    currentLapStart: null,
+    driverFlag: driverRow.driver_flag ?? 'none',
+    pitComplete: driverRow.pit_complete ?? false,
   };
 };
 
