@@ -29,13 +29,14 @@ import {
 } from '../lib/supabaseClient';
 import {
   DEFAULT_SESSION_STATE,
-  SESSION_ROW_ID,
+  LEGACY_SESSION_ID,
   createClientId,
   groupLapRows,
   hydrateDriverState,
   sessionRowToState,
   toDriverRow,
 } from '../utils/raceData';
+import { useEventSession } from '../context/SessionContext.jsx';
 
 const DEFAULT_MARSHALS = [
   { id: 'm1', name: 'Marshal 1' },
@@ -129,6 +130,7 @@ const LOG_LIMIT = 200;
 
 const toDriverState = (driver) => ({
   ...driver,
+  sessionId: driver.sessionId ?? null,
   laps: 0,
   lapTimes: [],
   lapHistory: [],
@@ -168,7 +170,50 @@ const parseManualLap = (input) => {
   return minutes * 60000 + seconds * 1000 + millis;
 };
 
+const formatSessionTimestamp = (value) =>
+  value ? new Date(value).toLocaleString() : 'Not set';
+
 const TimingPanel = () => {
+  const {
+    sessions,
+    activeSessionId,
+    selectSession,
+    createSession,
+    startSession,
+    completeSession,
+    refreshSessions,
+    isLoading: isSessionLoading,
+    error: sessionError,
+  } = useEventSession();
+  const fallbackSessionId = activeSessionId ?? LEGACY_SESSION_ID;
+
+  const activeSession = useMemo(
+    () => sessions.find((session) => session.id === activeSessionId) ?? null,
+    [sessions, activeSessionId],
+  );
+
+  const sessionMeta = useMemo(() => {
+    if (!activeSession) {
+      return 'Sessions isolate drivers, laps, and events for each race control shift.';
+    }
+    const details = [`Status: ${activeSession.status}`];
+    if (activeSession.starts_at) {
+      details.push(`Started ${formatSessionTimestamp(activeSession.starts_at)}`);
+    }
+    if (activeSession.ends_at) {
+      details.push(`Completed ${formatSessionTimestamp(activeSession.ends_at)}`);
+    }
+    return details.join(' • ');
+  }, [activeSession]);
+
+  const handleSessionChange = useCallback(
+    (event) => {
+      const value = event.target.value;
+      selectSession(value || null);
+    },
+    [selectSession],
+  );
+
   const [eventConfig, setEventConfig] = useState({
     eventType: DEFAULT_SESSION_STATE.eventType,
     totalLaps: DEFAULT_SESSION_STATE.totalLaps,
@@ -176,11 +221,7 @@ const TimingPanel = () => {
     marshals: DEFAULT_MARSHALS,
   });
   const [drivers, setDrivers] = useState(
-    DEFAULT_DRIVERS.map((driver) => ({
-      ...toDriverState(driver),
-      lapHistory: [],
-      totalTime: 0,
-    })),
+    DEFAULT_DRIVERS.map((driver) => toDriverState({ ...driver, sessionId: fallbackSessionId })),
   );
   const [procedurePhase, setProcedurePhase] = useState(
     DEFAULT_SESSION_STATE.procedurePhase,
@@ -210,7 +251,8 @@ const TimingPanel = () => {
   const pausedDurationRef = useRef(0);
   const lapFlashTimeoutRef = useRef(null);
   const sessionStateRef = useRef({
-    id: SESSION_ROW_ID,
+    id: fallbackSessionId,
+    session_id: fallbackSessionId,
     event_type: DEFAULT_SESSION_STATE.eventType,
     total_laps: DEFAULT_SESSION_STATE.totalLaps,
     total_duration: DEFAULT_SESSION_STATE.totalDuration,
@@ -235,12 +277,15 @@ const TimingPanel = () => {
 
   const refreshDriversFromSupabase = useCallback(async () => {
     if (!isSupabaseConfigured) return;
+    const sessionId = activeSessionId ?? LEGACY_SESSION_ID;
     try {
       const [driverRows, lapRows] = await Promise.all([
         supabaseSelect('drivers', {
+          filters: { session_id: `eq.${sessionId}` },
           order: { column: 'number', ascending: true },
         }),
         supabaseSelect('laps', {
+          filters: { session_id: `eq.${sessionId}` },
           order: { column: 'lap_number', ascending: true },
         }),
       ]);
@@ -252,19 +297,22 @@ const TimingPanel = () => {
       console.error('Failed to refresh drivers from Supabase', error);
       setSupabaseError('Unable to refresh drivers from Supabase.');
     }
-  }, [applyDriverData]);
+  }, [activeSessionId, applyDriverData]);
 
   const refreshSessionFromSupabase = useCallback(async () => {
     if (!isSupabaseConfigured) return;
+    const sessionId = activeSessionId ?? LEGACY_SESSION_ID;
     try {
       const rows = await supabaseSelect('session_state', {
-        filters: { id: `eq.${SESSION_ROW_ID}` },
+        filters: { session_id: `eq.${sessionId}` },
       });
       const sessionRow = rows?.[0];
       if (!sessionRow) return;
       const hydrated = sessionRowToState(sessionRow);
       sessionStateRef.current = {
         ...sessionRow,
+        id: sessionRow.id ?? sessionId,
+        session_id: sessionId,
         track_status: hydrated.trackStatus,
         flag_status: hydrated.flagStatus,
       };
@@ -286,14 +334,15 @@ const TimingPanel = () => {
       console.error('Failed to refresh session state from Supabase', error);
       setSupabaseError('Unable to refresh session state from Supabase.');
     }
-  }, []);
+  }, [activeSessionId]);
 
   const refreshLogsFromSupabase = useCallback(async () => {
     if (!isSupabaseConfigured) return;
+    const sessionId = activeSessionId ?? LEGACY_SESSION_ID;
     try {
       const rows = await supabaseSelect('race_events', {
         order: { column: 'created_at', ascending: false },
-        filters: { limit: LOG_LIMIT },
+        filters: { limit: LOG_LIMIT, session_id: `eq.${sessionId}` },
       });
       if (!Array.isArray(rows)) return;
       const mapped = rows.map((row) => ({
@@ -310,19 +359,22 @@ const TimingPanel = () => {
       console.error('Failed to refresh race events from Supabase', error);
       setSupabaseError('Unable to refresh race events from Supabase.');
     }
-  }, []);
+  }, [activeSessionId]);
 
   const bootstrapSupabase = useCallback(async () => {
     if (!isSupabaseConfigured) {
       setIsInitialising(false);
       return;
     }
+    const sessionId = activeSessionId ?? LEGACY_SESSION_ID;
     setIsInitialising(true);
     try {
       let driverRows = await supabaseSelect('drivers', {
+        filters: { session_id: `eq.${sessionId}` },
         order: { column: 'number', ascending: true },
       });
       let lapRows = await supabaseSelect('laps', {
+        filters: { session_id: `eq.${sessionId}` },
         order: { column: 'lap_number', ascending: true },
       });
       if (!driverRows?.length) {
@@ -342,9 +394,11 @@ const TimingPanel = () => {
             driver_flag: 'none',
             pit_complete: false,
             total_time_ms: 0,
+            session_id: sessionId,
           })),
         );
         driverRows = await supabaseSelect('drivers', {
+          filters: { session_id: `eq.${sessionId}` },
           order: { column: 'number', ascending: true },
         });
         lapRows = [];
@@ -353,12 +407,13 @@ const TimingPanel = () => {
         applyDriverData(driverRows, lapRows ?? []);
       }
       let sessionRows = await supabaseSelect('session_state', {
-        filters: { id: `eq.${SESSION_ROW_ID}` },
+        filters: { session_id: `eq.${sessionId}` },
       });
       let sessionRow = sessionRows?.[0];
       if (!sessionRow) {
         sessionRow = {
-          id: SESSION_ROW_ID,
+          id: sessionId,
+          session_id: sessionId,
           event_type: DEFAULT_SESSION_STATE.eventType,
           total_laps: DEFAULT_SESSION_STATE.totalLaps,
           total_duration: DEFAULT_SESSION_STATE.totalDuration,
@@ -376,6 +431,7 @@ const TimingPanel = () => {
       const hydrated = sessionRowToState(sessionRow);
       sessionStateRef.current = {
         ...sessionRow,
+        session_id: sessionId,
         track_status: hydrated.trackStatus,
         flag_status: hydrated.flagStatus,
       };
@@ -402,28 +458,33 @@ const TimingPanel = () => {
     } finally {
       setIsInitialising(false);
     }
-  }, [applyDriverData, refreshLogsFromSupabase]);
+  }, [activeSessionId, applyDriverData, refreshLogsFromSupabase]);
 
-  const updateSessionState = useCallback(async (patch) => {
-    sessionStateRef.current = {
-      ...sessionStateRef.current,
-      ...patch,
-      id: SESSION_ROW_ID,
-    };
-    if (!isSupabaseConfigured) return;
-    try {
-      await supabaseUpsert('session_state', [
-        {
-          ...sessionStateRef.current,
-          updated_at: new Date().toISOString(),
-        },
-      ]);
-      setSupabaseError(null);
-    } catch (error) {
-      console.error('Failed to update session state', error);
-      setSupabaseError('Unable to update session state in Supabase.');
-    }
-  }, []);
+  const updateSessionState = useCallback(
+    async (patch) => {
+      const sessionId = activeSessionId ?? LEGACY_SESSION_ID;
+      sessionStateRef.current = {
+        ...sessionStateRef.current,
+        ...patch,
+        id: sessionStateRef.current.id ?? sessionId,
+        session_id: sessionId,
+      };
+      if (!isSupabaseConfigured) return;
+      try {
+        await supabaseUpsert('session_state', [
+          {
+            ...sessionStateRef.current,
+            updated_at: new Date().toISOString(),
+          },
+        ]);
+        setSupabaseError(null);
+      } catch (error) {
+        console.error('Failed to update session state', error);
+        setSupabaseError('Unable to update session state in Supabase.');
+      }
+    },
+    [activeSessionId],
+  );
 
   const syncRaceTimeToSupabase = useCallback(
     (elapsed) => {
@@ -440,6 +501,7 @@ const TimingPanel = () => {
 
   const logAction = useCallback(
     async (action, marshalId = 'Race Control') => {
+      const sessionId = activeSessionId ?? LEGACY_SESSION_ID;
       const entry = {
         id: createClientId(),
         action,
@@ -458,6 +520,7 @@ const TimingPanel = () => {
               id: entry.id,
               message: action,
               marshal_id: marshalId,
+              session_id: sessionId,
               created_at: entry.timestamp.toISOString(),
             },
           ]);
@@ -468,19 +531,23 @@ const TimingPanel = () => {
         }
       }
     },
-    [],
+    [activeSessionId],
   );
 
-  const persistDriverState = useCallback(async (driver) => {
-    if (!isSupabaseConfigured) return;
-    try {
-      await supabaseUpsert('drivers', [toDriverRow(driver)]);
-      setSupabaseError(null);
-    } catch (error) {
-      console.error('Failed to persist driver state', error);
-      setSupabaseError('Unable to update driver data in Supabase.');
-    }
-  }, []);
+  const persistDriverState = useCallback(
+    async (driver) => {
+      if (!isSupabaseConfigured) return;
+      const sessionId = activeSessionId ?? driver.sessionId ?? LEGACY_SESSION_ID;
+      try {
+        await supabaseUpsert('drivers', [toDriverRow({ ...driver, sessionId })]);
+        setSupabaseError(null);
+      } catch (error) {
+        console.error('Failed to persist driver state', error);
+        setSupabaseError('Unable to update driver data in Supabase.');
+      }
+    },
+    [activeSessionId],
+  );
 
   useEffect(() => {
     if (!isTiming || isPaused) {
@@ -528,22 +595,38 @@ const TimingPanel = () => {
   }, [bootstrapSupabase]);
 
   useEffect(() => {
+    sessionStateRef.current = {
+      ...sessionStateRef.current,
+      id: sessionStateRef.current.id ?? (activeSessionId ?? LEGACY_SESSION_ID),
+      session_id: activeSessionId ?? LEGACY_SESSION_ID,
+    };
+  }, [activeSessionId]);
+
+  useEffect(() => {
     if (!isSupabaseConfigured) {
       return () => {};
     }
-    const driverUnsub = subscribeToTable({ table: 'drivers' }, () => {
-      refreshDriversFromSupabase();
-    });
-    const lapUnsub = subscribeToTable({ table: 'laps' }, () => {
-      refreshDriversFromSupabase();
-    });
+    const sessionId = activeSessionId ?? LEGACY_SESSION_ID;
+    const driverUnsub = subscribeToTable(
+      { table: 'drivers', filter: `session_id=eq.${sessionId}` },
+      () => {
+        refreshDriversFromSupabase();
+      },
+    );
+    const lapUnsub = subscribeToTable(
+      { table: 'laps', filter: `session_id=eq.${sessionId}` },
+      () => {
+        refreshDriversFromSupabase();
+      },
+    );
     const sessionUnsub = subscribeToTable(
-      { table: 'session_state', filter: `id=eq.${SESSION_ROW_ID}` },
+      { table: 'session_state', filter: `session_id=eq.${sessionId}` },
       (payload) => {
         if (payload?.new) {
           const hydrated = sessionRowToState(payload.new);
           sessionStateRef.current = {
             ...payload.new,
+            session_id: sessionId,
             track_status: hydrated.trackStatus,
             flag_status: hydrated.flagStatus,
           };
@@ -563,33 +646,36 @@ const TimingPanel = () => {
         }
       },
     );
-    const logUnsub = subscribeToTable({ table: 'race_events' }, (payload) => {
-      if (payload?.new) {
-        const entry = {
-          id: payload.new.id ?? createClientId(),
-          action: payload.new.message ?? '',
-          marshalId: payload.new.marshal_id ?? 'Race Control',
-          timestamp: payload.new.created_at
-            ? new Date(payload.new.created_at)
-            : new Date(),
-        };
-        setLogs((prev) => {
-          if (prev.some((log) => log.id === entry.id)) {
-            return prev;
-          }
-          const next = [entry, ...prev].slice(0, LOG_LIMIT);
-          logsRef.current = next;
-          return next;
-        });
-      }
-    });
+    const logUnsub = subscribeToTable(
+      { table: 'race_events', filter: `session_id=eq.${sessionId}` },
+      (payload) => {
+        if (payload?.new) {
+          const entry = {
+            id: payload.new.id ?? createClientId(),
+            action: payload.new.message ?? '',
+            marshalId: payload.new.marshal_id ?? 'Race Control',
+            timestamp: payload.new.created_at
+              ? new Date(payload.new.created_at)
+              : new Date(),
+          };
+          setLogs((prev) => {
+            if (prev.some((log) => log.id === entry.id)) {
+              return prev;
+            }
+            const next = [entry, ...prev].slice(0, LOG_LIMIT);
+            logsRef.current = next;
+            return next;
+          });
+        }
+      },
+    );
     return () => {
       driverUnsub();
       lapUnsub();
       sessionUnsub();
       logUnsub();
     };
-  }, [refreshDriversFromSupabase]);
+  }, [activeSessionId, refreshDriversFromSupabase]);
 
   const getMarshalName = (marshalId) =>
     eventConfig.marshals.find((m) => m.id === marshalId)?.name ?? 'Unassigned';
@@ -668,6 +754,9 @@ const TimingPanel = () => {
       race_time_ms: 0,
     });
     void logAction('Session started');
+    if (isSupabaseConfigured && activeSessionId) {
+      void startSession(activeSessionId);
+    }
   };
 
   const confirmPause = () => {
@@ -710,6 +799,9 @@ const TimingPanel = () => {
       is_paused: false,
     });
     void logAction('Session completed');
+    if (isSupabaseConfigured && activeSessionId) {
+      void completeSession(activeSessionId);
+    }
   };
 
   const handleTrackStatusChange = (statusId, { fromResume } = {}) => {
@@ -834,12 +926,14 @@ const TimingPanel = () => {
           updatedDriver.lapHistory[
             updatedDriver.lapHistory.length - 1
           ]?.recordedAt?.toISOString?.() ?? new Date().toISOString();
+        const sessionId = activeSessionId ?? updatedDriver.sessionId ?? LEGACY_SESSION_ID;
         supabaseInsert('laps', [
           {
             driver_id: updatedDriver.id,
             lap_number: updatedDriver.laps,
             lap_time_ms: updatedDriver.lastLap,
             source: source ?? (manualEntry ? 'manual' : 'automatic'),
+            session_id: sessionId,
             recorded_at: recordedAtIso,
           },
         ])
@@ -950,10 +1044,12 @@ const TimingPanel = () => {
       );
       void persistDriverState(updatedDriver);
       if (isSupabaseConfigured && removedLapNumber !== null) {
+        const sessionId = activeSessionId ?? updatedDriver.sessionId ?? LEGACY_SESSION_ID;
         supabaseDelete('laps', {
           filters: {
             driver_id: `eq.${updatedDriver.id}`,
             lap_number: `eq.${removedLapNumber}`,
+            session_id: `eq.${sessionId}`,
           },
         })
           .then(() => setSupabaseError(null))
@@ -964,6 +1060,7 @@ const TimingPanel = () => {
       }
     },
     [
+      activeSessionId,
       getMarshalName,
       isSupabaseConfigured,
       logAction,
@@ -1159,6 +1256,7 @@ const TimingPanel = () => {
   }, [drivers, eventConfig.eventType]);
 
   const openSetup = () => {
+    const sessionId = activeSessionId ?? LEGACY_SESSION_ID;
     setSetupDraft({
       eventType: eventConfig.eventType,
       totalLaps: eventConfig.totalLaps,
@@ -1170,6 +1268,7 @@ const TimingPanel = () => {
         name,
         team,
         marshalId,
+        sessionId,
       })),
     });
     setShowSetup(true);
@@ -1195,6 +1294,7 @@ const TimingPanel = () => {
           name: 'New Driver',
           team: 'New Team',
           marshalId: prev.marshals[0]?.id ?? '',
+          sessionId: activeSessionId ?? LEGACY_SESSION_ID,
         },
       ],
     }));
@@ -1245,7 +1345,10 @@ const TimingPanel = () => {
       totalDuration: nextTotalDuration,
       marshals: setupDraft.marshals,
     }));
-    const normalizedDrivers = setupDraft.drivers.map((driver) => toDriverState(driver));
+    const sessionId = activeSessionId ?? LEGACY_SESSION_ID;
+    const normalizedDrivers = setupDraft.drivers.map((driver) =>
+      toDriverState({ ...driver, sessionId }),
+    );
     setDrivers(normalizedDrivers);
     setBestLapDrafts({});
     setProcedurePhase('setup');
@@ -1271,14 +1374,19 @@ const TimingPanel = () => {
     });
     void logAction('Session configuration updated');
     if (isSupabaseConfigured) {
-      supabaseUpsert('drivers', normalizedDrivers.map((driver) => toDriverRow(driver)))
+      supabaseUpsert(
+        'drivers',
+        normalizedDrivers.map((driver) => toDriverRow({ ...driver, sessionId })),
+      )
         .then(() => setSupabaseError(null))
         .catch((error) => {
           console.error('Failed to persist driver setup', error);
           setSupabaseError('Unable to persist driver setup to Supabase.');
         });
       normalizedDrivers.forEach((driver) => {
-        supabaseDelete('laps', { filters: { driver_id: `eq.${driver.id}` } }).catch(
+        supabaseDelete('laps', {
+          filters: { driver_id: `eq.${driver.id}`, session_id: `eq.${sessionId}` },
+        }).catch(
           (error) => {
             console.error('Failed to clear laps for driver', driver.id, error);
           },
@@ -1388,6 +1496,67 @@ const TimingPanel = () => {
           <div className="rounded-xl border border-rose-500/40 bg-rose-500/15 px-4 py-3 text-sm text-rose-200">
             {supabaseError}
           </div>
+        )}
+        {sessionError && (
+          <div className="rounded-xl border border-rose-500/40 bg-rose-500/15 px-4 py-3 text-sm text-rose-200">
+            {sessionError}
+          </div>
+        )}
+        {isSupabaseConfigured && (
+          <section className="rounded-2xl border border-neutral-800 bg-[#11182c]/80 p-4 shadow-[0_18px_48px_-30px_rgba(159,247,211,0.35)]">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div className="space-y-1">
+                <p className="text-xs uppercase tracking-[0.35em] text-neutral-400">Session Scope</p>
+                <h2 className="text-lg font-semibold text-white">
+                  {activeSession?.name ?? 'Select or create a session'}
+                </h2>
+                <p className="text-sm text-neutral-400">{sessionMeta}</p>
+              </div>
+              <div className="flex flex-wrap gap-2 text-xs">
+                <button
+                  onClick={() => void refreshSessions()}
+                  disabled={isSessionLoading}
+                  className="rounded-lg border border-neutral-700 bg-neutral-900/70 px-3 py-2 font-semibold uppercase tracking-wide text-neutral-200 transition hover:border-[#9FF7D3] hover:text-[#9FF7D3] disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  {isSessionLoading ? 'Refreshing…' : 'Refresh'}
+                </button>
+                <button
+                  onClick={() => void createSession()}
+                  className="rounded-lg border border-[#9FF7D3]/40 bg-[#9FF7D3]/10 px-3 py-2 font-semibold uppercase tracking-wide text-[#9FF7D3] transition hover:border-[#9FF7D3]"
+                >
+                  New Session
+                </button>
+              </div>
+            </div>
+            <div className="mt-4 flex flex-wrap items-center gap-2">
+              <select
+                value={activeSessionId ?? ''}
+                onChange={handleSessionChange}
+                className="min-w-[220px] rounded-lg border border-neutral-700 bg-neutral-900/80 px-3 py-2 text-sm text-neutral-100 focus:outline-none focus:ring-2 focus:ring-[#9FF7D3]"
+              >
+                <option value="">Select session…</option>
+                {sessions.map((session) => (
+                  <option key={session.id} value={session.id}>
+                    {session.name} • {session.status}
+                  </option>
+                ))}
+              </select>
+              <button
+                onClick={() => activeSessionId && void startSession(activeSessionId)}
+                disabled={!activeSessionId || activeSession?.status === 'active' || activeSession?.status === 'completed'}
+                className="rounded-lg border border-neutral-700 bg-neutral-900/70 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-neutral-200 transition hover:border-[#9FF7D3] hover:text-[#9FF7D3] disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                Start Session
+              </button>
+              <button
+                onClick={() => finishSession()}
+                disabled={!activeSessionId || activeSession?.status === 'completed'}
+                className="rounded-lg border border-[#9FF7D3]/40 bg-[#9FF7D3]/10 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-[#9FF7D3] transition hover:border-[#9FF7D3] disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                Complete & Archive
+              </button>
+            </div>
+          </section>
         )}
         <section className="grid gap-4 lg:grid-cols-[2fr_3fr]">
           <div className="rounded-2xl border border-neutral-800 bg-[#11182c]/80 p-4 shadow-[0_18px_48px_-30px_rgba(159,247,211,0.25)]">

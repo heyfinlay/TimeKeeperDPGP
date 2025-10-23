@@ -1,4 +1,4 @@
-export const SESSION_ROW_ID = 'live-session';
+export const LEGACY_SESSION_ID = '00000000-0000-0000-0000-000000000000';
 
 export const createClientId = () =>
   globalThis.crypto?.randomUUID?.() ??
@@ -18,6 +18,7 @@ export const toDriverRow = (driver) => ({
   driver_flag: driver.driverFlag,
   pit_complete: driver.pitComplete,
   total_time_ms: driver.totalTime ?? driver.lapTimes.reduce((sum, lap) => sum + lap, 0),
+  session_id: driver.sessionId ?? LEGACY_SESSION_ID,
   updated_at: new Date().toISOString(),
 });
 
@@ -107,6 +108,7 @@ export const hydrateDriverState = (driverRow, lapRowsMap) => {
     name: driverRow.name,
     team: driverRow.team,
     marshalId: driverRow.marshal_id,
+    sessionId: driverRow.session_id ?? LEGACY_SESSION_ID,
     laps,
     lapTimes,
     lapHistory: lapEntries,
