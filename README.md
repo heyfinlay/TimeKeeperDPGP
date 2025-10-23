@@ -22,6 +22,12 @@ Build for production:
 npm run build
 ```
 
+Run the automated tests:
+
+```bash
+bun test
+```
+
 ## Supabase Setup
 
 1. Create a Supabase project and copy the project URL and anon public key.
@@ -46,3 +52,8 @@ The control panel will fall back to local-only mode if the variables are missing
 - A spectator-friendly **Live Timing Board** view that shows positions, gaps, fastest laps, track status, and the most recent lap feed.
 - Driver management including lap counts, best laps, pit tracking, marshal flags, retirements, and CSV export.
 - Tailwind CSS styling and Lucide icons.
+
+## Maintenance & Operations
+
+- Follow the [Maintenance & Extension Guide](./docs/MAINTENANCE_GUIDE.md) for deep dives into data flow, manual verification checklists, and plans for adding Discord authentication or new user flows.
+- Run `npm run build` before each release to confirm the production bundle compiles. Pair this with the smoke tests outlined in the guide to validate Race Control ↔ Live Timing synchronisation.
