@@ -127,13 +127,29 @@ export const AuthProvider = ({ children }) => {
     };
   }, [hydrateProfile]);
 
+  const AUTH_CALLBACK_URL = useMemo(() => {
+    const configured = import.meta.env.VITE_AUTH_CALLBACK_URL;
+    if (typeof configured === 'string' && configured.length > 0) {
+      return configured;
+    }
+    if (typeof window !== 'undefined' && window?.location?.origin) {
+      return `${window.location.origin.replace(/\/$/, '')}/auth/callback`;
+    }
+    return 'https://time-keeper-dpgp.vercel.app/auth/callback';
+  }, []);
+
   const signInWithDiscord = useCallback(async () => {
     if (!isSupabaseConfigured || !supabase) return;
-    const { error } = await supabase.auth.signInWithOAuth({ provider: 'discord' });
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider: 'discord',
+      options: {
+        redirectTo: AUTH_CALLBACK_URL,
+      },
+    });
     if (error) {
       console.error('Discord sign-in failed', error);
     }
-  }, []);
+  }, [AUTH_CALLBACK_URL]);
 
   const signOut = useCallback(async () => {
     if (!isSupabaseConfigured || !supabase) return;
