@@ -75,23 +75,25 @@ export const AuthProvider = ({ children }) => {
       try {
         const { data, error } = await supabase
           .from('profiles')
-          .insert({
-            id: nextUser.id,
-            role: 'marshal',
-            display_name: displayName,
-            ic_phone_number: null,
-          })
-          .select()
-          .single();
-        if (insertError) {
-          throw insertError;
+          .select(
+            'id, role, display_name, ic_phone_number, assigned_driver_ids, team_id, tier, experience_points',
+          )
+          .eq('id', userId)
+          .maybeSingle();
+
+        if (error && !isNoRowError(error)) {
+          throw error;
         }
+
+        let hydratedProfile = null;
+
         if (!data) {
           const displayName =
             nextUser.user_metadata?.full_name ||
             nextUser.user_metadata?.name ||
             nextUser.email ||
             'Marshal';
+
           const { data: created, error: insertError } = await supabase
             .from('profiles')
             .insert({
@@ -100,18 +102,23 @@ export const AuthProvider = ({ children }) => {
               display_name: displayName,
               ic_phone_number: null,
             })
-            .select()
+            .select(
+              'id, role, display_name, ic_phone_number, assigned_driver_ids, team_id, tier, experience_points',
+            )
             .single();
+
           if (insertError) {
             throw insertError;
           }
-          const hydratedProfile =
+
+          hydratedProfile =
             created ?? { ...DEFAULT_PROFILE, id: userId, display_name: displayName };
-          setProfile(hydratedProfile);
-          return hydratedProfile;
+        } else {
+          hydratedProfile = { ...DEFAULT_PROFILE, ...data };
         }
-        const hydratedProfile = { ...DEFAULT_PROFILE, ...data };
+
         setProfile(hydratedProfile);
+        setProfileError(null);
         return hydratedProfile;
       } catch (error) {
         console.error('Failed to load profile', error);
