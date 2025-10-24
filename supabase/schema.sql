@@ -158,6 +158,44 @@ as $$
   select coalesce(auth.jwt()->>'role', '') = 'admin';
 $$;
 
+-- Ensure profiles table matches client expectations
+create table if not exists public.profiles (
+  id uuid primary key references auth.users(id) on delete cascade,
+  display_name text,
+  role text not null default 'marshal',
+  assigned_driver_ids text[] default array[]::text[],
+  team_id uuid,
+  ic_phone_number text,
+  tier text,
+  experience_points integer not null default 0,
+  created_at timestamptz default timezone('utc', now()),
+  updated_at timestamptz default timezone('utc', now())
+);
+
+alter table public.profiles
+  alter column role set default 'marshal';
+
+alter table public.profiles
+  add column if not exists assigned_driver_ids text[] default array[]::text[];
+
+alter table public.profiles
+  add column if not exists team_id uuid;
+
+alter table public.profiles
+  add column if not exists ic_phone_number text;
+
+alter table public.profiles
+  add column if not exists tier text;
+
+alter table public.profiles
+  add column if not exists experience_points integer not null default 0;
+
+alter table public.profiles
+  add column if not exists created_at timestamptz default timezone('utc', now());
+
+alter table public.profiles
+  add column if not exists updated_at timestamptz default timezone('utc', now());
+
 create or replace function public.session_has_access(target_session_id uuid)
 returns boolean
 language sql

@@ -21,13 +21,23 @@ const AccountSetupPage = () => {
     );
   }, [profile?.display_name, user?.email, user?.user_metadata?.full_name, user?.user_metadata?.name]);
 
+  const supportsIcPhone = useMemo(
+    () => (profile ? Object.prototype.hasOwnProperty.call(profile, 'ic_phone_number') : false),
+    [profile],
+  );
+
   useEffect(() => {
     setDisplayName(derivedDisplayName ?? '');
-    setIcPhone(profile?.ic_phone_number ?? '');
-  }, [derivedDisplayName, profile?.ic_phone_number]);
+    if (supportsIcPhone) {
+      setIcPhone(profile?.ic_phone_number ?? '');
+    } else {
+      setIcPhone('');
+    }
+  }, [derivedDisplayName, profile?.ic_phone_number, supportsIcPhone]);
 
   const isAuthenticated = status === 'authenticated' && !!user;
-  const isProfileComplete = Boolean(profile?.display_name?.trim()) && Boolean(profile?.ic_phone_number?.trim());
+  const isProfileComplete =
+    Boolean(profile?.display_name?.trim()) && (!supportsIcPhone || Boolean(profile?.ic_phone_number?.trim()));
 
   useEffect(() => {
     if (!isSupabaseConfigured) return;
@@ -51,7 +61,7 @@ const AccountSetupPage = () => {
       setError('Please provide an account name.');
       return;
     }
-    if (!trimmedPhone) {
+    if (supportsIcPhone && !trimmedPhone) {
       setError('Please provide your IC phone number.');
       return;
     }
@@ -60,10 +70,10 @@ const AccountSetupPage = () => {
     setError(null);
 
     try {
-      await updateProfile({
-        display_name: trimmedDisplayName,
-        ic_phone_number: trimmedPhone,
-      });
+      const patch = supportsIcPhone
+        ? { display_name: trimmedDisplayName, ic_phone_number: trimmedPhone }
+        : { display_name: trimmedDisplayName };
+      await updateProfile(patch);
       navigate('/dashboard', { replace: true });
     } catch (submitError) {
       console.error('Failed to update profile', submitError);
@@ -104,8 +114,9 @@ const AccountSetupPage = () => {
         </span>
         <h1 className="text-3xl font-semibold text-white sm:text-4xl">Set up your TimeKeeper identity</h1>
         <p className="mx-auto max-w-2xl text-sm text-neutral-400">
-          Choose how you&apos;ll appear to other stewards and record your incident-control hotline so we can reach you during a
-          live session.
+          Choose how you&apos;ll appear to other stewards{supportsIcPhone
+            ? ' and share your incident-control hotline so we can reach you during a live session.'
+            : '. Update your details anytime from the dashboard.'}
         </p>
       </header>
 
@@ -133,25 +144,27 @@ const AccountSetupPage = () => {
           </p>
         </div>
 
-        <div className="flex flex-col gap-2">
-          <label htmlFor="icPhone" className="text-xs font-semibold uppercase tracking-[0.35em] text-neutral-400">
-            IC phone number
-          </label>
-          <div className="relative">
-            <Phone className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-[#9FF7D3]" />
-            <input
-              id="icPhone"
-              name="icPhone"
-              value={icPhone}
-              onChange={(event) => setIcPhone(event.target.value)}
-              placeholder="+1 555 0100"
-              className="w-full rounded-full border border-white/10 bg-[#0B1120]/60 py-3 pl-12 pr-4 text-sm text-white outline-none transition focus:border-[#9FF7D3]/70 focus:ring-2 focus:ring-[#9FF7D3]/30"
-            />
+        {supportsIcPhone ? (
+          <div className="flex flex-col gap-2">
+            <label htmlFor="icPhone" className="text-xs font-semibold uppercase tracking-[0.35em] text-neutral-400">
+              IC phone number
+            </label>
+            <div className="relative">
+              <Phone className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-[#9FF7D3]" />
+              <input
+                id="icPhone"
+                name="icPhone"
+                value={icPhone}
+                onChange={(event) => setIcPhone(event.target.value)}
+                placeholder="+1 555 0100"
+                className="w-full rounded-full border border-white/10 bg-[#0B1120]/60 py-3 pl-12 pr-4 text-sm text-white outline-none transition focus:border-[#9FF7D3]/70 focus:ring-2 focus:ring-[#9FF7D3]/30"
+              />
+            </div>
+            <p className="text-xs text-neutral-500">
+              Used only for critical incident escalation during live race control operations.
+            </p>
           </div>
-          <p className="text-xs text-neutral-500">
-            Used only for critical incident escalation during live race control operations.
-          </p>
-        </div>
+        ) : null}
 
         {error ? <p className="rounded-xl border border-red-500/40 bg-red-500/10 px-4 py-3 text-sm text-red-200">{error}</p> : null}
 
