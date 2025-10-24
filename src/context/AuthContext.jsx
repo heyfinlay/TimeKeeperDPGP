@@ -75,7 +75,9 @@ export const AuthProvider = ({ children }) => {
       try {
         const { data, error } = await supabase
           .from('profiles')
-          .select(PROFILE_COLUMNS)
+          .select(
+            'id, role, display_name, ic_phone_number, assigned_driver_ids, team_id, tier, experience_points',
+          )
           .eq('id', userId)
           .maybeSingle();
 
@@ -99,7 +101,9 @@ export const AuthProvider = ({ children }) => {
               role: 'marshal',
               display_name: displayName,
             })
-            .select(PROFILE_COLUMNS)
+            .select(
+              'id, role, display_name, ic_phone_number, assigned_driver_ids, team_id, tier, experience_points',
+            )
             .single();
 
           if (insertError) {
