@@ -1,3 +1,7 @@
+import { createClient } from '@supabase/supabase-js';
+
+/** @typedef {import('./database.types').Database} Database */
+
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
@@ -17,48 +21,11 @@ const STORAGE_ENDPOINT = isSupabaseConfigured
   ? `${SUPABASE_URL.replace(/\/$/, '')}/storage/v1/object`
   : null;
 
-const AUTH_HEADERS = isSupabaseConfigured
-  ? {
-      apikey: SUPABASE_ANON_KEY,
-      Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
-    }
-  : {};
-
-const parseFilters = (filters = {}) => {
-  const searchParams = new URLSearchParams();
-  Object.entries(filters).forEach(([key, value]) => {
-    if (value !== undefined && value !== null) {
-      searchParams.append(key, value);
-    }
-  });
-  return searchParams;
-};
-
-const request = async (
-  table,
-  { method = 'GET', filters, body, prefer, signal, headers = {}, select, order } = {},
-) => {
-  if (!isSupabaseConfigured) {
-    throw new Error('Supabase is not configured. Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY.');
-  }
-  const searchParams = parseFilters(filters);
-  if (select) {
-    searchParams.set('select', select);
-  }
-  if (order?.column) {
-    const direction = order.ascending === false ? 'desc' : 'asc';
-    searchParams.set('order', `${order.column}.${direction}`);
-  }
-  const url = `${REST_ENDPOINT}/${table}${
-    searchParams.toString() ? `?${searchParams.toString()}` : ''
-  }`;
-  const response = await fetch(url, {
-    method,
-    headers: {
-      ...AUTH_HEADERS,
-      ...(body ? { 'Content-Type': 'application/json' } : {}),
-      ...(prefer ? { Prefer: prefer } : {}),
-      ...headers,
+if (isSupabaseConfigured) {
+  supabaseClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+    auth: {
+      persistSession: true,
+      autoRefreshToken: true,
     },
     body: body ? JSON.stringify(body) : undefined,
     signal,
@@ -205,78 +172,11 @@ export const subscribeToTable = (
         ],
       },
     },
-    ref: joinRef,
-    join_ref: joinRef,
-  };
+  });
+}
 
-  const sendHeartbeat = () => {
-    if (ws.readyState === WebSocket.OPEN) {
-      ws.send(
-        JSON.stringify({
-          topic: 'phoenix',
-          event: 'heartbeat',
-          payload: {},
-          ref: Date.now().toString(),
-        }),
-      );
-    }
-  };
-
-  ws.onopen = () => {
-    ws.send(JSON.stringify(joinPayload));
-    ws.send(
-      JSON.stringify({
-        topic: channel,
-        event: 'access_token',
-        payload: { access_token: SUPABASE_ANON_KEY },
-        ref: `${joinRef}-token`,
-      }),
-    );
-    heartbeatTimer = setInterval(sendHeartbeat, HEARTBEAT_INTERVAL);
-  };
-
-  ws.onmessage = (event) => {
-    try {
-      const data = JSON.parse(event.data);
-      if (data.event === 'phx_reply' && data.payload?.status === 'ok') {
-        joined = true;
-        return;
-      }
-      if (data.event === 'postgres_changes' && joined) {
-        callback?.(data.payload);
-      }
-      if (data.event === 'phx_error' || data.event === 'phx_close') {
-        console.warn('Supabase realtime channel closed', data);
-      }
-    } catch (error) {
-      console.error('Failed to parse realtime payload', error);
-    }
-  };
-
-  ws.onerror = (event) => {
-    console.error('Supabase realtime error', event);
-  };
-
-  return () => {
-    try {
-      if (ws.readyState === WebSocket.OPEN) {
-        ws.send(
-          JSON.stringify({
-            topic: channel,
-            event: 'phx_leave',
-            payload: {},
-            ref: `${Date.now()}-leave`,
-          }),
-        );
-      }
-      ws.close();
-    } finally {
-      if (heartbeatTimer) {
-        clearInterval(heartbeatTimer);
-      }
-    }
-  };
-};
+/** @type {import('@supabase/supabase-js').SupabaseClient<Database> | null} */
+export const supabase = supabaseClient;
 
 export const supabaseEnvironment = {
   url: SUPABASE_URL,

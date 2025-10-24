@@ -9,7 +9,7 @@ export const toDriverRow = (driver) => ({
   number: driver.number,
   name: driver.name,
   team: driver.team,
-  marshal_id: driver.marshalId,
+  marshal_user_id: driver.marshalId ? driver.marshalId : null,
   laps: driver.laps,
   last_lap_ms: driver.lastLap,
   best_lap_ms: driver.bestLap,
