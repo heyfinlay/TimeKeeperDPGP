@@ -5,6 +5,7 @@ import App from './App.jsx';
 import WelcomePage from './pages/WelcomePage.jsx';
 import LiveTimingPage from './pages/LiveTimingPage.jsx';
 import RaceControlPage from './pages/RaceControlPage.jsx';
+import AuthCallback from './pages/auth/AuthCallback.jsx';
 import ProtectedRoute from './components/auth/ProtectedRoute.jsx';
 import { AuthProvider } from './context/AuthContext.jsx';
 import './index.css';
@@ -29,6 +30,10 @@ const router = createBrowserRouter([
             <RaceControlPage />
           </ProtectedRoute>
         ),
+      },
+      {
+        path: 'auth/callback',
+        element: <AuthCallback />,
       },
     ],
   },

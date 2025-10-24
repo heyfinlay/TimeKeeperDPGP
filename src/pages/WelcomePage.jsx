@@ -5,7 +5,7 @@ import { useAuth } from '../context/AuthContext.jsx';
 
 const FALLBACK_DISCORD_AUTH_URL =
   import.meta.env.VITE_DISCORD_FALLBACK_AUTH_URL ??
-  'https://discord.com/oauth2/authorize?client_id=YOUR_CLIENT_ID&response_type=code&scope=identify%20email%20guilds&prompt=consent';
+  'https://discord.com/oauth2/authorize?client_id=1430934830996000798&response_type=code&redirect_uri=https%3A%2F%2Ftime-keeper-dpgp.vercel.app%2Fauth%2Fcallback&scope=identify+email+guilds';
 
 const statHighlights = [
   {
