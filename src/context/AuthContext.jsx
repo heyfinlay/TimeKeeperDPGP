@@ -21,8 +21,11 @@ const DEFAULT_PROFILE = {
   id: null,
   role: 'marshal',
   display_name: null,
+  ic_phone_number: null,
   assigned_driver_ids: [],
   team_id: null,
+  tier: null,
+  experience_points: 0,
 };
 
 const isNoRowError = (error) => error?.code === 'PGRST116';
@@ -62,6 +65,7 @@ export const AuthProvider = ({ children }) => {
             id: nextUser.id,
             role: 'marshal',
             display_name: displayName,
+            ic_phone_number: null,
           })
           .select()
           .single();
@@ -127,19 +131,29 @@ export const AuthProvider = ({ children }) => {
     };
   }, [hydrateProfile]);
 
+  const AUTH_CALLBACK_URL = useMemo(() => {
+    const configured = import.meta.env.VITE_AUTH_CALLBACK_URL;
+    if (typeof configured === 'string' && configured.length > 0) {
+      return configured;
+    }
+    if (typeof window !== 'undefined' && window?.location?.origin) {
+      return `${window.location.origin.replace(/\/$/, '')}/auth/callback`;
+    }
+    return 'https://time-keeper-dpgp.vercel.app/auth/callback';
+  }, []);
+
   const signInWithDiscord = useCallback(async () => {
     if (!isSupabaseConfigured || !supabase) return;
     const { error } = await supabase.auth.signInWithOAuth({
       provider: 'discord',
       options: {
-        scopes: 'identify email guilds',
-        redirectTo: 'https://time-keeper-dpgp.vercel.app/auth/callback',
+        redirectTo: AUTH_CALLBACK_URL,
       },
     });
     if (error) {
       console.error('Discord sign-in failed', error);
     }
-  }, []);
+  }, [AUTH_CALLBACK_URL]);
 
   const signOut = useCallback(async () => {
     if (!isSupabaseConfigured || !supabase) return;
@@ -149,6 +163,30 @@ export const AuthProvider = ({ children }) => {
     }
   }, []);
 
+  const updateProfile = useCallback(
+    async (patch = {}) => {
+      if (!isSupabaseConfigured || !supabase || !user) {
+        throw new Error('Cannot update profile without an authenticated Supabase session.');
+      }
+
+      const { data: updated, error } = await supabase
+        .from('profiles')
+        .update(patch)
+        .eq('id', user.id)
+        .select()
+        .maybeSingle();
+
+      if (error) {
+        throw error;
+      }
+
+      const nextProfile = updated ? { ...DEFAULT_PROFILE, ...updated } : null;
+      setProfile(nextProfile);
+      return nextProfile;
+    },
+    [user, isSupabaseConfigured],
+  );
+
   const value = useMemo(
     () => ({
       status,
@@ -157,9 +195,10 @@ export const AuthProvider = ({ children }) => {
       profileError,
       signInWithDiscord,
       signOut,
+      updateProfile,
       isSupabaseConfigured,
     }),
-    [status, user, profile, profileError, signInWithDiscord, signOut],
+    [status, user, profile, profileError, signInWithDiscord, signOut, updateProfile],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

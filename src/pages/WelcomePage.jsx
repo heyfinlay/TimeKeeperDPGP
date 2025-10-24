@@ -2,7 +2,10 @@ import { useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { ArrowRight, Clock, Flag, ShieldCheck, Sparkles } from 'lucide-react';
 import { useAuth } from '../context/AuthContext.jsx';
-import { supabase } from '../lib/supabaseClient.js';
+
+const FALLBACK_DISCORD_AUTH_URL =
+  import.meta.env.VITE_DISCORD_FALLBACK_AUTH_URL ??
+  'https://discord.com/oauth2/authorize?client_id=1430934830996000798&response_type=code&redirect_uri=https%3A%2F%2Ftime-keeper-dpgp.vercel.app%2Fauth%2Fcallback&scope=identify+email+guilds';
 
 const statHighlights = [
   {
@@ -33,7 +36,7 @@ const WelcomePage = () => {
 
   const primaryCtaLabel = useMemo(() => {
     if (isCheckingAuth) return 'Checking access…';
-    if (isAuthenticated) return 'Enter race control';
+    if (isAuthenticated) return 'Open dashboard';
     return 'Sign in with Discord';
   }, [isAuthenticated, isCheckingAuth]);
 
@@ -82,7 +85,7 @@ const WelcomePage = () => {
         <div className="flex flex-col items-center justify-center gap-4 sm:flex-row">
           {isAuthenticated ? (
             <Link
-              to="/control"
+              to="/dashboard"
               className="group inline-flex items-center gap-3 rounded-full bg-[#9FF7D3] px-7 py-3 text-sm font-semibold uppercase tracking-[0.35em] text-[#041313] transition hover:bg-[#7de6c0]"
             >
               {primaryCtaLabel}

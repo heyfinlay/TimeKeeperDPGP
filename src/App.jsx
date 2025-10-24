@@ -1,7 +1,15 @@
 import { NavLink, Outlet } from 'react-router-dom';
 import { EventSessionProvider } from './context/SessionContext.jsx';
+import { useAuth } from './context/AuthContext.jsx';
 
-const navItems = [
+const NAV_ITEMS = [
+  {
+    to: '/dashboard',
+    label: 'Dashboard',
+    activeClass: 'bg-[#F5A97F]/20 text-[#F5A97F]',
+    hoverClass: 'hover:border-[#F5A97F]/50 hover:text-[#F5A97F]',
+    requiresAuth: true,
+  },
   {
     to: '/live',
     label: 'Live Timing',
@@ -13,10 +21,19 @@ const navItems = [
     label: 'Race Control',
     activeClass: 'bg-[#9FF7D3]/20 text-[#9FF7D3]',
     hoverClass: 'hover:border-[#9FF7D3]/50 hover:text-[#9FF7D3]',
+    requiresAuth: true,
   },
 ];
 
 const App = () => {
+  const { status, isSupabaseConfigured } = useAuth();
+  const isAuthenticated = status === 'authenticated';
+  const visibleNavItems = NAV_ITEMS.filter((item) => {
+    if (!item.requiresAuth) return true;
+    if (!isSupabaseConfigured) return true;
+    return isAuthenticated;
+  });
+
   return (
     <EventSessionProvider>
       <div className="min-h-screen bg-[#05070F] text-gray-100">
@@ -29,7 +46,7 @@ const App = () => {
               TimeKeeper
             </NavLink>
             <div className="flex flex-wrap items-center justify-center gap-2 text-xs uppercase tracking-[0.3em] text-neutral-400">
-              {navItems.map(({ to, label, activeClass, hoverClass }) => (
+              {visibleNavItems.map(({ to, label, activeClass, hoverClass }) => (
                 <NavLink
                   key={to}
                   to={to}

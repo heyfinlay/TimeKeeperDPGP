@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import AuthGate from './auth/AuthGate.jsx';
 import {
   AlertTriangle,
   Car,
@@ -23,6 +24,7 @@ import {
   isColumnMissingError,
   isSupabaseConfigured,
   subscribeToTable,
+  supabase,
   supabaseDelete,
   supabaseInsert,
   supabaseSelect,
@@ -37,6 +39,7 @@ import {
   sessionRowToState,
   toDriverRow,
 } from '../utils/raceData';
+import { useAuth } from '../context/AuthContext.jsx';
 import { useEventSession } from '../context/SessionContext.jsx';
 
 const DEFAULT_MARSHALS = [
@@ -191,6 +194,10 @@ const TimingPanel = () => {
     supportsSessions,
     fallbackToLegacySchema,
   } = useEventSession();
+  const { status, profile } = useAuth();
+  const isAuthenticated = status === 'authenticated';
+  const isAdmin = profile?.role?.toLowerCase() === 'admin';
+  const supabaseClient = supabase;
   const sessionId = activeSessionId ?? LEGACY_SESSION_ID;
   const fallbackSessionId = sessionId;
 
@@ -565,9 +572,14 @@ const TimingPanel = () => {
     activeSessionId,
     applyDriverData,
     handleSchemaMismatch,
+    isAdmin,
+    isSupabaseConfigured,
+    profile,
     refreshLogsFromSupabase,
     sanitizeRowsForSupabase,
     sessionId,
+    supabaseClient,
+    supabaseReady,
     withSessionFilter,
   ]);
 
