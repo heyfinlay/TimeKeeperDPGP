@@ -30,6 +30,7 @@ const AuthCallback = () => {
 
         if (errorDescription) {
           console.error('Supabase OAuth callback returned an error', errorDescription);
+          setHasSession(false);
           navigate('/', { replace: true });
           return;
         }
@@ -41,6 +42,7 @@ const AuthCallback = () => {
 
           if (exchangeError) {
             console.error('Failed to exchange Supabase OAuth code for a session', exchangeError);
+            setHasSession(false);
             navigate('/', { replace: true });
             return;
           }
@@ -85,6 +87,7 @@ const AuthCallback = () => {
 
           if (sessionFromUrlError) {
             console.error('Failed to hydrate Supabase session from URL fragment', sessionFromUrlError);
+            setHasSession(false);
             navigate('/', { replace: true });
             return;
           }
@@ -95,16 +98,19 @@ const AuthCallback = () => {
 
         if (error) {
           console.error('Failed to resolve Supabase session from callback', error);
+          setHasSession(false);
           navigate('/', { replace: true });
           return;
         }
 
         if (!data?.session) {
+          setHasSession(false);
           navigate('/', { replace: true });
           return;
         }
 
         const sessionUser = data.session.user;
+        setHasSession(true);
         let profileRow = null;
 
         try {
@@ -146,6 +152,7 @@ const AuthCallback = () => {
           }
         } catch (profileError) {
           console.error('Unable to load Supabase profile during auth callback', profileError);
+          setHasSession(true);
           navigate('/dashboard', { replace: true });
           return;
         }
@@ -154,6 +161,7 @@ const AuthCallback = () => {
         navigate(requiresSetup ? '/account/setup' : '/dashboard', { replace: true });
       } catch (error) {
         console.error('Unexpected error handling Supabase auth callback', error);
+        setHasSession(false);
         navigate('/', { replace: true });
       }
     };
