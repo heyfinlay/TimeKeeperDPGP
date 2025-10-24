@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import AuthGate from './auth/AuthGate.jsx';
 import {
   AlertTriangle,
   Car,
