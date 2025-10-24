@@ -38,59 +38,92 @@ export const AuthProvider = ({ children }) => {
   const [profile, setProfile] = useState(null);
   const [profileError, setProfileError] = useState(null);
   const [isHydratingProfile, setIsHydratingProfile] = useState(false);
-  const fetchingProfileRef = useRef(false);
+  const fetchingProfileRef = useRef({ userId: null, promise: null });
+  const activeProfileRequestsRef = useRef(0);
 
   const hydrateProfile = useCallback(async (nextUser) => {
     if (!isSupabaseConfigured || !supabase || !nextUser) {
+      fetchingProfileRef.current = { userId: null, promise: null };
+      activeProfileRequestsRef.current = 0;
       setProfile(null);
       setProfileError(null);
       setIsHydratingProfile(false);
-      return;
+      return null;
     }
-    if (fetchingProfileRef.current) return;
-    fetchingProfileRef.current = true;
+    const userId = nextUser.id;
+    if (!userId) {
+      fetchingProfileRef.current = { userId: null, promise: null };
+      activeProfileRequestsRef.current = 0;
+      setProfile(null);
+      setProfileError(null);
+      setIsHydratingProfile(false);
+      return null;
+    }
+
+    if (
+      fetchingProfileRef.current.promise &&
+      fetchingProfileRef.current.userId === userId
+    ) {
+      return fetchingProfileRef.current.promise;
+    }
+
+    activeProfileRequestsRef.current += 1;
     setIsHydratingProfile(true);
-    try {
-      const { data, error } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('id', nextUser.id)
-        .maybeSingle();
-      if (error && !isNoRowError(error)) {
-        throw error;
-      }
-      if (!data) {
-        const displayName =
-          nextUser.user_metadata?.full_name ||
-          nextUser.user_metadata?.name ||
-          nextUser.email ||
-          'Marshal';
-        const { data: created, error: insertError } = await supabase
+    setProfileError(null);
+
+    const profilePromise = (async () => {
+      try {
+        const { data, error } = await supabase
           .from('profiles')
-          .insert({
-            id: nextUser.id,
-            role: 'marshal',
-            display_name: displayName,
-            ic_phone_number: null,
-          })
-          .select()
-          .single();
-        if (insertError) {
-          throw insertError;
+          .select('*')
+          .eq('id', userId)
+          .maybeSingle();
+        if (error && !isNoRowError(error)) {
+          throw error;
         }
-        setProfile(created ?? { ...DEFAULT_PROFILE, id: nextUser.id, display_name: displayName });
-      } else {
-        setProfile({ ...DEFAULT_PROFILE, ...data });
+        if (!data) {
+          const displayName =
+            nextUser.user_metadata?.full_name ||
+            nextUser.user_metadata?.name ||
+            nextUser.email ||
+            'Marshal';
+          const { data: created, error: insertError } = await supabase
+            .from('profiles')
+            .insert({
+              id: userId,
+              role: 'marshal',
+              display_name: displayName,
+              ic_phone_number: null,
+            })
+            .select()
+            .single();
+          if (insertError) {
+            throw insertError;
+          }
+          const hydratedProfile =
+            created ?? { ...DEFAULT_PROFILE, id: userId, display_name: displayName };
+          setProfile(hydratedProfile);
+          return hydratedProfile;
+        }
+        const hydratedProfile = { ...DEFAULT_PROFILE, ...data };
+        setProfile(hydratedProfile);
+        return hydratedProfile;
+      } catch (error) {
+        console.error('Failed to load profile', error);
+        setProfileError(error);
+        setProfile(null);
+        throw error;
+      } finally {
+        if (fetchingProfileRef.current.userId === userId) {
+          fetchingProfileRef.current = { userId: null, promise: null };
+        }
+        activeProfileRequestsRef.current = Math.max(0, activeProfileRequestsRef.current - 1);
+        setIsHydratingProfile(activeProfileRequestsRef.current > 0);
       }
-      setProfileError(null);
-    } catch (error) {
-      console.error('Failed to load profile', error);
-      setProfileError(error);
-      setProfile(null);
-    } finally {
-      fetchingProfileRef.current = false;
-      setIsHydratingProfile(false);
-    }
+    })();
+
+    fetchingProfileRef.current = { userId, promise: profilePromise };
+    return profilePromise;
   }, []);
 
   useEffect(() => {
@@ -112,9 +145,9 @@ export const AuthProvider = ({ children }) => {
       const sessionUser = data?.session?.user ?? null;
       setUser(sessionUser);
       setStatus(sessionUser ? 'authenticated' : 'unauthenticated');
-      if (sessionUser) {
-        void hydrateProfile(sessionUser);
-      } else {
+      if (!sessionUser) {
+        fetchingProfileRef.current = { userId: null, promise: null };
+        activeProfileRequestsRef.current = 0;
         setProfile(null);
         setProfileError(null);
         setIsHydratingProfile(false);
@@ -127,9 +160,9 @@ export const AuthProvider = ({ children }) => {
       const sessionUser = session?.user ?? null;
       setUser(sessionUser);
       setStatus(sessionUser ? 'authenticated' : 'unauthenticated');
-      if (sessionUser) {
-        void hydrateProfile(sessionUser);
-      } else {
+      if (!sessionUser) {
+        fetchingProfileRef.current = { userId: null, promise: null };
+        activeProfileRequestsRef.current = 0;
         setProfile(null);
         setProfileError(null);
         setIsHydratingProfile(false);
@@ -141,6 +174,16 @@ export const AuthProvider = ({ children }) => {
       authListener?.subscription?.unsubscribe();
     };
   }, [hydrateProfile]);
+
+  useEffect(() => {
+    if (!user) {
+      return;
+    }
+    const profilePromise = hydrateProfile(user);
+    if (profilePromise && typeof profilePromise.catch === 'function') {
+      profilePromise.catch(() => {});
+    }
+  }, [hydrateProfile, user]);
 
   const AUTH_CALLBACK_URL = useMemo(() => {
     const fallback = (() => {
