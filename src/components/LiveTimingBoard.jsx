@@ -121,13 +121,25 @@ const LiveTimingBoard = () => {
     if (!supabaseReady) return;
     try {
       let query = supabaseClient.from('session_state').select('*');
-      query = applySessionFilter(query);
-      const { data, error } = await query.maybeSingle();
-      if (error) {
-        throw error;
-      }
-      if (data) {
-        setSessionState(sessionRowToState(data));
+      const shouldFilterBySession = supportsSessions && sessionId;
+      if (shouldFilterBySession) {
+        query = applySessionFilter(query);
+        const { data, error } = await query.maybeSingle();
+        if (error) {
+          throw error;
+        }
+        if (data) {
+          setSessionState(sessionRowToState(data));
+        }
+      } else {
+        const { data, error } = await query.limit(1);
+        if (error) {
+          throw error;
+        }
+        const [firstRow] = Array.isArray(data) ? data : [];
+        if (firstRow) {
+          setSessionState(sessionRowToState(firstRow));
+        }
       }
     } catch (sessionError) {
       if (handleSchemaMismatch(sessionError)) {
@@ -137,7 +149,14 @@ const LiveTimingBoard = () => {
       console.error('Failed to refresh session state', sessionError);
       setError('Unable to refresh session details from Supabase.');
     }
-  }, [applySessionFilter, handleSchemaMismatch, supabaseClient, supabaseReady]);
+  }, [
+    applySessionFilter,
+    handleSchemaMismatch,
+    sessionId,
+    supabaseClient,
+    supabaseReady,
+    supportsSessions,
+  ]);
 
   const bootstrap = useCallback(async () => {
     if (!supabaseReady) {
