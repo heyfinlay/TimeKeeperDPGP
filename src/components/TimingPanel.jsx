@@ -637,7 +637,7 @@ const TimingPanel = () => {
       const entry = {
         id: createClientId(),
         action,
-        marshalId: actor,
+        marshalId,
         timestamp: new Date(),
       };
       setLogs((prev) => {
@@ -778,18 +778,24 @@ const TimingPanel = () => {
           const hydrated = sessionRowToState(payload.new);
           sessionStateRef.current = {
             ...payload.new,
+            id: payload.new.id ?? sessionId,
             session_id: sessionId,
             track_status: hydrated.trackStatus,
             flag_status: hydrated.flagStatus,
           };
-          setLogs((prev) => {
-            if (prev.some((log) => log.id === entry.id)) {
-              return prev;
-            }
-            const next = [entry, ...prev].slice(0, LOG_LIMIT);
-            logsRef.current = next;
-            return next;
-          });
+          setEventConfig((prev) => ({
+            ...prev,
+            eventType: hydrated.eventType,
+            totalLaps: hydrated.totalLaps,
+            totalDuration: hydrated.totalDuration,
+          }));
+          setProcedurePhase(hydrated.procedurePhase);
+          setTrackStatus(hydrated.trackStatus);
+          setAnnouncement(hydrated.announcement);
+          setAnnouncementDraft(hydrated.announcement);
+          setIsTiming(hydrated.isTiming);
+          setIsPaused(hydrated.isPaused);
+          setRaceTime(hydrated.raceTime);
         }
       },
     );

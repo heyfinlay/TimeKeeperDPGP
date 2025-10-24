@@ -37,12 +37,53 @@ const STORAGE_ENDPOINT = isSupabaseConfigured
   ? `${SUPABASE_URL.replace(/\/$/, '')}/storage/v1/object`
   : null;
 
-const AUTH_HEADERS = isSupabaseConfigured
-  ? {
-      apikey: SUPABASE_ANON_KEY,
-      Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+const resolveAccessToken = async ({ accessToken, requireSession = false } = {}) => {
+  if (!isSupabaseConfigured || !supabase) {
+    if (requireSession) {
+      throw new Error('Supabase session is required but Supabase is not configured.');
     }
-  : {};
+    return null;
+  }
+
+  if (accessToken) {
+    return accessToken;
+  }
+
+  try {
+    const { data, error } = await supabase.auth.getSession();
+    if (error) {
+      console.error('Failed to resolve Supabase session', error);
+    }
+    const sessionToken = data?.session?.access_token;
+    if (sessionToken) {
+      return sessionToken;
+    }
+  } catch (sessionError) {
+    console.error('Unexpected error while resolving Supabase session', sessionError);
+  }
+
+  if (requireSession) {
+    throw new Error('Supabase session is required but not available.');
+  }
+
+  return SUPABASE_ANON_KEY ?? null;
+};
+
+export const getAuthHeaders = async ({ accessToken, requireSession = false } = {}) => {
+  if (!isSupabaseConfigured) {
+    return {};
+  }
+
+  const token = await resolveAccessToken({ accessToken, requireSession });
+  if (!token) {
+    return {};
+  }
+
+  return {
+    apikey: SUPABASE_ANON_KEY,
+    Authorization: `Bearer ${token}`,
+  };
+};
 
 const parseFilters = (filters = {}) => {
   const searchParams = new URLSearchParams();
@@ -56,7 +97,18 @@ const parseFilters = (filters = {}) => {
 
 const request = async (
   table,
-  { method = 'GET', filters, body, prefer, signal, headers = {}, select, order } = {},
+  {
+    method = 'GET',
+    filters,
+    body,
+    prefer,
+    signal,
+    headers = {},
+    select,
+    order,
+    accessToken,
+    requireSession = false,
+  } = {},
 ) => {
   if (!isSupabaseConfigured) {
     throw new Error('Supabase is not configured. Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY.');
@@ -72,10 +124,11 @@ const request = async (
   const url = `${REST_ENDPOINT}/${table}${
     searchParams.toString() ? `?${searchParams.toString()}` : ''
   }`;
+  const authHeaders = await getAuthHeaders({ accessToken, requireSession });
   const response = await fetch(url, {
     method,
     headers: {
-      ...AUTH_HEADERS,
+      ...authHeaders,
       ...(body ? { 'Content-Type': 'application/json' } : {}),
       ...(prefer ? { Prefer: prefer } : {}),
       ...headers,
@@ -157,7 +210,12 @@ export const supabaseStorageUpload = async (
   bucket,
   objectPath,
   body,
-  { contentType = 'application/octet-stream', upsert = true } = {},
+  {
+    contentType = 'application/octet-stream',
+    upsert = true,
+    accessToken,
+    requireSession = false,
+  } = {},
 ) => {
   if (!isSupabaseConfigured) {
     throw new Error('Supabase is not configured. Unable to upload to storage.');
@@ -165,10 +223,11 @@ export const supabaseStorageUpload = async (
   const url = `${STORAGE_ENDPOINT}/${bucket}/${encodeStoragePath(objectPath)}${
     upsert ? '?upsert=true' : ''
   }`;
+  const authHeaders = await getAuthHeaders({ accessToken, requireSession });
   const response = await fetch(url, {
     method: 'PUT',
     headers: {
-      ...AUTH_HEADERS,
+      ...authHeaders,
       'Content-Type': contentType,
     },
     body,
@@ -248,48 +307,29 @@ export const subscribeToTable = (
     }
   };
 
-  const sendAccessToken = (token) => {
-    latestAccessToken = token;
-    if (!token || ws.readyState !== WebSocket.OPEN) {
-      return;
-    }
-    ws.send(
-      JSON.stringify({
-        topic: channel,
-        event: 'access_token',
-        payload: { access_token: token },
-        ref: `${joinRef}-token-${Date.now()}`,
-      }),
-    );
-  };
-
-  const { data: authListener } = supabase.auth.onAuthStateChange((event, session) => {
-    if (closed) return;
-    if (event === 'TOKEN_REFRESHED' || event === 'SIGNED_IN') {
-      const token = session?.access_token ?? null;
-      sendAccessToken(token);
-    }
-    if (event === 'SIGNED_OUT') {
-      latestAccessToken = null;
-    }
-  });
-
-  void supabase.auth.getSession().then(({ data, error }) => {
-    if (error) {
-      console.error('Failed to resolve Supabase session for realtime subscription', error);
-      return;
-    }
-    const token = data?.session?.access_token ?? null;
-    if (!token) {
-      console.warn('Supabase realtime subscription started without an authenticated session.');
-    }
-    sendAccessToken(token);
-  });
-
-  ws.onopen = () => {
+  ws.onopen = async () => {
     ws.send(JSON.stringify(joinPayload));
-    if (latestAccessToken) {
-      sendAccessToken(latestAccessToken);
+    try {
+      const accessToken =
+        (await resolveAccessToken({ requireSession: false })) ?? SUPABASE_ANON_KEY;
+      ws.send(
+        JSON.stringify({
+          topic: channel,
+          event: 'access_token',
+          payload: { access_token: accessToken },
+          ref: `${joinRef}-token`,
+        }),
+      );
+    } catch (tokenError) {
+      console.error('Failed to resolve Supabase access token for realtime channel', tokenError);
+      ws.send(
+        JSON.stringify({
+          topic: channel,
+          event: 'access_token',
+          payload: { access_token: SUPABASE_ANON_KEY },
+          ref: `${joinRef}-token`,
+        }),
+      );
     }
     heartbeatTimer = setInterval(sendHeartbeat, HEARTBEAT_INTERVAL);
   };
