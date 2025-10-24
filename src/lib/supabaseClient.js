@@ -191,23 +191,22 @@ export const subscribeToTable = (
   { schema = 'public', table, event = '*', filter },
   callback,
 ) => {
-  if (!isSupabaseConfigured) {
+  if (!isSupabaseConfigured || !supabase) {
     console.warn('Supabase realtime subscription skipped. Supabase is not configured.');
     return () => {};
   }
   if (typeof WebSocket === 'undefined') {
-    console.warn('Supabase realtime subscription skipped. WebSocket API is unavailable in this environment.');
+    console.warn(
+      'Supabase realtime subscription skipped. WebSocket API is unavailable in this environment.',
+    );
     return () => {};
   }
+
   const params = new URLSearchParams({
     apikey: SUPABASE_ANON_KEY,
     vsn: '1.0.0',
   });
-  const ws = new WebSocket(`${REALTIME_ENDPOINT}?${params.toString()}`, ['phoenix']);
   const channel = `realtime:${schema}:${table}`;
-  let heartbeatTimer = null;
-  let joined = false;
-
   const joinRef = Date.now().toString();
   const joinPayload = {
     topic: channel,
@@ -229,6 +228,13 @@ export const subscribeToTable = (
     join_ref: joinRef,
   };
 
+  let latestAccessToken = null;
+  let heartbeatTimer = null;
+  let joined = false;
+  let closed = false;
+
+  const ws = new WebSocket(`${REALTIME_ENDPOINT}?${params.toString()}`, ['phoenix']);
+
   const sendHeartbeat = () => {
     if (ws.readyState === WebSocket.OPEN) {
       ws.send(
@@ -242,16 +248,49 @@ export const subscribeToTable = (
     }
   };
 
-  ws.onopen = () => {
-    ws.send(JSON.stringify(joinPayload));
+  const sendAccessToken = (token) => {
+    latestAccessToken = token;
+    if (!token || ws.readyState !== WebSocket.OPEN) {
+      return;
+    }
     ws.send(
       JSON.stringify({
         topic: channel,
         event: 'access_token',
-        payload: { access_token: SUPABASE_ANON_KEY },
-        ref: `${joinRef}-token`,
+        payload: { access_token: token },
+        ref: `${joinRef}-token-${Date.now()}`,
       }),
     );
+  };
+
+  const { data: authListener } = supabase.auth.onAuthStateChange((event, session) => {
+    if (closed) return;
+    if (event === 'TOKEN_REFRESHED' || event === 'SIGNED_IN') {
+      const token = session?.access_token ?? null;
+      sendAccessToken(token);
+    }
+    if (event === 'SIGNED_OUT') {
+      latestAccessToken = null;
+    }
+  });
+
+  void supabase.auth.getSession().then(({ data, error }) => {
+    if (error) {
+      console.error('Failed to resolve Supabase session for realtime subscription', error);
+      return;
+    }
+    const token = data?.session?.access_token ?? null;
+    if (!token) {
+      console.warn('Supabase realtime subscription started without an authenticated session.');
+    }
+    sendAccessToken(token);
+  });
+
+  ws.onopen = () => {
+    ws.send(JSON.stringify(joinPayload));
+    if (latestAccessToken) {
+      sendAccessToken(latestAccessToken);
+    }
     heartbeatTimer = setInterval(sendHeartbeat, HEARTBEAT_INTERVAL);
   };
 
@@ -267,6 +306,10 @@ export const subscribeToTable = (
       }
       if (data.event === 'phx_error' || data.event === 'phx_close') {
         console.warn('Supabase realtime channel closed', data);
+        if (data.payload?.status === 'error' && latestAccessToken) {
+          // Attempt to re-authorize with the latest token.
+          sendAccessToken(latestAccessToken);
+        }
       }
     } catch (error) {
       console.error('Failed to parse realtime payload', error);
@@ -278,6 +321,7 @@ export const subscribeToTable = (
   };
 
   return () => {
+    closed = true;
     try {
       if (ws.readyState === WebSocket.OPEN) {
         ws.send(
@@ -294,6 +338,7 @@ export const subscribeToTable = (
       if (heartbeatTimer) {
         clearInterval(heartbeatTimer);
       }
+      authListener?.subscription?.unsubscribe?.();
     }
   };
 };

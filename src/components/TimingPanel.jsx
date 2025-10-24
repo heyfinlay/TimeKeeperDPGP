@@ -754,7 +754,7 @@ const TimingPanel = () => {
   }, [activeSessionId]);
 
   useEffect(() => {
-    if (!isSupabaseConfigured) {
+    if (!supabaseReady) {
       return () => {};
     }
     const subscriptionConfig = (table) =>
@@ -817,11 +817,18 @@ const TimingPanel = () => {
       },
     );
     return () => {
-      supabaseClient.removeChannel(driverChannel);
-      supabaseClient.removeChannel(sessionChannel);
-      supabaseClient.removeChannel(logChannel);
+      driverUnsub?.();
+      lapUnsub?.();
+      sessionUnsub?.();
+      logUnsub?.();
     };
-  }, [activeSessionId, refreshDriversFromSupabase, sessionId, supportsSessions]);
+  }, [
+    activeSessionId,
+    refreshDriversFromSupabase,
+    sessionId,
+    supabaseReady,
+    supportsSessions,
+  ]);
 
   const getMarshalName = useCallback(
     (marshalId) => {
