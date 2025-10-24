@@ -1,9 +1,10 @@
+import { Navigate } from 'react-router-dom';
 import { LogOut, ShieldCheck } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext.jsx';
 import { isSupabaseConfigured } from '../../lib/supabaseClient.js';
 
 const AuthGate = ({ children }) => {
-  const { status, user, profile, profileError, signInWithDiscord, signOut } = useAuth();
+  const { status, user, profile, profileError, signOut } = useAuth();
 
   if (!isSupabaseConfigured) {
     return children ?? null;
@@ -19,24 +20,7 @@ const AuthGate = ({ children }) => {
   }
 
   if (status !== 'authenticated' || !user) {
-    return (
-      <div className="flex min-h-[50vh] flex-col items-center justify-center gap-4 text-center text-gray-200">
-        <ShieldCheck className="h-10 w-10 text-blue-400" />
-        <div className="space-y-2">
-          <h2 className="text-xl font-semibold tracking-wide">Restricted Control Panel</h2>
-          <p className="max-w-md text-sm text-gray-400">
-            You need to authenticate with Discord to access the race control tools. Only authorised admins and
-            marshals are able to view timing data or make changes.
-          </p>
-        </div>
-        <button
-          onClick={() => signInWithDiscord()}
-          className="rounded bg-[#5865F2] px-4 py-2 text-sm font-semibold uppercase tracking-[0.25em] text-white shadow transition hover:bg-[#4752C4]"
-        >
-          Sign in with Discord
-        </button>
-      </div>
-    );
+    return <Navigate to="/" replace />;
   }
 
   return (

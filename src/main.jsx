@@ -2,6 +2,7 @@ import React from 'react';
 import ReactDOM from 'react-dom/client';
 import { createBrowserRouter, RouterProvider } from 'react-router-dom';
 import App from './App.jsx';
+import WelcomePage from './pages/WelcomePage.jsx';
 import LiveTimingPage from './pages/LiveTimingPage.jsx';
 import RaceControlPage from './pages/RaceControlPage.jsx';
 import ProtectedRoute from './components/auth/ProtectedRoute.jsx';
@@ -15,6 +16,10 @@ const router = createBrowserRouter([
     children: [
       {
         index: true,
+        element: <WelcomePage />,
+      },
+      {
+        path: 'live',
         element: <LiveTimingPage />,
       },
       {
