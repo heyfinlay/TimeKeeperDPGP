@@ -2,10 +2,7 @@ import { useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { ArrowRight, Clock, Flag, ShieldCheck, Sparkles } from 'lucide-react';
 import { useAuth } from '../context/AuthContext.jsx';
-
-const FALLBACK_DISCORD_AUTH_URL =
-  import.meta.env.VITE_DISCORD_FALLBACK_AUTH_URL ??
-  'https://discord.com/oauth2/authorize?client_id=YOUR_CLIENT_ID&response_type=code&scope=identify%20email%20guilds&prompt=consent';
+import { supabase } from '../lib/supabaseClient.js';
 
 const statHighlights = [
   {
@@ -29,7 +26,7 @@ const statHighlights = [
 ];
 
 const WelcomePage = () => {
-  const { signInWithDiscord, status, isSupabaseConfigured } = useAuth();
+  const { status } = useAuth();
 
   const isAuthenticated = status === 'authenticated';
   const isCheckingAuth = status === 'loading';
@@ -40,20 +37,27 @@ const WelcomePage = () => {
     return 'Sign in with Discord';
   }, [isAuthenticated, isCheckingAuth]);
 
-  const handleSignIn = () => {
+  const handleSignIn = async () => {
     if (isAuthenticated) {
       return;
     }
 
-    if (isSupabaseConfigured && typeof signInWithDiscord === 'function') {
-      signInWithDiscord().catch((error) => {
-        console.error('Supabase Discord sign-in failed. Redirecting to Discord OAuth.', error);
-        window.location.href = FALLBACK_DISCORD_AUTH_URL;
-      });
+    if (!supabase) {
+      console.error('Supabase is not configured. Unable to initiate Discord sign-in.');
       return;
     }
 
-    window.location.href = FALLBACK_DISCORD_AUTH_URL;
+    try {
+      await supabase.auth.signInWithOAuth({
+        provider: 'discord',
+        options: {
+          scopes: 'identify email guilds',
+          redirectTo: 'https://time-keeper-dpgp.vercel.app/auth/callback',
+        },
+      });
+    } catch (error) {
+      console.error('Supabase Discord sign-in failed.', error);
+    }
   };
 
   return (

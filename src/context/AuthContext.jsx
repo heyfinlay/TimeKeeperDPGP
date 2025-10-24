@@ -129,7 +129,13 @@ export const AuthProvider = ({ children }) => {
 
   const signInWithDiscord = useCallback(async () => {
     if (!isSupabaseConfigured || !supabase) return;
-    const { error } = await supabase.auth.signInWithOAuth({ provider: 'discord' });
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider: 'discord',
+      options: {
+        scopes: 'identify email guilds',
+        redirectTo: 'https://time-keeper-dpgp.vercel.app/auth/callback',
+      },
+    });
     if (error) {
       console.error('Discord sign-in failed', error);
     }
