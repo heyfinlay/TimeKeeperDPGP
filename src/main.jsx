@@ -6,7 +6,7 @@ import WelcomePage from './pages/WelcomePage.jsx';
 import LiveTimingPage from './pages/LiveTimingPage.jsx';
 import RaceControlPage from './pages/RaceControlPage.jsx';
 import ProtectedRoute from './components/auth/ProtectedRoute.jsx';
-import { AuthProvider } from './components/auth/AuthContext.jsx';
+import { AuthProvider } from './context/AuthContext.jsx';
 import './index.css';
 
 const router = createBrowserRouter([
@@ -34,18 +34,9 @@ const router = createBrowserRouter([
   },
 ]);
 
-const defaultAuthValue = {
-  user: null,
-  isLoading: false,
-  permissions: {
-    isAdmin: false,
-    isMarshal: false,
-  },
-};
-
 ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>
-    <AuthProvider value={defaultAuthValue}>
+    <AuthProvider>
       <RouterProvider router={router} />
     </AuthProvider>
   </React.StrictMode>,
