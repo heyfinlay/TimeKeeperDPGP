@@ -18,7 +18,11 @@ import {
   hydrateDriverState,
   sessionRowToState,
 } from '../utils/raceData';
-import { isColumnMissingError, isSupabaseConfigured, supabase } from '../lib/supabaseClient.js';
+import {
+  isColumnMissingError,
+  isSupabaseConfigured,
+  supabase as supabaseClient,
+} from '../lib/supabaseClient.js';
 import { useEventSession } from '../context/SessionContext.jsx';
 
 const STATUS_ICON_MAP = {
@@ -44,7 +48,6 @@ const LiveTimingBoard = () => {
     [sessions, activeSessionId],
   );
 
-  const supabaseClient = supabase;
   const supabaseReady = isSupabaseConfigured && Boolean(supabaseClient);
 
   const trackStatusDetails =
@@ -121,25 +124,24 @@ const LiveTimingBoard = () => {
     if (!supabaseReady) return;
     try {
       let query = supabaseClient.from('session_state').select('*');
-      const shouldFilterBySession = supportsSessions && sessionId;
+      const shouldFilterBySession = supportsSessions && Boolean(sessionId);
+
       if (shouldFilterBySession) {
         query = applySessionFilter(query);
-        const { data, error } = await query.maybeSingle();
-        if (error) {
-          throw error;
-        }
-        if (data) {
-          setSessionState(sessionRowToState(data));
-        }
-      } else {
-        const { data, error } = await query.limit(1);
-        if (error) {
-          throw error;
-        }
-        const [firstRow] = Array.isArray(data) ? data : [];
-        if (firstRow) {
-          setSessionState(sessionRowToState(firstRow));
-        }
+      }
+
+      const { data, error } = await (shouldFilterBySession
+        ? query.maybeSingle()
+        : query.limit(1));
+      if (error) {
+        throw error;
+      }
+
+      const row = shouldFilterBySession
+        ? data
+        : (Array.isArray(data) ? data[0] : undefined);
+      if (row) {
+        setSessionState(sessionRowToState(row));
       }
     } catch (sessionError) {
       if (handleSchemaMismatch(sessionError)) {
