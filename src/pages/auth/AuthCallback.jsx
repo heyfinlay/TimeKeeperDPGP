@@ -1,9 +1,10 @@
 import { useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { isSupabaseConfigured, supabase } from '../../lib/supabaseClient.js';
 
 const AuthCallback = () => {
   const navigate = useNavigate();
+  const location = useLocation();
 
   useEffect(() => {
     let isMounted = true;
@@ -15,6 +16,76 @@ const AuthCallback = () => {
       }
 
       try {
+        const searchParams = new URLSearchParams(location.search ?? '');
+        const hashParams = new URLSearchParams((location.hash ?? '').replace(/^#/, ''));
+
+        const errorDescription =
+          searchParams.get('error_description') ||
+          hashParams.get('error_description') ||
+          hashParams.get('error');
+
+        if (errorDescription) {
+          console.error('Supabase OAuth callback returned an error', errorDescription);
+          navigate('/', { replace: true });
+          return;
+        }
+
+        const authCode = searchParams.get('code') || hashParams.get('code');
+        if (authCode) {
+          const { error: exchangeError } = await supabase.auth.exchangeCodeForSession(authCode);
+          if (!isMounted) return;
+
+          if (exchangeError) {
+            console.error('Failed to exchange Supabase OAuth code for a session', exchangeError);
+            navigate('/', { replace: true });
+            return;
+          }
+
+          try {
+            const cleanedUrl = new URL(window.location.href);
+            ['code', 'state', 'scope', 'provider', 'error', 'error_description'].forEach((param) => {
+              cleanedUrl.searchParams.delete(param);
+            });
+
+            if (cleanedUrl.hash) {
+              const hashSearchParams = new URLSearchParams(cleanedUrl.hash.replace(/^#/, ''));
+              [
+                'code',
+                'access_token',
+                'refresh_token',
+                'expires_in',
+                'token_type',
+                'provider',
+                'error',
+                'error_description',
+              ].forEach((param) => {
+                hashSearchParams.delete(param);
+              });
+              const newHash = hashSearchParams.toString();
+              cleanedUrl.hash = newHash ? `#${newHash}` : '';
+            }
+
+            window.history.replaceState(
+              null,
+              document.title,
+              `${cleanedUrl.pathname}${cleanedUrl.search}${cleanedUrl.hash}`,
+            );
+          } catch (urlError) {
+            console.warn('Unable to clean auth callback parameters from URL', urlError);
+          }
+        } else if (hashParams.has('access_token') || hashParams.has('refresh_token')) {
+          const { error: sessionFromUrlError } = await supabase.auth.getSessionFromUrl({
+            storeSession: true,
+          });
+          if (!isMounted) return;
+
+          if (sessionFromUrlError) {
+            console.error('Failed to hydrate Supabase session from URL fragment', sessionFromUrlError);
+            navigate('/', { replace: true });
+            return;
+          }
+        }
+
         const { data, error } = await supabase.auth.getSession();
         if (!isMounted) return;
 
@@ -40,7 +111,7 @@ const AuthCallback = () => {
     return () => {
       isMounted = false;
     };
-  }, [navigate]);
+  }, [location.hash, location.search, navigate]);
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-[#05070F] px-4 text-center text-white">
