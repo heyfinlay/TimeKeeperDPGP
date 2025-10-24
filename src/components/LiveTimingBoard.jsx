@@ -13,7 +13,7 @@ import { formatLapTime, formatRaceClock } from '../utils/time';
 import { TRACK_STATUS_MAP, TRACK_STATUS_OPTIONS } from '../constants/trackStatus';
 import {
   DEFAULT_SESSION_STATE,
-  SESSION_ROW_ID,
+  LEGACY_SESSION_ID,
   groupLapRows,
   hydrateDriverState,
   sessionRowToState,
@@ -22,7 +22,9 @@ import {
   isSupabaseConfigured,
   subscribeToTable,
   supabaseSelect,
+  isColumnMissingError,
 } from '../lib/supabaseClient';
+import { useEventSession } from '../context/SessionContext.jsx';
 
 const STATUS_ICON_MAP = {
   flag: Flag,
@@ -33,23 +35,55 @@ const STATUS_ICON_MAP = {
 };
 
 const LiveTimingBoard = () => {
+  const { activeSessionId, sessions, supportsSessions, fallbackToLegacySchema } =
+    useEventSession();
   const [drivers, setDrivers] = useState([]);
   const [sessionState, setSessionState] = useState(DEFAULT_SESSION_STATE);
   const [laps, setLaps] = useState([]);
   const [isLoading, setIsLoading] = useState(isSupabaseConfigured);
   const [error, setError] = useState(null);
 
+  const sessionId = activeSessionId ?? LEGACY_SESSION_ID;
+  const activeSession = useMemo(
+    () => sessions.find((session) => session.id === activeSessionId) ?? null,
+    [sessions, activeSessionId],
+  );
+
   const trackStatusDetails =
     TRACK_STATUS_MAP[sessionState.trackStatus] ?? TRACK_STATUS_OPTIONS[0];
   const TrackStatusIcon =
     STATUS_ICON_MAP[trackStatusDetails?.icon ?? 'flag'] ?? STATUS_ICON_MAP.flag;
 
+  const withSessionFilter = useCallback(
+    (filters = {}, sessionOverride = sessionId) =>
+      supportsSessions ? { ...filters, session_id: `eq.${sessionOverride}` } : { ...filters },
+    [supportsSessions, sessionId],
+  );
+
+  const handleSchemaMismatch = useCallback(
+    (schemaError) => {
+      if (isColumnMissingError(schemaError, 'session_id')) {
+        console.warn('Supabase schema missing session_id column. Falling back to legacy mode.');
+        fallbackToLegacySchema();
+        return true;
+      }
+      return false;
+    },
+    [fallbackToLegacySchema],
+  );
+
   const refreshDriverData = useCallback(async () => {
     if (!isSupabaseConfigured) return;
     try {
       const [driverRows, lapRows] = await Promise.all([
-        supabaseSelect('drivers', { order: { column: 'number', ascending: true } }),
-        supabaseSelect('laps', { order: { column: 'lap_number', ascending: true } }),
+        supabaseSelect('drivers', {
+          filters: withSessionFilter({}, sessionId),
+          order: { column: 'number', ascending: true },
+        }),
+        supabaseSelect('laps', {
+          filters: withSessionFilter({}, sessionId),
+          order: { column: 'lap_number', ascending: true },
+        }),
       ]);
       const normalizedLapRows = (lapRows ?? []).map((lap) => ({
         ...lap,
@@ -67,25 +101,33 @@ const LiveTimingBoard = () => {
       setLaps(normalizedLapRows);
       setError(null);
     } catch (refreshError) {
+      if (handleSchemaMismatch(refreshError)) {
+        setError(null);
+        return;
+      }
       console.error('Failed to refresh timing data', refreshError);
       setError('Unable to refresh timing data from Supabase.');
     }
-  }, []);
+  }, [handleSchemaMismatch, sessionId, withSessionFilter]);
 
   const refreshSessionState = useCallback(async () => {
     if (!isSupabaseConfigured) return;
     try {
       const rows = await supabaseSelect('session_state', {
-        filters: { id: `eq.${SESSION_ROW_ID}` },
+        filters: withSessionFilter({}, sessionId),
       });
       if (rows?.[0]) {
         setSessionState(sessionRowToState(rows[0]));
       }
     } catch (sessionError) {
+      if (handleSchemaMismatch(sessionError)) {
+        setError(null);
+        return;
+      }
       console.error('Failed to refresh session state', sessionError);
       setError('Unable to refresh session details from Supabase.');
     }
-  }, []);
+  }, [handleSchemaMismatch, sessionId, withSessionFilter]);
 
   const bootstrap = useCallback(async () => {
     if (!isSupabaseConfigured) {
@@ -106,14 +148,22 @@ const LiveTimingBoard = () => {
     if (!isSupabaseConfigured) {
       return () => {};
     }
-    const driverUnsub = subscribeToTable({ table: 'drivers' }, () => {
-      refreshDriverData();
-    });
-    const lapUnsub = subscribeToTable({ table: 'laps' }, () => {
-      refreshDriverData();
-    });
+    const subscriptionConfig = (table) =>
+      supportsSessions ? { table, filter: `session_id=eq.${sessionId}` } : { table };
+    const driverUnsub = subscribeToTable(
+      subscriptionConfig('drivers'),
+      () => {
+        refreshDriverData();
+      },
+    );
+    const lapUnsub = subscribeToTable(
+      subscriptionConfig('laps'),
+      () => {
+        refreshDriverData();
+      },
+    );
     const sessionUnsub = subscribeToTable(
-      { table: 'session_state', filter: `id=eq.${SESSION_ROW_ID}` },
+      subscriptionConfig('session_state'),
       (payload) => {
         if (payload?.new) {
           setSessionState(sessionRowToState(payload.new));
@@ -125,7 +175,7 @@ const LiveTimingBoard = () => {
       lapUnsub();
       sessionUnsub();
     };
-  }, [refreshDriverData]);
+  }, [refreshDriverData, sessionId, supportsSessions]);
 
   const leaderboard = useMemo(() => {
     const sorted = [...drivers]
@@ -245,7 +295,10 @@ const LiveTimingBoard = () => {
             <div className="flex w-full max-w-sm flex-col items-end justify-between gap-4 text-right">
               <div>
                 <p className="text-xs uppercase tracking-[0.35em] text-neutral-400">Session</p>
-                <p className="text-sm text-neutral-300">
+                <p className="text-sm font-semibold text-neutral-200">
+                  {activeSession?.name ?? 'Session'}
+                </p>
+                <p className="text-xs uppercase tracking-[0.3em] text-neutral-500">
                   {sessionState.eventType} • {sessionState.totalLaps} laps • {sessionState.totalDuration} min
                 </p>
               </div>

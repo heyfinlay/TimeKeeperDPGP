@@ -13,7 +13,7 @@ This document summarises how the DayBreak Grand Prix timing system is wired toge
 ## 2. Data model & persistence
 
 - SQL definitions live in `supabase/schema.sql`. Tables are purpose-built for session orchestration: `drivers`, `laps`, `session_state`, and `race_events`. Realtime streaming is enabled for each table.
-- `SESSION_ROW_ID` in `src/utils/raceData.js` hardcodes the single-row session record used to broadcast the current event configuration across clients.
+- `LEGACY_SESSION_ID` in `src/utils/raceData.js` provides a fallback session identifier for migrated data. The `EventSessionProvider` now manages the active session scope and ensures Supabase reads/writes are filtered by `session_id`.
 - Every driver update writes through `toDriverRow` before calling `supabaseUpsert`, ensuring we normalise timers, pit data, and marshal flag status into column shapes that match the schema.
 - When Supabase credentials are absent the UI falls back to fully local state, but realtime syncing and persistence require valid `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` values.
 
