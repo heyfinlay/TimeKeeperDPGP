@@ -36,7 +36,7 @@ const WelcomePage = () => {
 
   const primaryCtaLabel = useMemo(() => {
     if (isCheckingAuth) return 'Checking access…';
-    if (isAuthenticated) return 'Enter race control';
+    if (isAuthenticated) return 'Open dashboard';
     return 'Sign in with Discord';
   }, [isAuthenticated, isCheckingAuth]);
 
@@ -78,7 +78,7 @@ const WelcomePage = () => {
         <div className="flex flex-col items-center justify-center gap-4 sm:flex-row">
           {isAuthenticated ? (
             <Link
-              to="/control"
+              to="/dashboard"
               className="group inline-flex items-center gap-3 rounded-full bg-[#9FF7D3] px-7 py-3 text-sm font-semibold uppercase tracking-[0.35em] text-[#041313] transition hover:bg-[#7de6c0]"
             >
               {primaryCtaLabel}
