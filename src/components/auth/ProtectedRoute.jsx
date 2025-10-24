@@ -1,10 +1,10 @@
 import { Navigate } from 'react-router-dom';
-import { useAuth } from './AuthContext.jsx';
+import { useAuth } from '../../context/AuthContext.jsx';
 
 const ProtectedRoute = ({ children, redirectTo = '/' }) => {
-  const { isLoading, permissions } = useAuth();
+  const { status, user, profile, isSupabaseConfigured } = useAuth();
 
-  if (isLoading) {
+  if (isSupabaseConfigured && status === 'loading') {
     return (
       <div className="flex min-h-[50vh] items-center justify-center text-sm text-neutral-400">
         Checking permissions…
@@ -12,7 +12,15 @@ const ProtectedRoute = ({ children, redirectTo = '/' }) => {
     );
   }
 
-  const hasAccess = Boolean(permissions?.isAdmin || permissions?.isMarshal);
+  if (!isSupabaseConfigured) {
+    return children;
+  }
+
+  const allowedRoles = new Set(['admin', 'marshal', 'race_control']);
+  const hasAccess =
+    status === 'authenticated' &&
+    !!user &&
+    (!profile?.role || allowedRoles.has(String(profile.role).toLowerCase()));
 
   if (!hasAccess) {
     return <Navigate to={redirectTo} replace />;
