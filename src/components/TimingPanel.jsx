@@ -129,6 +129,9 @@ const HOTKEYS = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '0'];
 
 const LOG_LIMIT = 200;
 
+const createUuid = () =>
+  globalThis.crypto?.randomUUID?.() ?? `driver-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+
 const toDriverState = (driver) => ({
   ...driver,
   sessionId: driver.sessionId ?? null,
@@ -252,6 +255,7 @@ const TimingPanel = () => {
   const [isInitialising, setIsInitialising] = useState(isSupabaseConfigured);
   const [supabaseError, setSupabaseError] = useState(null);
   const [bestLapDrafts, setBestLapDrafts] = useState({});
+  const [marshalProfiles, setMarshalProfiles] = useState([]);
 
   const raceStartRef = useRef(null);
   const pauseStartRef = useRef(null);
@@ -273,6 +277,7 @@ const TimingPanel = () => {
   });
   const lastRaceTimeSyncRef = useRef(0);
   const logsRef = useRef([]);
+  const supabaseReady = isSupabaseConfigured && Boolean(supabaseClient) && isAuthenticated;
 
   const withSessionFilter = useCallback(
     (filters = {}, sessionOverride = sessionId) =>
@@ -324,7 +329,7 @@ const TimingPanel = () => {
   }, []);
 
   const refreshDriversFromSupabase = useCallback(async () => {
-    if (!isSupabaseConfigured) return;
+    if (!supabaseReady) return;
     try {
       const [driverRows, lapRows] = await Promise.all([
         supabaseSelect('drivers', {
@@ -338,6 +343,8 @@ const TimingPanel = () => {
       ]);
       if (driverRows?.length) {
         applyDriverData(driverRows, lapRows ?? []);
+      } else {
+        setDrivers([]);
       }
       setSupabaseError(null);
     } catch (error) {
@@ -351,7 +358,7 @@ const TimingPanel = () => {
   }, [activeSessionId, applyDriverData, handleSchemaMismatch, sessionId, withSessionFilter]);
 
   const refreshSessionFromSupabase = useCallback(async () => {
-    if (!isSupabaseConfigured) return;
+    if (!supabaseReady) return;
     try {
       const rows = await supabaseSelect('session_state', {
         filters: withSessionFilter({}, sessionId),
@@ -391,7 +398,7 @@ const TimingPanel = () => {
   }, [activeSessionId, handleSchemaMismatch, sessionId, withSessionFilter]);
 
   const refreshLogsFromSupabase = useCallback(async () => {
-    if (!isSupabaseConfigured) return;
+    if (!supabaseReady) return;
     try {
       const rows = await supabaseSelect('race_events', {
         order: { column: 'created_at', ascending: false },
@@ -421,6 +428,9 @@ const TimingPanel = () => {
   const bootstrapSupabase = useCallback(async () => {
     if (!isSupabaseConfigured) {
       setIsInitialising(false);
+      return;
+    }
+    if (!supabaseReady) {
       return;
     }
     setIsInitialising(true);
@@ -463,6 +473,8 @@ const TimingPanel = () => {
       }
       if (driverRows?.length) {
         applyDriverData(driverRows, lapRows ?? []);
+      } else {
+        setDrivers([]);
       }
       let sessionRows = await supabaseSelect('session_state', {
         filters: withSessionFilter({}, sessionId),
@@ -486,7 +498,7 @@ const TimingPanel = () => {
         };
         await supabaseUpsert('session_state', sanitizeRowsForSupabase([sessionRow], sessionId));
       }
-      const hydrated = sessionRowToState(sessionRow);
+      const hydrated = sessionRowToState(hydratedRow);
       sessionStateRef.current = {
         ...sessionRow,
         session_id: sessionId,
@@ -507,6 +519,35 @@ const TimingPanel = () => {
       setIsPaused(hydrated.isPaused);
       setRaceTime(hydrated.raceTime);
       await refreshLogsFromSupabase();
+
+      let availableMarshals = [];
+      if (isAdmin) {
+        const { data: marshalRows, error: marshalError } = await supabaseClient
+          .from('profiles')
+          .select('*')
+          .order('display_name', { ascending: true });
+        if (marshalError) {
+          throw marshalError;
+        }
+        availableMarshals = marshalRows?.filter((row) => row.role === 'marshal') ?? [];
+        setMarshalProfiles(availableMarshals);
+      } else if (profile) {
+        availableMarshals = [profile];
+        setMarshalProfiles(availableMarshals);
+      } else {
+        setMarshalProfiles([]);
+      }
+
+      setEventConfig((prev) => ({
+        ...prev,
+        marshals: availableMarshals.length
+          ? availableMarshals.map((marshal) => ({
+              id: marshal.id,
+              name: marshal.display_name ?? marshal.name ?? marshal.id.slice(0, 8),
+            }))
+          : [],
+      }));
+
       setSupabaseError(null);
     } catch (error) {
       if (handleSchemaMismatch(error)) {
@@ -567,7 +608,7 @@ const TimingPanel = () => {
 
   const syncRaceTimeToSupabase = useCallback(
     (elapsed) => {
-      if (!isSupabaseConfigured) return;
+      if (!supabaseReady) return;
       const now = Date.now();
       if (now - lastRaceTimeSyncRef.current < 1000) {
         return;
@@ -575,7 +616,7 @@ const TimingPanel = () => {
       lastRaceTimeSyncRef.current = now;
       updateSessionState({ race_time_ms: elapsed });
     },
-    [updateSessionState],
+    [supabaseReady, updateSessionState],
   );
 
   const logAction = useCallback(
@@ -584,7 +625,7 @@ const TimingPanel = () => {
       const entry = {
         id: createClientId(),
         action,
-        marshalId,
+        marshalId: actor,
         timestamp: new Date(),
       };
       setLogs((prev) => {
@@ -592,7 +633,7 @@ const TimingPanel = () => {
         logsRef.current = next;
         return next;
       });
-      if (isSupabaseConfigured) {
+      if (supabaseReady) {
         try {
           await supabaseInsert(
             'race_events',
@@ -729,19 +770,14 @@ const TimingPanel = () => {
             track_status: hydrated.trackStatus,
             flag_status: hydrated.flagStatus,
           };
-          setEventConfig((prev) => ({
-            ...prev,
-            eventType: hydrated.eventType,
-            totalLaps: hydrated.totalLaps,
-            totalDuration: hydrated.totalDuration,
-          }));
-          setProcedurePhase(hydrated.procedurePhase);
-          setTrackStatus(hydrated.trackStatus);
-          setAnnouncement(hydrated.announcement);
-          setAnnouncementDraft(hydrated.announcement);
-          setIsTiming(hydrated.isTiming);
-          setIsPaused(hydrated.isPaused);
-          setRaceTime(hydrated.raceTime);
+          setLogs((prev) => {
+            if (prev.some((log) => log.id === entry.id)) {
+              return prev;
+            }
+            const next = [entry, ...prev].slice(0, LOG_LIMIT);
+            logsRef.current = next;
+            return next;
+          });
         }
       },
     );
@@ -769,15 +805,27 @@ const TimingPanel = () => {
       },
     );
     return () => {
-      driverUnsub();
-      lapUnsub();
-      sessionUnsub();
-      logUnsub();
+      supabaseClient.removeChannel(driverChannel);
+      supabaseClient.removeChannel(sessionChannel);
+      supabaseClient.removeChannel(logChannel);
     };
   }, [activeSessionId, refreshDriversFromSupabase, sessionId, supportsSessions]);
 
-  const getMarshalName = (marshalId) =>
-    eventConfig.marshals.find((m) => m.id === marshalId)?.name ?? 'Unassigned';
+  const getMarshalName = useCallback(
+    (marshalId) => {
+      if (!marshalId) return 'Unassigned';
+      const fromProfiles = marshalProfiles.find((marshal) => marshal.id === marshalId);
+      if (fromProfiles) {
+        return fromProfiles.display_name ?? fromProfiles.name ?? 'Marshal';
+      }
+      const fromConfig = eventConfig.marshals.find((marshal) => marshal.id === marshalId);
+      if (fromConfig) {
+        return fromConfig.name;
+      }
+      return 'Unassigned';
+    },
+    [eventConfig.marshals, marshalProfiles],
+  );
 
   const overrideBestLap = useCallback(
     (driverId, lapMs) => {
@@ -1020,7 +1068,7 @@ const TimingPanel = () => {
         marshalName,
       );
       void persistDriverState(updatedDriver);
-      if (isSupabaseConfigured) {
+      if (supabaseReady) {
         const recordedAtIso =
           updatedDriver.lapHistory[
             updatedDriver.lapHistory.length - 1
@@ -1377,7 +1425,7 @@ const TimingPanel = () => {
       eventType: eventConfig.eventType,
       totalLaps: eventConfig.totalLaps,
       totalDuration: eventConfig.totalDuration,
-      marshals: eventConfig.marshals.map((marshal) => ({ ...marshal })),
+      marshals: normalizedMarshals,
       drivers: drivers.map(({ id, number, name, team, marshalId }) => ({
         id,
         number,
@@ -1424,6 +1472,9 @@ const TimingPanel = () => {
   };
 
   const addMarshal = () => {
+    if (supabaseReady) {
+      return;
+    }
     setSetupDraft((prev) => ({
       ...prev,
       marshals: [
@@ -1434,6 +1485,9 @@ const TimingPanel = () => {
   };
 
   const updateMarshal = (marshalId, name) => {
+    if (supabaseReady) {
+      return;
+    }
     setSetupDraft((prev) => ({
       ...prev,
       marshals: prev.marshals.map((marshal) =>
@@ -1570,11 +1624,12 @@ const TimingPanel = () => {
     trackStatusIconMap[trackStatusDetails?.icon ?? 'flag'] ?? trackStatusIconMap.flag;
 
   return (
-    <div className="min-h-screen bg-[#0B0F19] text-white">
-      <header className="sticky top-0 z-30 border-b border-neutral-800 bg-[#0B0F19]/90 backdrop-blur">
-        <div className="mx-auto flex max-w-7xl flex-col gap-4 px-6 py-4 md:grid md:grid-cols-[1fr_auto_1fr] md:items-center">
-          <div className="flex flex-col gap-1">
-            <h1 className="text-2xl font-semibold text-[#9FF7D3]">DayBreak Grand Prix</h1>
+    <AuthGate>
+      <div className="min-h-screen bg-[#0B0F19] text-white">
+        <header className="sticky top-0 z-30 border-b border-neutral-800 bg-[#0B0F19]/90 backdrop-blur">
+          <div className="mx-auto flex max-w-7xl flex-col gap-4 px-6 py-4 md:grid md:grid-cols-[1fr_auto_1fr] md:items-center">
+            <div className="flex flex-col gap-1">
+              <h1 className="text-2xl font-semibold text-[#9FF7D3]">DayBreak Grand Prix</h1>
             <p className="text-[11px] uppercase tracking-[0.35em] text-neutral-500">
               Timing Control Panel
             </p>
@@ -1596,7 +1651,9 @@ const TimingPanel = () => {
             </div>
             <button
               onClick={openSetup}
-              className="flex h-9 w-9 items-center justify-center rounded-full border border-neutral-700 bg-neutral-900/80 text-neutral-300 transition hover:border-[#9FF7D3] hover:text-[#9FF7D3]"
+              disabled={!isAdmin && supabaseReady}
+              className="flex h-9 w-9 items-center justify-center rounded-full border border-neutral-700 bg-neutral-900/80 text-neutral-300 transition hover:border-[#9FF7D3] hover:text-[#9FF7D3] disabled:cursor-not-allowed disabled:opacity-40"
+              title={supabaseReady && !isAdmin ? 'Only admins can modify session configuration' : 'Configure session'}
             >
               <Settings className="h-4 w-4" />
             </button>
@@ -2258,7 +2315,8 @@ const TimingPanel = () => {
                   </h3>
                   <button
                     onClick={addMarshal}
-                    className="flex items-center gap-2 rounded bg-gray-800 px-3 py-2 text-xs uppercase tracking-wide hover:bg-gray-700"
+                    disabled={supabaseReady}
+                    className="flex items-center gap-2 rounded bg-gray-800 px-3 py-2 text-xs uppercase tracking-wide hover:bg-gray-700 disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     <Users className="w-4 h-4" /> Add Marshal
                   </button>
@@ -2273,10 +2331,17 @@ const TimingPanel = () => {
                         type="text"
                         value={marshal.name}
                         onChange={(event) => updateMarshal(marshal.id, event.target.value)}
-                        className="mt-2 w-full rounded bg-gray-800 px-3 py-2 text-sm"
+                        disabled={supabaseReady && marshal.id !== ''}
+                        className="mt-2 w-full rounded bg-gray-800 px-3 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-60"
                       />
                     </div>
                   ))}
+                  {supabaseReady && (
+                    <p className="text-xs text-gray-400">
+                      Manage marshal identities and roles within Supabase. Assign drivers to the appropriate marshal
+                      account using the selector below.
+                    </p>
+                  )}
                 </div>
               </section>
 
@@ -2386,7 +2451,8 @@ const TimingPanel = () => {
           </div>
         </div>
       )}
-    </div>
+      </div>
+    </AuthGate>
   );
 };
 

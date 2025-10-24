@@ -18,12 +18,7 @@ import {
   hydrateDriverState,
   sessionRowToState,
 } from '../utils/raceData';
-import {
-  isSupabaseConfigured,
-  subscribeToTable,
-  supabaseSelect,
-  isColumnMissingError,
-} from '../lib/supabaseClient';
+import { isColumnMissingError, isSupabaseConfigured, supabase } from '../lib/supabaseClient.js';
 import { useEventSession } from '../context/SessionContext.jsx';
 
 const STATUS_ICON_MAP = {
@@ -49,14 +44,19 @@ const LiveTimingBoard = () => {
     [sessions, activeSessionId],
   );
 
+  const supabaseClient = supabase;
+  const supabaseReady = isSupabaseConfigured && Boolean(supabaseClient);
+
   const trackStatusDetails =
     TRACK_STATUS_MAP[sessionState.trackStatus] ?? TRACK_STATUS_OPTIONS[0];
   const TrackStatusIcon =
     STATUS_ICON_MAP[trackStatusDetails?.icon ?? 'flag'] ?? STATUS_ICON_MAP.flag;
 
-  const withSessionFilter = useCallback(
-    (filters = {}, sessionOverride = sessionId) =>
-      supportsSessions ? { ...filters, session_id: `eq.${sessionOverride}` } : { ...filters },
+  const applySessionFilter = useCallback(
+    (query, sessionOverride = sessionId) =>
+      supportsSessions && sessionOverride
+        ? query.eq('session_id', sessionOverride)
+        : query,
     [supportsSessions, sessionId],
   );
 
@@ -73,19 +73,24 @@ const LiveTimingBoard = () => {
   );
 
   const refreshDriverData = useCallback(async () => {
-    if (!isSupabaseConfigured) return;
+    if (!supabaseReady) return;
     try {
-      const [driverRows, lapRows] = await Promise.all([
-        supabaseSelect('drivers', {
-          filters: withSessionFilter({}, sessionId),
-          order: { column: 'number', ascending: true },
-        }),
-        supabaseSelect('laps', {
-          filters: withSessionFilter({}, sessionId),
-          order: { column: 'lap_number', ascending: true },
-        }),
-      ]);
-      const normalizedLapRows = (lapRows ?? []).map((lap) => ({
+      const driverQuery = applySessionFilter(
+        supabaseClient.from('drivers').select('*').order('number', { ascending: true }),
+      );
+      const lapQuery = applySessionFilter(
+        supabaseClient.from('laps').select('*').order('lap_number', { ascending: true }),
+      );
+
+      const [driverResult, lapResult] = await Promise.all([driverQuery, lapQuery]);
+      if (driverResult.error) {
+        throw driverResult.error;
+      }
+      if (lapResult.error) {
+        throw lapResult.error;
+      }
+
+      const normalizedLapRows = (lapResult.data ?? []).map((lap) => ({
         ...lap,
         lap_number:
           typeof lap.lap_number === 'string' ? Number.parseInt(lap.lap_number, 10) : lap.lap_number,
@@ -95,8 +100,10 @@ const LiveTimingBoard = () => {
             : lap.lap_time_ms,
       }));
       const lapMap = groupLapRows(normalizedLapRows);
-      if (Array.isArray(driverRows)) {
-        setDrivers(driverRows.map((row) => hydrateDriverState(row, lapMap)));
+      if (Array.isArray(driverResult.data)) {
+        setDrivers(driverResult.data.map((row) => hydrateDriverState(row, lapMap)));
+      } else {
+        setDrivers([]);
       }
       setLaps(normalizedLapRows);
       setError(null);
@@ -108,16 +115,31 @@ const LiveTimingBoard = () => {
       console.error('Failed to refresh timing data', refreshError);
       setError('Unable to refresh timing data from Supabase.');
     }
-  }, [handleSchemaMismatch, sessionId, withSessionFilter]);
+  }, [applySessionFilter, handleSchemaMismatch, supabaseClient, supabaseReady]);
 
   const refreshSessionState = useCallback(async () => {
-    if (!isSupabaseConfigured) return;
+    if (!supabaseReady) return;
     try {
-      const rows = await supabaseSelect('session_state', {
-        filters: withSessionFilter({}, sessionId),
-      });
-      if (rows?.[0]) {
-        setSessionState(sessionRowToState(rows[0]));
+      let query = supabaseClient.from('session_state').select('*');
+      const shouldFilterBySession = supportsSessions && sessionId;
+      if (shouldFilterBySession) {
+        query = applySessionFilter(query);
+        const { data, error } = await query.maybeSingle();
+        if (error) {
+          throw error;
+        }
+        if (data) {
+          setSessionState(sessionRowToState(data));
+        }
+      } else {
+        const { data, error } = await query.limit(1);
+        if (error) {
+          throw error;
+        }
+        const [firstRow] = Array.isArray(data) ? data : [];
+        if (firstRow) {
+          setSessionState(sessionRowToState(firstRow));
+        }
       }
     } catch (sessionError) {
       if (handleSchemaMismatch(sessionError)) {
@@ -127,10 +149,17 @@ const LiveTimingBoard = () => {
       console.error('Failed to refresh session state', sessionError);
       setError('Unable to refresh session details from Supabase.');
     }
-  }, [handleSchemaMismatch, sessionId, withSessionFilter]);
+  }, [
+    applySessionFilter,
+    handleSchemaMismatch,
+    sessionId,
+    supabaseClient,
+    supabaseReady,
+    supportsSessions,
+  ]);
 
   const bootstrap = useCallback(async () => {
-    if (!isSupabaseConfigured) {
+    if (!supabaseReady) {
       setIsLoading(false);
       setError('Supabase is not configured. Live timing requires Supabase credentials.');
       return;
@@ -138,44 +167,54 @@ const LiveTimingBoard = () => {
     setIsLoading(true);
     await Promise.all([refreshDriverData(), refreshSessionState()]);
     setIsLoading(false);
-  }, [refreshDriverData, refreshSessionState]);
+  }, [refreshDriverData, refreshSessionState, supabaseReady]);
 
   useEffect(() => {
     bootstrap();
   }, [bootstrap]);
 
   useEffect(() => {
-    if (!isSupabaseConfigured) {
+    if (!supabaseReady) {
       return () => {};
     }
-    const subscriptionConfig = (table) =>
-      supportsSessions ? { table, filter: `session_id=eq.${sessionId}` } : { table };
-    const driverUnsub = subscribeToTable(
-      subscriptionConfig('drivers'),
-      () => {
-        refreshDriverData();
-      },
-    );
-    const lapUnsub = subscribeToTable(
-      subscriptionConfig('laps'),
-      () => {
-        refreshDriverData();
-      },
-    );
-    const sessionUnsub = subscribeToTable(
-      subscriptionConfig('session_state'),
-      (payload) => {
-        if (payload?.new) {
-          setSessionState(sessionRowToState(payload.new));
-        }
-      },
-    );
+    const filter = supportsSessions ? `session_id=eq.${sessionId}` : undefined;
+
+    const driverChannel = supabaseClient
+      .channel(`live-timing-board-drivers-${supportsSessions ? sessionId : 'legacy'}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'drivers', ...(filter ? { filter } : {}) },
+        () => {
+          void refreshDriverData();
+        },
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'laps', ...(filter ? { filter } : {}) },
+        () => {
+          void refreshDriverData();
+        },
+      )
+      .subscribe();
+
+    const sessionChannel = supabaseClient
+      .channel(`live-timing-board-session-${supportsSessions ? sessionId : 'legacy'}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'session_state', ...(filter ? { filter } : {}) },
+        (payload) => {
+          if (payload?.new) {
+            setSessionState(sessionRowToState(payload.new));
+          }
+        },
+      )
+      .subscribe();
+
     return () => {
-      driverUnsub();
-      lapUnsub();
-      sessionUnsub();
+      supabaseClient.removeChannel(driverChannel);
+      supabaseClient.removeChannel(sessionChannel);
     };
-  }, [refreshDriverData, sessionId, supportsSessions]);
+  }, [refreshDriverData, sessionId, supabaseClient, supabaseReady, supportsSessions]);
 
   const leaderboard = useMemo(() => {
     const sorted = [...drivers]
