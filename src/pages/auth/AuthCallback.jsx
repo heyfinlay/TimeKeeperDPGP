@@ -30,24 +30,57 @@ const AuthCallback = () => {
 
         if (errorDescription) {
           console.error('Supabase OAuth callback returned an error', errorDescription);
+          setHasSession(false);
           navigate('/', { replace: true });
           return;
         }
 
         const authCode = searchParams.get('code') || hashParams.get('code');
+        const hasFragmentTokens = hashParams.has('access_token') || hashParams.has('refresh_token');
+
         if (authCode) {
           const { error: exchangeError } = await supabase.auth.exchangeCodeForSession(authCode);
           if (!isMounted) return;
 
           if (exchangeError) {
             console.error('Failed to exchange Supabase OAuth code for a session', exchangeError);
+            setHasSession(false);
             navigate('/', { replace: true });
             return;
           }
+        } else if (hasFragmentTokens) {
+          const accessToken = hashParams.get('access_token');
+          const refreshToken = hashParams.get('refresh_token');
 
+          if (accessToken && refreshToken) {
+            const { error: setSessionError } = await supabase.auth.setSession({
+              access_token: accessToken,
+              refresh_token: refreshToken,
+            });
+            if (!isMounted) return;
+
+            if (setSessionError) {
+              console.error('Failed to store Supabase session tokens from URL fragment', setSessionError);
+              setHasSession(false);
+              navigate('/', { replace: true });
+              return;
+            }
+          } else {
+            console.warn('Supabase OAuth callback missing access or refresh token in URL fragment');
+          }
+        }
+
+        if (authCode || hasFragmentTokens) {
           try {
             const cleanedUrl = new URL(window.location.href);
-            ['code', 'state', 'scope', 'provider', 'error', 'error_description'].forEach((param) => {
+            [
+              'code',
+              'state',
+              'scope',
+              'provider',
+              'error',
+              'error_description',
+            ].forEach((param) => {
               cleanedUrl.searchParams.delete(param);
             });
 
@@ -62,6 +95,8 @@ const AuthCallback = () => {
                 'provider',
                 'error',
                 'error_description',
+                'provider_token',
+                'provider_refresh_token',
               ].forEach((param) => {
                 hashSearchParams.delete(param);
               });
@@ -77,17 +112,6 @@ const AuthCallback = () => {
           } catch (urlError) {
             console.warn('Unable to clean auth callback parameters from URL', urlError);
           }
-        } else if (hashParams.has('access_token') || hashParams.has('refresh_token')) {
-          const { error: sessionFromUrlError } = await supabase.auth.getSessionFromUrl({
-            storeSession: true,
-          });
-          if (!isMounted) return;
-
-          if (sessionFromUrlError) {
-            console.error('Failed to hydrate Supabase session from URL fragment', sessionFromUrlError);
-            navigate('/', { replace: true });
-            return;
-          }
         }
 
         const { data, error } = await supabase.auth.getSession();
@@ -95,22 +119,25 @@ const AuthCallback = () => {
 
         if (error) {
           console.error('Failed to resolve Supabase session from callback', error);
+          setHasSession(false);
           navigate('/', { replace: true });
           return;
         }
 
         if (!data?.session) {
+          setHasSession(false);
           navigate('/', { replace: true });
           return;
         }
 
         const sessionUser = data.session.user;
+        setHasSession(true);
         let profileRow = null;
 
         try {
           const { data: profileData, error: profileError } = await supabase
             .from('profiles')
-            .select('id, display_name, ic_phone_number, role, tier, experience_points')
+            .select('id, display_name, role, assigned_driver_ids, team_id')
             .eq('id', sessionUser.id)
             .maybeSingle();
 
@@ -131,9 +158,8 @@ const AuthCallback = () => {
                 id: sessionUser.id,
                 role: 'marshal',
                 display_name: fallbackDisplayName,
-                ic_phone_number: null,
               })
-              .select('id, display_name, ic_phone_number, role, tier, experience_points')
+              .select('id, display_name, role, assigned_driver_ids, team_id')
               .single();
 
             if (createError) {
@@ -146,14 +172,16 @@ const AuthCallback = () => {
           }
         } catch (profileError) {
           console.error('Unable to load Supabase profile during auth callback', profileError);
+          setHasSession(true);
           navigate('/dashboard', { replace: true });
           return;
         }
 
-        const requiresSetup = !profileRow?.display_name?.trim() || !profileRow?.ic_phone_number?.trim();
+        const requiresSetup = !profileRow?.display_name?.trim();
         navigate(requiresSetup ? '/account/setup' : '/dashboard', { replace: true });
       } catch (error) {
         console.error('Unexpected error handling Supabase auth callback', error);
+        setHasSession(false);
         navigate('/', { replace: true });
       }
     };
@@ -185,7 +213,7 @@ const AuthCallback = () => {
       return;
     }
 
-    const requiresSetup = !profile.display_name?.trim() || !profile.ic_phone_number?.trim();
+    const requiresSetup = !profile.display_name?.trim();
     hasRedirectedRef.current = true;
     navigate(requiresSetup ? '/account/setup' : '/dashboard', { replace: true });
   }, [hasSession, status, isHydratingProfile, profile, profileError, navigate]);

@@ -159,7 +159,12 @@ const DashboardPage = () => {
   const [now, setNow] = useState(() => new Date());
 
   const isAuthenticated = status === 'authenticated' && !!user;
-  const profileComplete = Boolean(profile?.display_name?.trim()) && Boolean(profile?.ic_phone_number?.trim());
+  const profileSupportsIcPhone = useMemo(
+    () => (profile ? Object.prototype.hasOwnProperty.call(profile, 'ic_phone_number') : false),
+    [profile],
+  );
+  const profileComplete =
+    Boolean(profile?.display_name?.trim()) && (!profileSupportsIcPhone || Boolean(profile?.ic_phone_number?.trim()));
 
   useEffect(() => {
     if (!isSupabaseConfigured) return;
@@ -332,7 +337,9 @@ const DashboardPage = () => {
               />
             </div>
             <div className="flex flex-col gap-1 text-xs text-neutral-400">
-              <span>IC phone: {profile?.ic_phone_number ?? 'Not set'}</span>
+              {profileSupportsIcPhone ? (
+                <span>IC phone: {profile?.ic_phone_number ?? 'Not set'}</span>
+              ) : null}
               <span>Role: {profile?.role ? String(profile.role).replaceAll('_', ' ') : 'Unassigned'}</span>
             </div>
           </div>

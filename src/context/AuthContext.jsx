@@ -23,12 +23,12 @@ const DEFAULT_PROFILE = {
   id: null,
   role: 'marshal',
   display_name: null,
-  ic_phone_number: null,
   assigned_driver_ids: [],
   team_id: null,
-  tier: null,
-  experience_points: 0,
 };
+
+const PROFILE_COLUMNS = 'id, role, display_name, assigned_driver_ids, team_id';
+const MUTABLE_PROFILE_FIELDS = new Set(['display_name', 'role', 'assigned_driver_ids', 'team_id']);
 
 const isNoRowError = (error) => error?.code === 'PGRST116';
 
@@ -75,43 +75,45 @@ export const AuthProvider = ({ children }) => {
       try {
         const { data, error } = await supabase
           .from('profiles')
-          .insert({
-            id: nextUser.id,
-            role: 'marshal',
-            display_name: displayName,
-            ic_phone_number: null,
-          })
-          .select()
-          .single();
-        if (insertError) {
-          throw insertError;
+          .select(PROFILE_COLUMNS)
+          .eq('id', userId)
+          .maybeSingle();
+
+        if (error && !isNoRowError(error)) {
+          throw error;
         }
+
+        let hydratedProfile = null;
+
         if (!data) {
           const displayName =
             nextUser.user_metadata?.full_name ||
             nextUser.user_metadata?.name ||
             nextUser.email ||
             'Marshal';
+
           const { data: created, error: insertError } = await supabase
             .from('profiles')
             .insert({
               id: userId,
               role: 'marshal',
               display_name: displayName,
-              ic_phone_number: null,
             })
-            .select()
+            .select(PROFILE_COLUMNS)
             .single();
+
           if (insertError) {
             throw insertError;
           }
-          const hydratedProfile =
+
+          hydratedProfile =
             created ?? { ...DEFAULT_PROFILE, id: userId, display_name: displayName };
-          setProfile(hydratedProfile);
-          return hydratedProfile;
+        } else {
+          hydratedProfile = { ...DEFAULT_PROFILE, ...data };
         }
-        const hydratedProfile = { ...DEFAULT_PROFILE, ...data };
+
         setProfile(hydratedProfile);
+        setProfileError(null);
         return hydratedProfile;
       } catch (error) {
         console.error('Failed to load profile', error);
@@ -243,11 +245,19 @@ export const AuthProvider = ({ children }) => {
         throw new Error('Cannot update profile without an authenticated Supabase session.');
       }
 
+      const filteredPatch = Object.fromEntries(
+        Object.entries(patch).filter(([key]) => MUTABLE_PROFILE_FIELDS.has(key)),
+      );
+
+      if (Object.keys(filteredPatch).length === 0) {
+        return profile;
+      }
+
       const { data: updated, error } = await supabase
         .from('profiles')
-        .update(patch)
+        .update(filteredPatch)
         .eq('id', user.id)
-        .select()
+        .select(PROFILE_COLUMNS)
         .maybeSingle();
 
       if (error) {
@@ -258,7 +268,7 @@ export const AuthProvider = ({ children }) => {
       setProfile(nextProfile);
       return nextProfile;
     },
-    [user, isSupabaseConfigured],
+    [user, isSupabaseConfigured, profile],
   );
 
   const value = useMemo(
