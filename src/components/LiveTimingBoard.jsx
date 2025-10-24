@@ -18,7 +18,11 @@ import {
   hydrateDriverState,
   sessionRowToState,
 } from '../utils/raceData';
-import { isColumnMissingError, isSupabaseConfigured, supabase } from '../lib/supabaseClient.js';
+import {
+  isColumnMissingError,
+  isSupabaseConfigured,
+  supabase as supabaseClient,
+} from '../lib/supabaseClient.js';
 import { useEventSession } from '../context/SessionContext.jsx';
 
 const STATUS_ICON_MAP = {
@@ -44,7 +48,6 @@ const LiveTimingBoard = () => {
     [sessions, activeSessionId],
   );
 
-  const supabaseClient = supabase;
   const supabaseReady = isSupabaseConfigured && Boolean(supabaseClient);
 
   const trackStatusDetails =
