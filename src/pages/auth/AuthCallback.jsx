@@ -1,10 +1,14 @@
-import { useEffect } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { isSupabaseConfigured, supabase } from '../../lib/supabaseClient.js';
+import { useAuth } from '../../context/AuthContext.jsx';
 
 const AuthCallback = () => {
   const navigate = useNavigate();
   const location = useLocation();
+  const { status, profile, profileError, isHydratingProfile } = useAuth();
+  const [hasSession, setHasSession] = useState(false);
+  const hasRedirectedRef = useRef(false);
 
   useEffect(() => {
     let isMounted = true;
@@ -160,6 +164,31 @@ const AuthCallback = () => {
       isMounted = false;
     };
   }, [location.hash, location.search, navigate]);
+
+  useEffect(() => {
+    if (!hasSession || hasRedirectedRef.current) {
+      return;
+    }
+
+    if (status !== 'authenticated' || isHydratingProfile) {
+      return;
+    }
+
+    if (profileError) {
+      console.error('Unable to hydrate profile after authentication', profileError);
+      hasRedirectedRef.current = true;
+      navigate('/dashboard', { replace: true });
+      return;
+    }
+
+    if (!profile) {
+      return;
+    }
+
+    const requiresSetup = !profile.display_name?.trim() || !profile.ic_phone_number?.trim();
+    hasRedirectedRef.current = true;
+    navigate(requiresSetup ? '/account/setup' : '/dashboard', { replace: true });
+  }, [hasSession, status, isHydratingProfile, profile, profileError, navigate]);
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-[#05070F] px-4 text-center text-white">
