@@ -104,7 +104,54 @@ const AuthCallback = () => {
           return;
         }
 
-        setHasSession(true);
+        const sessionUser = data.session.user;
+        let profileRow = null;
+
+        try {
+          const { data: profileData, error: profileError } = await supabase
+            .from('profiles')
+            .select('id, display_name, ic_phone_number, role, tier, experience_points')
+            .eq('id', sessionUser.id)
+            .maybeSingle();
+
+          if (profileError && profileError.code !== 'PGRST116') {
+            throw profileError;
+          }
+
+          if (!profileData) {
+            const fallbackDisplayName =
+              sessionUser.user_metadata?.full_name ||
+              sessionUser.user_metadata?.name ||
+              sessionUser.email ||
+              'Marshal';
+
+            const { data: createdProfile, error: createError } = await supabase
+              .from('profiles')
+              .insert({
+                id: sessionUser.id,
+                role: 'marshal',
+                display_name: fallbackDisplayName,
+                ic_phone_number: null,
+              })
+              .select('id, display_name, ic_phone_number, role, tier, experience_points')
+              .single();
+
+            if (createError) {
+              throw createError;
+            }
+
+            profileRow = createdProfile ?? null;
+          } else {
+            profileRow = profileData;
+          }
+        } catch (profileError) {
+          console.error('Unable to load Supabase profile during auth callback', profileError);
+          navigate('/dashboard', { replace: true });
+          return;
+        }
+
+        const requiresSetup = !profileRow?.display_name?.trim() || !profileRow?.ic_phone_number?.trim();
+        navigate(requiresSetup ? '/account/setup' : '/dashboard', { replace: true });
       } catch (error) {
         console.error('Unexpected error handling Supabase auth callback', error);
         navigate('/', { replace: true });

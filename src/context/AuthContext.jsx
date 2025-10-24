@@ -75,11 +75,16 @@ export const AuthProvider = ({ children }) => {
       try {
         const { data, error } = await supabase
           .from('profiles')
-          .select('*')
-          .eq('id', userId)
-          .maybeSingle();
-        if (error && !isNoRowError(error)) {
-          throw error;
+          .insert({
+            id: nextUser.id,
+            role: 'marshal',
+            display_name: displayName,
+            ic_phone_number: null,
+          })
+          .select()
+          .single();
+        if (insertError) {
+          throw insertError;
         }
         if (!data) {
           const displayName =
@@ -268,16 +273,7 @@ export const AuthProvider = ({ children }) => {
       updateProfile,
       isSupabaseConfigured,
     }),
-    [
-      status,
-      user,
-      profile,
-      profileError,
-      isHydratingProfile,
-      signInWithDiscord,
-      signOut,
-      updateProfile,
-    ],
+    [status, user, profile, profileError, signInWithDiscord, signOut, updateProfile],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
