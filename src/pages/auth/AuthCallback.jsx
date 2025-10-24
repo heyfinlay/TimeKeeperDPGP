@@ -112,6 +112,18 @@ const AuthCallback = () => {
           } catch (urlError) {
             console.warn('Unable to clean auth callback parameters from URL', urlError);
           }
+        } else if (hashParams.has('access_token') || hashParams.has('refresh_token')) {
+          const { error: sessionFromUrlError } = await supabase.auth.getSessionFromUrl({
+            storeSession: true,
+          });
+          if (!isMounted) return;
+
+          if (sessionFromUrlError) {
+            console.error('Failed to hydrate Supabase session from URL fragment', sessionFromUrlError);
+            setHasSession(false);
+            navigate('/', { replace: true });
+            return;
+          }
         }
 
         const { data, error } = await supabase.auth.getSession();
