@@ -9,7 +9,25 @@ export const isSupabaseConfigured =
   typeof SUPABASE_ANON_KEY === 'string' &&
   SUPABASE_ANON_KEY.length > 0;
 
--const REST_ENDPOINT = isSupabaseConfigured
+const supabaseOptions = {
+  auth: {
+    persistSession: true,
+    autoRefreshToken: true,
+  },
+  realtime: {
+    params: {
+      eventsPerSecond: 5,
+    },
+  },
+};
+
+export const supabase = isSupabaseConfigured
+  ? /** @type {import('@supabase/supabase-js').SupabaseClient | null} */ (
+      createClient(SUPABASE_URL, SUPABASE_ANON_KEY, supabaseOptions)
+    )
+  : null;
+
+const REST_ENDPOINT = isSupabaseConfigured
   ? `${SUPABASE_URL.replace(/\/$/, '')}/rest/v1`
   : null;
 const REALTIME_ENDPOINT = isSupabaseConfigured
