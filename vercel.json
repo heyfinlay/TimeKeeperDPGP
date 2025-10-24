@@ -1,11 +1,8 @@
 {
   "rewrites": [
     {
-      "source": "/(.*)",
-      "destination": "/",
-      "missing": [
-        { "type": "file" }
-      ]
+      "source": "/((?!api|_next|.*\\..*).*)",
+      "destination": "/"
     }
   ]
 }
