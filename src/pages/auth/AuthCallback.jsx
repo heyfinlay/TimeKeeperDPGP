@@ -1,10 +1,14 @@
-import { useEffect } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { isSupabaseConfigured, supabase } from '../../lib/supabaseClient.js';
+import { useAuth } from '../../context/AuthContext.jsx';
 
 const AuthCallback = () => {
   const navigate = useNavigate();
   const location = useLocation();
+  const { status, profile, profileError, isHydratingProfile } = useAuth();
+  const [hasSession, setHasSession] = useState(false);
+  const hasRedirectedRef = useRef(false);
 
   useEffect(() => {
     let isMounted = true;
@@ -100,54 +104,7 @@ const AuthCallback = () => {
           return;
         }
 
-        const sessionUser = data.session.user;
-        let profileRow = null;
-
-        try {
-          const { data: profileData, error: profileError } = await supabase
-            .from('profiles')
-            .select('id, display_name, ic_phone_number, role, tier, experience_points')
-            .eq('id', sessionUser.id)
-            .maybeSingle();
-
-          if (profileError && profileError.code !== 'PGRST116') {
-            throw profileError;
-          }
-
-          if (!profileData) {
-            const fallbackDisplayName =
-              sessionUser.user_metadata?.full_name ||
-              sessionUser.user_metadata?.name ||
-              sessionUser.email ||
-              'Marshal';
-
-            const { data: createdProfile, error: createError } = await supabase
-              .from('profiles')
-              .insert({
-                id: sessionUser.id,
-                role: 'marshal',
-                display_name: fallbackDisplayName,
-                ic_phone_number: null,
-              })
-              .select('id, display_name, ic_phone_number, role, tier, experience_points')
-              .single();
-
-            if (createError) {
-              throw createError;
-            }
-
-            profileRow = createdProfile ?? null;
-          } else {
-            profileRow = profileData;
-          }
-        } catch (profileError) {
-          console.error('Unable to load Supabase profile during auth callback', profileError);
-          navigate('/dashboard', { replace: true });
-          return;
-        }
-
-        const requiresSetup = !profileRow?.display_name?.trim() || !profileRow?.ic_phone_number?.trim();
-        navigate(requiresSetup ? '/account/setup' : '/dashboard', { replace: true });
+        setHasSession(true);
       } catch (error) {
         console.error('Unexpected error handling Supabase auth callback', error);
         navigate('/', { replace: true });
@@ -160,6 +117,31 @@ const AuthCallback = () => {
       isMounted = false;
     };
   }, [location.hash, location.search, navigate]);
+
+  useEffect(() => {
+    if (!hasSession || hasRedirectedRef.current) {
+      return;
+    }
+
+    if (status !== 'authenticated' || isHydratingProfile) {
+      return;
+    }
+
+    if (profileError) {
+      console.error('Unable to hydrate profile after authentication', profileError);
+      hasRedirectedRef.current = true;
+      navigate('/dashboard', { replace: true });
+      return;
+    }
+
+    if (!profile) {
+      return;
+    }
+
+    const requiresSetup = !profile.display_name?.trim() || !profile.ic_phone_number?.trim();
+    hasRedirectedRef.current = true;
+    navigate(requiresSetup ? '/account/setup' : '/dashboard', { replace: true });
+  }, [hasSession, status, isHydratingProfile, profile, profileError, navigate]);
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-[#05070F] px-4 text-center text-white">

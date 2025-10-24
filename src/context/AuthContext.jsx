@@ -13,6 +13,8 @@ const AuthContext = createContext({
   status: isSupabaseConfigured ? 'loading' : 'disabled',
   user: null,
   profile: null,
+  profileError: null,
+  isHydratingProfile: false,
   signInWithDiscord: () => Promise.resolve(),
   signOut: () => Promise.resolve(),
 });
@@ -35,15 +37,19 @@ export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
   const [profile, setProfile] = useState(null);
   const [profileError, setProfileError] = useState(null);
+  const [isHydratingProfile, setIsHydratingProfile] = useState(false);
   const fetchingProfileRef = useRef(false);
 
   const hydrateProfile = useCallback(async (nextUser) => {
     if (!isSupabaseConfigured || !supabase || !nextUser) {
       setProfile(null);
+      setProfileError(null);
+      setIsHydratingProfile(false);
       return;
     }
     if (fetchingProfileRef.current) return;
     fetchingProfileRef.current = true;
+    setIsHydratingProfile(true);
     try {
       const { data, error } = await supabase
         .from('profiles')
@@ -83,6 +89,7 @@ export const AuthProvider = ({ children }) => {
       setProfile(null);
     } finally {
       fetchingProfileRef.current = false;
+      setIsHydratingProfile(false);
     }
   }, []);
 
@@ -109,6 +116,8 @@ export const AuthProvider = ({ children }) => {
         void hydrateProfile(sessionUser);
       } else {
         setProfile(null);
+        setProfileError(null);
+        setIsHydratingProfile(false);
       }
     };
 
@@ -122,6 +131,8 @@ export const AuthProvider = ({ children }) => {
         void hydrateProfile(sessionUser);
       } else {
         setProfile(null);
+        setProfileError(null);
+        setIsHydratingProfile(false);
       }
     });
 
@@ -132,14 +143,29 @@ export const AuthProvider = ({ children }) => {
   }, [hydrateProfile]);
 
   const AUTH_CALLBACK_URL = useMemo(() => {
+    const fallback = (() => {
+      if (typeof window !== 'undefined' && window?.location?.origin) {
+        return `${window.location.origin.replace(/\/$/, '')}/auth/callback`;
+      }
+      return 'https://time-keeper-dpgp.vercel.app/auth/callback';
+    })();
+
     const configured = import.meta.env.VITE_AUTH_CALLBACK_URL;
-    if (typeof configured === 'string' && configured.length > 0) {
+    if (typeof configured !== 'string' || configured.length === 0) {
+      return fallback;
+    }
+
+    try {
+      const parsed = new URL(configured);
+      if (parsed.hostname.includes('supabase.co')) {
+        console.warn('Ignoring Supabase-hosted auth callback URL; falling back to application route.');
+        return fallback;
+      }
       return configured;
+    } catch (error) {
+      console.warn('Invalid auth callback URL provided; falling back to application route.', error);
+      return fallback;
     }
-    if (typeof window !== 'undefined' && window?.location?.origin) {
-      return `${window.location.origin.replace(/\/$/, '')}/auth/callback`;
-    }
-    return 'https://time-keeper-dpgp.vercel.app/auth/callback';
   }, []);
 
   const signInWithDiscord = useCallback(async () => {
@@ -193,12 +219,22 @@ export const AuthProvider = ({ children }) => {
       user,
       profile,
       profileError,
+      isHydratingProfile,
       signInWithDiscord,
       signOut,
       updateProfile,
       isSupabaseConfigured,
     }),
-    [status, user, profile, profileError, signInWithDiscord, signOut, updateProfile],
+    [
+      status,
+      user,
+      profile,
+      profileError,
+      isHydratingProfile,
+      signInWithDiscord,
+      signOut,
+      updateProfile,
+    ],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
