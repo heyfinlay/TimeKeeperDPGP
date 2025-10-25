@@ -6,6 +6,7 @@ import { isSupabaseConfigured } from '@/lib/supabaseClient.js';
 export default function AccountSetup() {
   const [handle, setHandle] = useState('');
   const [displayName, setDisplayName] = useState('');
+  const [icPhone, setIcPhone] = useState('');
   const [error, setError] = useState(null);
   const [isSaving, setIsSaving] = useState(false);
   const navigate = useNavigate();
@@ -24,7 +25,8 @@ export default function AccountSetup() {
   useEffect(() => {
     setHandle(profile?.handle ?? '');
     setDisplayName(derivedDisplayName ?? '');
-  }, [derivedDisplayName, profile?.handle]);
+    setIcPhone(profile?.ic_phone_number ?? '');
+  }, [derivedDisplayName, profile?.handle, profile?.ic_phone_number]);
 
   async function save() {
     if (!isSupabaseConfigured) {
@@ -52,6 +54,7 @@ export default function AccountSetup() {
       await updateProfile({
         handle: trimmedHandle || null,
         display_name: trimmedDisplayName || null,
+        ic_phone_number: icPhone.trim() || null,
       });
       navigate('/dashboard');
     } catch (saveError) {
@@ -96,6 +99,21 @@ export default function AccountSetup() {
           placeholder="Full name"
           className="w-full rounded-full border border-white/10 bg-[#0B1120]/60 px-4 py-3 text-sm text-white outline-none transition focus:border-[#9FF7D3]/70 focus:ring-2 focus:ring-[#9FF7D3]/30"
         />
+      </label>
+      <label className="flex flex-col gap-2 text-sm">
+        <span className="text-xs font-semibold uppercase tracking-[0.35em] text-neutral-400">
+          IC Phone Number (optional)
+        </span>
+        <input
+          value={icPhone}
+          onChange={(event) => setIcPhone(event.target.value)}
+          placeholder="+61 4xx xxx xxx"
+          inputMode="tel"
+          className="w-full rounded-full border border-white/10 bg-[#0B1120]/60 px-4 py-3 text-sm text-white outline-none transition focus:border-[#9FF7D3]/70 focus:ring-2 focus:ring-[#9FF7D3]/30"
+        />
+        <span className="text-xs text-neutral-500">
+          Used for verifying top-ups and contacting you in-game.
+        </span>
       </label>
       {error ? (
         <p className="rounded-xl border border-red-500/40 bg-red-500/10 px-4 py-3 text-sm text-red-200">{error}</p>

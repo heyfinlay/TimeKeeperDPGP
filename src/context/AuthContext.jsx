@@ -8,6 +8,7 @@ import {
   useState,
 } from 'react';
 import { isSupabaseConfigured, supabase } from '../lib/supabaseClient.js';
+import { PROFILE_COLUMN_SELECTION, saveProfile } from '../lib/profile.js';
 
 const AuthContext = createContext({
   status: isSupabaseConfigured ? 'loading' : 'disabled',
@@ -27,10 +28,10 @@ const DEFAULT_PROFILE = {
   ic_phone_number: null,
   assigned_driver_ids: [],
   team_id: null,
+  tier: null,
+  experience_points: 0,
 };
 
-const PROFILE_COLUMNS =
-  'id, role, handle, display_name, ic_phone_number, assigned_driver_ids, team_id';
 const MUTABLE_PROFILE_FIELDS = new Set([
   'display_name',
   'role',
@@ -38,6 +39,8 @@ const MUTABLE_PROFILE_FIELDS = new Set([
   'ic_phone_number',
   'assigned_driver_ids',
   'team_id',
+  'tier',
+  'experience_points',
 ]);
 
 const isNoRowError = (error) => error?.code === 'PGRST116';
@@ -85,9 +88,7 @@ export const AuthProvider = ({ children }) => {
       try {
         const { data, error } = await supabase
           .from('profiles')
-          .select(
-            'id, role, handle, display_name, ic_phone_number, assigned_driver_ids, team_id, tier, experience_points',
-          )
+          .select(PROFILE_COLUMN_SELECTION)
           .eq('id', userId)
           .maybeSingle();
 
@@ -111,9 +112,7 @@ export const AuthProvider = ({ children }) => {
               role: 'marshal',
               display_name: displayName,
             })
-            .select(
-              'id, role, handle, display_name, ic_phone_number, assigned_driver_ids, team_id, tier, experience_points',
-            )
+            .select(PROFILE_COLUMN_SELECTION)
             .single();
 
           if (insertError) {
@@ -267,23 +266,21 @@ export const AuthProvider = ({ children }) => {
         return profile;
       }
 
-      const { data: updated, error } = await supabase
-        .from('profiles')
-        .update(filteredPatch)
-        .eq('id', user.id)
-        .select(PROFILE_COLUMNS)
-        .maybeSingle();
-
-      if (error) {
-        throw error;
-      }
-
-      const nextProfile = updated ? { ...DEFAULT_PROFILE, ...updated } : null;
+      const updated = await saveProfile(filteredPatch, { supabase, userId: user.id });
+      const nextProfile = updated ? { ...DEFAULT_PROFILE, ...updated } : profile;
       setProfile(nextProfile);
       return nextProfile;
     },
     [user, isSupabaseConfigured, profile],
   );
+
+  const syncProfile = useCallback((nextProfile) => {
+    if (nextProfile) {
+      setProfile({ ...DEFAULT_PROFILE, ...nextProfile });
+    } else {
+      setProfile(null);
+    }
+  }, []);
 
   const value = useMemo(
     () => ({
@@ -295,9 +292,10 @@ export const AuthProvider = ({ children }) => {
       signInWithDiscord,
       signOut,
       updateProfile,
+      syncProfile,
       isSupabaseConfigured,
     }),
-    [status, user, profile, profileError, signInWithDiscord, signOut, updateProfile],
+    [status, user, profile, profileError, signInWithDiscord, signOut, updateProfile, syncProfile],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

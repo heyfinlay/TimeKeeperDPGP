@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { isSupabaseConfigured, supabase } from '@/lib/supabaseClient.js';
+import { PROFILE_COLUMN_SELECTION } from '@/lib/profile.js';
 
 export default function AuthCallback() {
   const navigate = useNavigate();
@@ -32,7 +33,7 @@ export default function AuthCallback() {
 
         const { data: profile, error: profileError } = await supabase
           .from('profiles')
-          .select('id')
+          .select(PROFILE_COLUMN_SELECTION)
           .eq('id', user.id)
           .maybeSingle();
 
@@ -41,7 +42,8 @@ export default function AuthCallback() {
         }
 
         if (isMounted) {
-          navigate(profile ? '/dashboard' : '/account/setup', { replace: true });
+          const requiresSetup = !profile?.display_name?.trim();
+          navigate(requiresSetup ? '/account/setup' : '/dashboard', { replace: true });
         }
       } catch (callbackError) {
         console.error('Unexpected error during auth callback', callbackError);

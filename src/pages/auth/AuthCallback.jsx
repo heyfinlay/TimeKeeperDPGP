@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { isSupabaseConfigured, supabase } from '../../lib/supabaseClient.js';
+import { PROFILE_COLUMN_SELECTION } from '../../lib/profile.js';
 import { useAuth } from '../../context/AuthContext.jsx';
 
 const AuthCallback = () => {
@@ -149,7 +150,7 @@ const AuthCallback = () => {
         try {
           const { data: profileData, error: profileError } = await supabase
             .from('profiles')
-            .select('id, display_name, role, assigned_driver_ids, team_id')
+            .select(PROFILE_COLUMN_SELECTION)
             .eq('id', sessionUser.id)
             .maybeSingle();
 
@@ -171,7 +172,7 @@ const AuthCallback = () => {
                 role: 'marshal',
                 display_name: fallbackDisplayName,
               })
-              .select('id, display_name, role, assigned_driver_ids, team_id')
+              .select(PROFILE_COLUMN_SELECTION)
               .single();
 
             if (createError) {
