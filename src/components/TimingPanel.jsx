@@ -34,6 +34,7 @@ import {
   DEFAULT_SESSION_STATE,
   LEGACY_SESSION_ID,
   createClientId,
+  createUuid,
   groupLapRows,
   hydrateDriverState,
   sessionRowToState,
