@@ -285,6 +285,17 @@ const TimingPanel = () => {
   const lastRaceTimeSyncRef = useRef(0);
   const logsRef = useRef([]);
   const supabaseReady = isSupabaseConfigured && Boolean(supabaseClient) && isAuthenticated;
+  const [isBootstrapped, setIsBootstrapped] = useState(false);
+
+  useEffect(() => {
+    setIsBootstrapped(false);
+  }, [sessionId, supportsSessions]);
+
+  useEffect(() => {
+    if (!supabaseReady) {
+      setIsBootstrapped(false);
+    }
+  }, [supabaseReady]);
 
   const withSessionFilter = useCallback(
     (filters = {}, sessionOverride = sessionId) =>
@@ -437,7 +448,18 @@ const TimingPanel = () => {
       setIsInitialising(false);
       return;
     }
+    if (!isAuthenticated) {
+      setIsInitialising(false);
+      setIsBootstrapped(false);
+      return;
+    }
     if (!supabaseReady) {
+      setIsBootstrapped(false);
+      return;
+    }
+    if (supportsSessions && !activeSessionId) {
+      setIsInitialising(false);
+      setIsBootstrapped(false);
       return;
     }
     setIsInitialising(true);
@@ -505,7 +527,7 @@ const TimingPanel = () => {
         };
         await supabaseUpsert('session_state', sanitizeRowsForSupabase([sessionRow], sessionId));
       }
-      const hydrated = sessionRowToState(hydratedRow);
+      const hydrated = sessionRowToState(sessionRow);
       sessionStateRef.current = {
         ...sessionRow,
         session_id: sessionId,
@@ -555,6 +577,7 @@ const TimingPanel = () => {
           : [],
       }));
 
+      setIsBootstrapped(true);
       setSupabaseError(null);
     } catch (error) {
       if (handleSchemaMismatch(error)) {
@@ -565,6 +588,7 @@ const TimingPanel = () => {
           'Unable to load data from Supabase. Confirm credentials and schema are correct.',
         );
       }
+      setIsBootstrapped(false);
     } finally {
       setIsInitialising(false);
     }
@@ -572,6 +596,7 @@ const TimingPanel = () => {
     activeSessionId,
     applyDriverData,
     handleSchemaMismatch,
+    isAuthenticated,
     isAdmin,
     isSupabaseConfigured,
     profile,
@@ -580,6 +605,7 @@ const TimingPanel = () => {
     sessionId,
     supabaseClient,
     supabaseReady,
+    supportsSessions,
     withSessionFilter,
   ]);
 
@@ -754,84 +780,127 @@ const TimingPanel = () => {
   }, [activeSessionId]);
 
   useEffect(() => {
-    if (!supabaseReady) {
-      return () => {};
-    }
-    const subscriptionConfig = (table) =>
-      supportsSessions ? { table, filter: `session_id=eq.${sessionId}` } : { table };
-    const driverUnsub = subscribeToTable(
-      subscriptionConfig('drivers'),
-      () => {
-        refreshDriversFromSupabase();
-      },
-    );
-    const lapUnsub = subscribeToTable(
-      subscriptionConfig('laps'),
-      () => {
-        refreshDriversFromSupabase();
-      },
-    );
-    const sessionUnsub = subscribeToTable(
-      subscriptionConfig('session_state'),
-      (payload) => {
-        if (payload?.new) {
-          const hydrated = sessionRowToState(payload.new);
-          sessionStateRef.current = {
-            ...payload.new,
-            id: payload.new.id ?? sessionId,
-            session_id: sessionId,
-            track_status: hydrated.trackStatus,
-            flag_status: hydrated.flagStatus,
-          };
-          setEventConfig((prev) => ({
-            ...prev,
-            eventType: hydrated.eventType,
-            totalLaps: hydrated.totalLaps,
-            totalDuration: hydrated.totalDuration,
-          }));
-          setProcedurePhase(hydrated.procedurePhase);
-          setTrackStatus(hydrated.trackStatus);
-          setAnnouncement(hydrated.announcement);
-          setAnnouncementDraft(hydrated.announcement);
-          setIsTiming(hydrated.isTiming);
-          setIsPaused(hydrated.isPaused);
-          setRaceTime(hydrated.raceTime);
+    let unsubscribers = [];
+    let cancelled = false;
+
+    const setupRealtime = async () => {
+      if (!supabaseReady || !supabaseClient) {
+        return;
+      }
+
+      try {
+        const { data, error } = await supabaseClient.auth.getSession();
+        if (cancelled) {
+          return;
         }
-      },
-    );
-    const logUnsub = subscribeToTable(
-      subscriptionConfig('race_events'),
-      (payload) => {
-        if (payload?.new) {
-          const entry = {
-            id: payload.new.id ?? createClientId(),
-            action: payload.new.message ?? '',
-            marshalId: payload.new.marshal_id ?? 'Race Control',
-            timestamp: payload.new.created_at
-              ? new Date(payload.new.created_at)
-              : new Date(),
-          };
-          setLogs((prev) => {
-            if (prev.some((log) => log.id === entry.id)) {
-              return prev;
-            }
-            const next = [entry, ...prev].slice(0, LOG_LIMIT);
-            logsRef.current = next;
-            return next;
-          });
+        if (error) {
+          console.error('Failed to resolve Supabase session for realtime subscriptions', error);
         }
-      },
-    );
+        const session = data?.session;
+        if (!session) {
+          return;
+        }
+      } catch (sessionError) {
+        console.error('Failed to load Supabase session for realtime subscriptions', sessionError);
+        return;
+      }
+
+      if (cancelled || !isBootstrapped) {
+        return;
+      }
+
+      if (supportsSessions && !activeSessionId) {
+        return;
+      }
+
+      const subscriptionConfig = (table) =>
+        supportsSessions ? { table, filter: `session_id=eq.${sessionId}` } : { table };
+
+      const driverUnsub = subscribeToTable(
+        subscriptionConfig('drivers'),
+        () => {
+          refreshDriversFromSupabase();
+        },
+      );
+      const lapUnsub = subscribeToTable(
+        subscriptionConfig('laps'),
+        () => {
+          refreshDriversFromSupabase();
+        },
+      );
+      const sessionUnsub = subscribeToTable(
+        subscriptionConfig('session_state'),
+        (payload) => {
+          if (payload?.new) {
+            const hydrated = sessionRowToState(payload.new);
+            sessionStateRef.current = {
+              ...payload.new,
+              id: payload.new.id ?? sessionId,
+              session_id: sessionId,
+              track_status: hydrated.trackStatus,
+              flag_status: hydrated.flagStatus,
+            };
+            setEventConfig((prev) => ({
+              ...prev,
+              eventType: hydrated.eventType,
+              totalLaps: hydrated.totalLaps,
+              totalDuration: hydrated.totalDuration,
+            }));
+            setProcedurePhase(hydrated.procedurePhase);
+            setTrackStatus(hydrated.trackStatus);
+            setAnnouncement(hydrated.announcement);
+            setAnnouncementDraft(hydrated.announcement);
+            setIsTiming(hydrated.isTiming);
+            setIsPaused(hydrated.isPaused);
+            setRaceTime(hydrated.raceTime);
+          }
+        },
+      );
+      const logUnsub = subscribeToTable(
+        subscriptionConfig('race_events'),
+        (payload) => {
+          if (payload?.new) {
+            const entry = {
+              id: payload.new.id ?? createClientId(),
+              action: payload.new.message ?? '',
+              marshalId: payload.new.marshal_id ?? 'Race Control',
+              timestamp: payload.new.created_at
+                ? new Date(payload.new.created_at)
+                : new Date(),
+            };
+            setLogs((prev) => {
+              if (prev.some((log) => log.id === entry.id)) {
+                return prev;
+              }
+              const next = [entry, ...prev].slice(0, LOG_LIMIT);
+              logsRef.current = next;
+              return next;
+            });
+          }
+        },
+      );
+
+      unsubscribers = [driverUnsub, lapUnsub, sessionUnsub, logUnsub];
+    };
+
+    void setupRealtime();
+
     return () => {
-      driverUnsub?.();
-      lapUnsub?.();
-      sessionUnsub?.();
-      logUnsub?.();
+      cancelled = true;
+      unsubscribers.forEach((unsub) => {
+        try {
+          unsub?.();
+        } catch (unsubscribeError) {
+          console.error('Failed to unsubscribe from Supabase realtime channel', unsubscribeError);
+        }
+      });
     };
   }, [
     activeSessionId,
+    isBootstrapped,
     refreshDriversFromSupabase,
     sessionId,
+    supabaseClient,
     supabaseReady,
     supportsSessions,
   ]);
