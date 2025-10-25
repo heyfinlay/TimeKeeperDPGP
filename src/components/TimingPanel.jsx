@@ -505,7 +505,7 @@ const TimingPanel = () => {
         };
         await supabaseUpsert('session_state', sanitizeRowsForSupabase([sessionRow], sessionId));
       }
-      const hydrated = sessionRowToState(hydratedRow);
+      const hydrated = sessionRowToState(sessionRow);
       sessionStateRef.current = {
         ...sessionRow,
         session_id: sessionId,
