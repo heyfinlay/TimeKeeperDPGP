@@ -286,6 +286,43 @@ const TimingPanel = ({ sessionId: sessionIdProp = null }) => {
   const [bestLapDrafts, setBestLapDrafts] = useState({});
   const [marshalProfiles, setMarshalProfiles] = useState([]);
 
+  const assignedDriverIds = useMemo(() => {
+    if (!Array.isArray(profile?.assigned_driver_ids)) {
+      return [];
+    }
+    return profile.assigned_driver_ids
+      .map((id) => (typeof id === 'string' ? id.trim() : ''))
+      .filter(Boolean);
+  }, [profile?.assigned_driver_ids]);
+
+  const assignedDriverIdSet = useMemo(
+    () => new Set(assignedDriverIds),
+    [assignedDriverIds],
+  );
+
+  const marshalUserId = profile?.id ?? null;
+  const hasProfile = Boolean(profile);
+
+  const visibleDrivers = useMemo(() => {
+    if (isAdmin || !hasProfile) {
+      return drivers;
+    }
+    if (!assignedDriverIdSet.size && !marshalUserId) {
+      return [];
+    }
+    return drivers.filter((driver) => {
+      const driverMarshalId = resolveDriverMarshalId(driver);
+      const matchesAssigned =
+        assignedDriverIdSet.size > 0 && typeof driver.id === 'string'
+          ? assignedDriverIdSet.has(driver.id)
+          : false;
+      const matchesMarshal = marshalUserId
+        ? driverMarshalId === marshalUserId
+        : false;
+      return matchesAssigned || matchesMarshal;
+    });
+  }, [assignedDriverIdSet, drivers, hasProfile, isAdmin, marshalUserId]);
+
   const raceStartRef = useRef(null);
   const pauseStartRef = useRef(null);
   const pausedDurationRef = useRef(0);
@@ -959,7 +996,7 @@ const TimingPanel = ({ sessionId: sessionIdProp = null }) => {
         }),
       );
       if (!updatedDriver) return;
-      const marshalName = getMarshalName(updatedDriver.marshalId);
+      const marshalName = getMarshalName(resolveDriverMarshalId(updatedDriver));
       void logAction(
         `Best lap overridden for #${updatedDriver.number} (${formatLapTime(lapMs)})`,
         marshalName,
@@ -1176,7 +1213,7 @@ const TimingPanel = ({ sessionId: sessionIdProp = null }) => {
       setRecentLapDriverId(null);
     }, 500);
     if (updatedDriver) {
-      const marshalName = getMarshalName(updatedDriver.marshalId);
+      const marshalName = getMarshalName(resolveDriverMarshalId(updatedDriver));
       void logAction(
         `Lap recorded for #${updatedDriver.number} (${formatLapTime(
           updatedDriver.lastLap,
@@ -1233,7 +1270,7 @@ const TimingPanel = ({ sessionId: sessionIdProp = null }) => {
     if (retiredDriver) {
       void logAction(
         `Driver #${retiredDriver.number} retired`,
-        getMarshalName(retiredDriver.marshalId),
+        getMarshalName(resolveDriverMarshalId(retiredDriver)),
       );
       void persistDriverState(retiredDriver);
     }
@@ -1260,7 +1297,7 @@ const TimingPanel = ({ sessionId: sessionIdProp = null }) => {
         `Pit stop ${updatedDriver.pitComplete ? 'completed' : 'cleared'} for #${
           updatedDriver.number
         }`,
-        getMarshalName(updatedDriver.marshalId),
+        getMarshalName(resolveDriverMarshalId(updatedDriver)),
       );
       void persistDriverState(updatedDriver);
     }
@@ -1310,7 +1347,7 @@ const TimingPanel = ({ sessionId: sessionIdProp = null }) => {
       if (!updatedDriver) {
         return;
       }
-      const marshalName = getMarshalName(updatedDriver.marshalId);
+      const marshalName = getMarshalName(resolveDriverMarshalId(updatedDriver));
       void logAction(
         `Lap invalidated for #${updatedDriver.number}`,
         marshalName,
@@ -1378,7 +1415,7 @@ const TimingPanel = ({ sessionId: sessionIdProp = null }) => {
       if (!updatedDriver) {
         return;
       }
-      const marshalName = getMarshalName(updatedDriver.marshalId);
+      const marshalName = getMarshalName(resolveDriverMarshalId(updatedDriver));
       void logAction(
         `Lap restarted for #${updatedDriver.number} after invalidation`,
         marshalName,
@@ -1405,7 +1442,7 @@ const TimingPanel = ({ sessionId: sessionIdProp = null }) => {
       if (driverIndex === -1) {
         return;
       }
-      const driver = drivers[driverIndex];
+      const driver = visibleDrivers[driverIndex];
       if (!driver) {
         return;
       }
@@ -1429,7 +1466,7 @@ const TimingPanel = ({ sessionId: sessionIdProp = null }) => {
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
     };
-  }, [drivers, invalidateLastLap, logLap, startLapAfterInvalid, togglePitStop]);
+  }, [invalidateLastLap, logLap, startLapAfterInvalid, togglePitStop, visibleDrivers]);
 
   const setDriverFlag = (driverId, driverFlag) => {
     let flaggedDriver = null;
@@ -1445,7 +1482,7 @@ const TimingPanel = ({ sessionId: sessionIdProp = null }) => {
     if (flaggedDriver) {
       void logAction(
         `Driver alert set to ${driverFlag.toUpperCase()} for #${flaggedDriver.number}`,
-        getMarshalName(flaggedDriver.marshalId),
+        getMarshalName(resolveDriverMarshalId(flaggedDriver)),
       );
       void persistDriverState(flaggedDriver);
     }
@@ -1474,7 +1511,7 @@ const TimingPanel = ({ sessionId: sessionIdProp = null }) => {
       return { key: -best, secondary: best };
     };
 
-    const sorted = [...drivers]
+    const sorted = [...visibleDrivers]
       .map((driver) => ({ driver, metric: metric(driver) }))
       .sort((a, b) => {
         if (eventConfig.eventType === 'Race') {
@@ -1533,7 +1570,7 @@ const TimingPanel = ({ sessionId: sessionIdProp = null }) => {
       });
 
     return sorted;
-  }, [drivers, eventConfig.eventType]);
+  }, [eventConfig.eventType, visibleDrivers]);
 
   const openSetup = () => {
     const sessionId = activeSessionId ?? LEGACY_SESSION_ID;
@@ -2029,13 +2066,15 @@ const TimingPanel = ({ sessionId: sessionIdProp = null }) => {
                   Click or use hotkeys to log laps instantly.
                 </span>
               </div>
-              {drivers.length === 0 ? (
+              {visibleDrivers.length === 0 ? (
                 <div className="rounded-2xl border border-white/5 bg-[#0b1022]/80 p-6 text-center text-sm text-white/60">
-                  No drivers configured. Add drivers in setup to begin timing.
+                  {drivers.length === 0
+                    ? 'No drivers configured. Add drivers in setup to begin timing.'
+                    : 'No drivers assigned to you yet. Contact race control for access.'}
                 </div>
               ) : (
                 <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
-                  {drivers.map((driver, index) => {
+                  {visibleDrivers.map((driver, index) => {
                     const canLogLap =
                       isTiming &&
                       !isPaused &&
@@ -2043,7 +2082,7 @@ const TimingPanel = ({ sessionId: sessionIdProp = null }) => {
                       !driver.hasInvalidToResolve;
                     const cardHotkey = HOTKEYS[index] ?? null;
                     const isFlashing = recentLapDriverId === driver.id;
-                    const marshalName = getMarshalName(driver.marshalId);
+                    const marshalName = getMarshalName(resolveDriverMarshalId(driver));
                     const pitMarked = driver.pitComplete;
                     const statusClass =
                       driver.status === 'ontrack'
@@ -2257,7 +2296,7 @@ const TimingPanel = ({ sessionId: sessionIdProp = null }) => {
                           <td className="px-2 py-2">
                             <div className="font-semibold text-neutral-100">{driver.name}</div>
                             <div className="text-[10px] text-neutral-500">
-                              {getMarshalName(driver.marshalId)}
+                              {getMarshalName(resolveDriverMarshalId(driver))}
                             </div>
                           </td>
                           <td className="px-2 py-2 text-center font-semibold">{driver.laps}</td>
@@ -2292,7 +2331,16 @@ const TimingPanel = ({ sessionId: sessionIdProp = null }) => {
               </div>
               <ul className="mt-3 space-y-2 text-xs text-neutral-300">
                 {eventConfig.marshals.map((marshal) => {
-                  const assignedDrivers = drivers.filter((driver) => driver.marshalId === marshal.id);
+                  const assignedDrivers = visibleDrivers.filter((driver) => {
+                    const driverMarshalId = resolveDriverMarshalId(driver);
+                    if (driverMarshalId) {
+                      return driverMarshalId === marshal.id;
+                    }
+                    if (marshal.id === marshalUserId && assignedDriverIdSet.size > 0) {
+                      return typeof driver.id === 'string' && assignedDriverIdSet.has(driver.id);
+                    }
+                    return false;
+                  });
                   return (
                     <li
                       key={marshal.id}

@@ -102,12 +102,15 @@ export const hydrateDriverState = (driverRow, lapRowsMap) => {
     (lapEntries.length ? lapEntries[lapEntries.length - 1].lapTime : null);
   const bestLap =
     parseInteger(driverRow.best_lap_ms) ?? (lapTimes.length ? Math.min(...lapTimes) : null);
+  const marshalId =
+    driverRow.marshal_user_id ?? driverRow.marshal_id ?? driverRow.marshalId ?? null;
+
   return {
     id: driverRow.id,
     number: driverRow.number,
     name: driverRow.name,
     team: driverRow.team,
-    marshalId: driverRow.marshal_id,
+    marshalId,
     sessionId: driverRow.session_id ?? LEGACY_SESSION_ID,
     laps,
     lapTimes,
