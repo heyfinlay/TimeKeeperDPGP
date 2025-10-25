@@ -351,14 +351,42 @@ with check (
   and public.session_has_access(nullif(split_part(name, '/', 1), '')::uuid)
 );
 
-alter publication supabase_realtime add table public.sessions;
-alter publication supabase_realtime add table public.session_members;
-alter publication supabase_realtime add table public.session_logs;
-alter publication supabase_realtime add table public.drivers;
-alter publication supabase_realtime add table public.laps;
-alter publication supabase_realtime add table public.session_state;
-alter publication supabase_realtime add table public.race_events;
-alter publication supabase_realtime add table public.profiles;
+do $$
+declare
+  realtime_tables constant text[] := array[
+    'public.sessions',
+    'public.session_members',
+    'public.session_logs',
+    'public.session_entries',
+    'public.drivers',
+    'public.laps',
+    'public.session_state',
+    'public.race_events',
+    'public.profiles'
+  ];
+  target_table text;
+  target_schema text;
+  target_name text;
+begin
+  foreach target_table in array realtime_tables loop
+    target_schema := split_part(target_table, '.', 1);
+    target_name := split_part(target_table, '.', 2);
+
+    if to_regclass(target_table) is not null and not exists (
+      select 1
+      from pg_publication_tables
+      where pubname = 'supabase_realtime'
+        and schemaname = target_schema
+        and tablename = target_name
+    ) then
+      execute format(
+        'alter publication supabase_realtime add table %I.%I',
+        target_schema,
+        target_name
+      );
+    end if;
+  end loop;
+end $$;
 
 alter table public.drivers enable row level security;
 alter table public.laps enable row level security;
