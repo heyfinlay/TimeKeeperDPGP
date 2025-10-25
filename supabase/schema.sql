@@ -86,6 +86,19 @@ create table if not exists public.race_events (
   created_at timestamptz default timezone('utc', now())
 );
 
+create table if not exists public.session_entries (
+  id uuid primary key default gen_random_uuid(),
+  session_id uuid not null references public.sessions(id) on delete cascade,
+  driver_id uuid references public.drivers(id) on delete set null,
+  driver_number integer,
+  driver_name text,
+  team_name text,
+  position integer,
+  marshal_user_id uuid references auth.users(id),
+  created_at timestamptz default timezone('utc', now()),
+  updated_at timestamptz default timezone('utc', now())
+);
+
 alter table public.drivers
   add column if not exists session_id uuid references public.sessions(id);
 
@@ -129,6 +142,10 @@ begin
   update public.race_events
   set session_id = default_session_id
   where session_id is null;
+
+  update public.session_entries
+  set session_id = default_session_id
+  where session_id is null;
 end $$;
 
 alter table public.drivers
@@ -144,6 +161,10 @@ alter table public.session_state
   alter column session_id set not null;
 
 alter table public.race_events
+  alter column session_id set default '00000000-0000-0000-0000-000000000000',
+  alter column session_id set not null;
+
+alter table public.session_entries
   alter column session_id set default '00000000-0000-0000-0000-000000000000',
   alter column session_id set not null;
 
@@ -225,6 +246,7 @@ $$;
 alter table public.sessions enable row level security;
 alter table public.session_members enable row level security;
 alter table public.session_logs enable row level security;
+alter table public.session_entries enable row level security;
 alter table public.drivers enable row level security;
 alter table public.laps enable row level security;
 alter table public.session_state enable row level security;
@@ -291,6 +313,12 @@ for all
 using (public.is_admin())
 with check (public.is_admin());
 
+create policy if not exists "Session scoped access for session entries"
+on public.session_entries
+for all
+using (public.session_has_access(public.session_entries.session_id))
+with check (public.session_has_access(public.session_entries.session_id));
+
 create policy if not exists "Owners record session logs"
 on public.session_logs
 for insert
@@ -300,6 +328,11 @@ create policy if not exists "Members view session logs"
 on public.session_logs
 for select
 using (public.session_has_access(public.session_logs.session_id));
+
+create policy if not exists "Members view session entries"
+on public.session_entries
+for select
+using (public.session_has_access(public.session_entries.session_id));
 
 create policy if not exists "Session scoped access for drivers"
 on public.drivers

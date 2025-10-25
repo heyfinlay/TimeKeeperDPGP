@@ -6,6 +6,7 @@ import {
   supabaseInsert,
   supabaseSelect,
   supabaseStorageUpload,
+  supabaseUpsert,
   supabaseUpdate,
 } from '../lib/supabaseClient';
 import { LEGACY_SESSION_ID } from '../utils/raceData';
@@ -20,6 +21,7 @@ const EventSessionContext = createContext({
   selectSession: () => {},
   refreshSessions: async () => {},
   createSession: async () => {},
+  seedSessionData: async () => {},
   startSession: async () => {},
   completeSession: async () => {},
   supportsSessions: true,
@@ -204,6 +206,67 @@ export const EventSessionProvider = ({ children }) => {
     setActiveSessionId(sessionId);
   }, []);
 
+  const seedSessionData = useCallback(
+    async (sessionId, { sessionState, drivers, entries, members } = {}) => {
+      if (!sessionId) {
+        throw new Error('Session ID is required to seed data.');
+      }
+      if (!isSupabaseConfigured) {
+        throw new Error('Supabase must be configured to seed session data.');
+      }
+      if (!supportsSessions) {
+        const unavailableError = new Error(
+          'Session management is unavailable with this Supabase schema.',
+        );
+        setError(unavailableError.message);
+        throw unavailableError;
+      }
+
+      const normalizeRows = (rows = []) =>
+        rows
+          .filter(Boolean)
+          .map((row) => ({
+            ...row,
+            session_id: sessionId,
+          }));
+
+      try {
+        if (sessionState) {
+          const stateRows = Array.isArray(sessionState) ? sessionState : [sessionState];
+          await supabaseUpsert(
+            'session_state',
+            normalizeRows(
+              stateRows.map((row) => ({
+                id: row.id ?? sessionId,
+                ...row,
+                session_id: sessionId,
+              })),
+            ),
+          );
+        }
+
+        if (Array.isArray(drivers) && drivers.length) {
+          await supabaseUpsert('drivers', normalizeRows(drivers));
+        }
+
+        if (Array.isArray(entries) && entries.length) {
+          await supabaseUpsert('session_entries', normalizeRows(entries));
+        }
+
+        if (Array.isArray(members) && members.length) {
+          await supabaseUpsert('session_members', normalizeRows(members));
+        }
+
+        setError(null);
+      } catch (seedError) {
+        console.error('Failed to seed session data', seedError);
+        setError(seedError?.message ?? 'Unable to seed session data.');
+        throw seedError;
+      }
+    },
+    [supportsSessions],
+  );
+
   const createSession = useCallback(
     async ({ name, startsAt } = {}) => {
       if (!isSupabaseConfigured) return null;
@@ -333,6 +396,7 @@ export const EventSessionProvider = ({ children }) => {
       selectSession,
       refreshSessions,
       createSession,
+      seedSessionData,
       startSession,
       completeSession,
       supportsSessions,
@@ -346,6 +410,7 @@ export const EventSessionProvider = ({ children }) => {
       selectSession,
       refreshSessions,
       createSession,
+      seedSessionData,
       startSession,
       completeSession,
       supportsSessions,

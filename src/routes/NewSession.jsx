@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext.jsx';
 import { useEventSession } from '@/context/SessionContext.jsx';
-import { supabaseUpsert } from '@/lib/supabaseClient.js';
 import { DEFAULT_SESSION_STATE } from '@/utils/raceData.js';
 
 const EVENT_TYPES = ['Practice', 'Qualifying', 'Race'];
@@ -28,6 +27,10 @@ const DEFAULT_DRIVERS = [
 const createId = (prefix) =>
   globalThis.crypto?.randomUUID?.() ?? `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 
+const isUuid = (value) =>
+  typeof value === 'string' &&
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+
 const steps = [
   { title: 'Session details', description: 'Create the session container and schedule.' },
   { title: 'Session state', description: 'Seed timing defaults for race control and live timing.' },
@@ -52,6 +55,7 @@ export default function NewSession() {
     createSession,
     selectSession,
     refreshSessions,
+    seedSessionData,
   } = useEventSession();
   const [step, setStep] = useState(1);
   const [sessionName, setSessionName] = useState('');
@@ -199,47 +203,82 @@ export default function NewSession() {
     try {
       const totalLaps = Number.parseInt(sessionStateDraft.totalLaps, 10);
       const totalDuration = Number.parseInt(sessionStateDraft.totalDuration, 10);
-      await supabaseUpsert('session_state', [
-        {
-          id: sessionId,
-          session_id: sessionId,
-          event_type: sessionStateDraft.eventType || DEFAULT_SESSION_STATE.eventType,
-          total_laps: Number.isNaN(totalLaps)
-            ? DEFAULT_SESSION_STATE.totalLaps
-            : totalLaps,
-          total_duration: Number.isNaN(totalDuration)
-            ? DEFAULT_SESSION_STATE.totalDuration
-            : totalDuration,
-          procedure_phase: DEFAULT_SESSION_STATE.procedurePhase,
-          flag_status: DEFAULT_SESSION_STATE.flagStatus,
-          track_status: DEFAULT_SESSION_STATE.trackStatus,
-          announcement: DEFAULT_SESSION_STATE.announcement,
-          is_timing: false,
-          is_paused: false,
-          race_time_ms: 0,
-          updated_at: new Date().toISOString(),
-        },
-      ]);
+      const nowIso = new Date().toISOString();
 
-      const driverRows = enabledDrivers.map((driver) => ({
-        id: driver.id,
+      const sessionStateRow = {
+        id: sessionId,
         session_id: sessionId,
-        number: driver.number ? Number.parseInt(driver.number, 10) : null,
-        name: driver.name.trim() || 'Driver',
-        team: driver.team.trim() || null,
-        marshal_id: driver.marshalId || null,
-        laps: 0,
-        last_lap_ms: null,
-        best_lap_ms: null,
-        pits: 0,
-        status: 'ready',
-        driver_flag: 'none',
-        pit_complete: false,
-        total_time_ms: 0,
-        updated_at: new Date().toISOString(),
+        event_type: sessionStateDraft.eventType || DEFAULT_SESSION_STATE.eventType,
+        total_laps: Number.isNaN(totalLaps) ? DEFAULT_SESSION_STATE.totalLaps : totalLaps,
+        total_duration: Number.isNaN(totalDuration)
+          ? DEFAULT_SESSION_STATE.totalDuration
+          : totalDuration,
+        procedure_phase: DEFAULT_SESSION_STATE.procedurePhase,
+        flag_status: DEFAULT_SESSION_STATE.flagStatus,
+        track_status: DEFAULT_SESSION_STATE.trackStatus,
+        announcement: DEFAULT_SESSION_STATE.announcement,
+        is_timing: false,
+        is_paused: false,
+        race_time_ms: 0,
+        updated_at: nowIso,
+      };
+
+      const driverRows = enabledDrivers.map((driver) => {
+        const parsedNumber = driver.number ? Number.parseInt(driver.number, 10) : null;
+        return {
+          id: driver.id,
+          session_id: sessionId,
+          number: Number.isNaN(parsedNumber) ? null : parsedNumber,
+          name: driver.name.trim() || 'Driver',
+          team: driver.team.trim() || null,
+          marshal_user_id: isUuid(driver.marshalId) ? driver.marshalId : null,
+          laps: 0,
+          last_lap_ms: null,
+          best_lap_ms: null,
+          pits: 0,
+          status: 'ready',
+          driver_flag: 'none',
+          pit_complete: false,
+          total_time_ms: 0,
+          updated_at: nowIso,
+        };
+      });
+
+      const entryRows = enabledDrivers.map((driver, index) => {
+        const parsedNumber = driver.number ? Number.parseInt(driver.number, 10) : null;
+        return {
+          id: createId('entry'),
+          session_id: sessionId,
+          driver_id: driver.id,
+          driver_number: Number.isNaN(parsedNumber) ? null : parsedNumber,
+          driver_name: driver.name.trim() || 'Driver',
+          team_name: driver.team.trim() || null,
+          position: index + 1,
+          marshal_user_id: isUuid(driver.marshalId) ? driver.marshalId : null,
+          created_at: nowIso,
+          updated_at: nowIso,
+        };
+      });
+
+      const assignedMarshalIds = new Set(
+        enabledDrivers
+          .map((driver) => driver.marshalId)
+          .filter((marshalId) => isUuid(marshalId)),
+      );
+
+      const memberRows = Array.from(assignedMarshalIds).map((userId) => ({
+        session_id: sessionId,
+        user_id: userId,
+        role: 'marshal',
+        inserted_at: nowIso,
       }));
 
-      await supabaseUpsert('drivers', driverRows);
+      await seedSessionData(sessionId, {
+        sessionState: sessionStateRow,
+        drivers: driverRows,
+        entries: entryRows,
+        members: memberRows,
+      });
 
       selectSession(sessionId);
       await refreshSessions?.();
@@ -255,6 +294,7 @@ export default function NewSession() {
     enabledDrivers,
     navigate,
     refreshSessions,
+    seedSessionData,
     selectSession,
     sessionStateDraft.eventType,
     sessionStateDraft.totalDuration,
