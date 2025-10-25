@@ -12,7 +12,9 @@ export const isSupabaseConfigured =
 const supabaseOptions = {
   auth: {
     persistSession: true,
+    storage: typeof window !== 'undefined' ? window.localStorage : undefined,
     autoRefreshToken: true,
+    detectSessionInUrl: false,
   },
   realtime: {
     params: {
