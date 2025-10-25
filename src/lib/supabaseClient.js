@@ -32,9 +32,6 @@ export const supabase = isSupabaseConfigured
 const REST_ENDPOINT = isSupabaseConfigured
   ? `${SUPABASE_URL.replace(/\/$/, '')}/rest/v1`
   : null;
-const REALTIME_ENDPOINT = isSupabaseConfigured
-  ? `${SUPABASE_URL.replace('https://', 'wss://').replace(/\/$/, '')}/realtime/v1/websocket`
-  : null;
 const STORAGE_ENDPOINT = isSupabaseConfigured
   ? `${SUPABASE_URL.replace(/\/$/, '')}/storage/v1/object`
   : null;
@@ -246,8 +243,6 @@ export const buildStorageObjectUrl = (bucket, objectPath) => {
   return `${SUPABASE_URL.replace(/\/$/, '')}/storage/v1/object/${bucket}/${objectPath}`;
 };
 
-const HEARTBEAT_INTERVAL = 25000;
-
 export const subscribeToTable = (
   { schema = 'public', table, event = '*', filter },
   callback,
@@ -256,132 +251,41 @@ export const subscribeToTable = (
     console.warn('Supabase realtime subscription skipped. Supabase is not configured.');
     return () => {};
   }
-  if (typeof WebSocket === 'undefined') {
-    console.warn(
-      'Supabase realtime subscription skipped. WebSocket API is unavailable in this environment.',
-    );
-    return () => {};
-  }
 
-  const params = new URLSearchParams({
-    apikey: SUPABASE_ANON_KEY,
-    vsn: '1.0.0',
-  });
-  const channel = `realtime:${schema}:${table}`;
-  const joinRef = Date.now().toString();
-  const joinPayload = {
-    topic: channel,
-    event: 'phx_join',
-    payload: {
-      config: {
-        broadcast: { ack: false },
-        postgres_changes: [
-          {
-            event,
-            schema,
-            table,
-            ...(filter ? { filter } : {}),
-          },
-        ],
-      },
+  const channelName = `table:${schema}:${table}:${Math.random().toString(36).slice(2)}`;
+  const channel = supabase.channel(channelName);
+
+  channel.on(
+    'postgres_changes',
+    {
+      event,
+      schema,
+      table,
+      ...(filter ? { filter } : {}),
     },
-    ref: joinRef,
-    join_ref: joinRef,
-  };
+    (payload) => {
+      callback?.(payload);
+    },
+  );
 
-  let latestAccessToken = null;
-  let heartbeatTimer = null;
-  let joined = false;
-  let closed = false;
-
-  const ws = new WebSocket(`${REALTIME_ENDPOINT}?${params.toString()}`, ['phoenix']);
-
-  const sendHeartbeat = () => {
-    if (ws.readyState === WebSocket.OPEN) {
-      ws.send(
-        JSON.stringify({
-          topic: 'phoenix',
-          event: 'heartbeat',
-          payload: {},
-          ref: Date.now().toString(),
-        }),
-      );
-    }
-  };
-
-  ws.onopen = async () => {
-    ws.send(JSON.stringify(joinPayload));
-    try {
-      const accessToken =
-        (await resolveAccessToken({ requireSession: false })) ?? SUPABASE_ANON_KEY;
-      ws.send(
-        JSON.stringify({
-          topic: channel,
-          event: 'access_token',
-          payload: { access_token: accessToken },
-          ref: `${joinRef}-token`,
-        }),
-      );
-    } catch (tokenError) {
-      console.error('Failed to resolve Supabase access token for realtime channel', tokenError);
-      ws.send(
-        JSON.stringify({
-          topic: channel,
-          event: 'access_token',
-          payload: { access_token: SUPABASE_ANON_KEY },
-          ref: `${joinRef}-token`,
-        }),
-      );
-    }
-    heartbeatTimer = setInterval(sendHeartbeat, HEARTBEAT_INTERVAL);
-  };
-
-  ws.onmessage = (event) => {
-    try {
-      const data = JSON.parse(event.data);
-      if (data.event === 'phx_reply' && data.payload?.status === 'ok') {
-        joined = true;
-        return;
+  channel
+    .subscribe((status) => {
+      if (status === 'CHANNEL_ERROR') {
+        console.error('Supabase realtime channel error', { schema, table, filter });
       }
-      if (data.event === 'postgres_changes' && joined) {
-        callback?.(data.payload);
-      }
-      if (data.event === 'phx_error' || data.event === 'phx_close') {
-        console.warn('Supabase realtime channel closed', data);
-        if (data.payload?.status === 'error' && latestAccessToken) {
-          // Attempt to re-authorize with the latest token.
-          sendAccessToken(latestAccessToken);
-        }
-      }
-    } catch (error) {
-      console.error('Failed to parse realtime payload', error);
-    }
-  };
+    })
+    .catch((error) => {
+      console.error('Failed to subscribe to Supabase realtime channel', error);
+    });
 
-  ws.onerror = (event) => {
-    console.error('Supabase realtime error', event);
-  };
+  let active = true;
 
   return () => {
-    closed = true;
-    try {
-      if (ws.readyState === WebSocket.OPEN) {
-        ws.send(
-          JSON.stringify({
-            topic: channel,
-            event: 'phx_leave',
-            payload: {},
-            ref: `${Date.now()}-leave`,
-          }),
-        );
-      }
-      ws.close();
-    } finally {
-      if (heartbeatTimer) {
-        clearInterval(heartbeatTimer);
-      }
-      authListener?.subscription?.unsubscribe?.();
-    }
+    if (!active) return;
+    active = false;
+    channel.unsubscribe().catch((error) => {
+      console.error('Failed to unsubscribe from Supabase realtime channel', error);
+    });
   };
 };
 

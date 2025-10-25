@@ -29,9 +29,15 @@ const STATUS_ICON_MAP = {
   stop: StopCircle,
 };
 
-const LiveTimingBoard = () => {
-  const { activeSessionId, sessions, supportsSessions, fallbackToLegacySchema } =
-    useEventSession();
+const LiveTimingBoard = ({ sessionId: sessionIdProp = null }) => {
+  const {
+    activeSessionId: contextActiveSessionId,
+    sessions,
+    supportsSessions,
+    fallbackToLegacySchema,
+    selectSession,
+  } = useEventSession();
+  const activeSessionId = sessionIdProp ?? contextActiveSessionId;
   const [drivers, setDrivers] = useState([]);
   const [sessionState, setSessionState] = useState(DEFAULT_SESSION_STATE);
   const [laps, setLaps] = useState([]);
@@ -39,6 +45,12 @@ const LiveTimingBoard = () => {
   const [error, setError] = useState(null);
 
   const sessionId = activeSessionId ?? LEGACY_SESSION_ID;
+
+  useEffect(() => {
+    if (sessionIdProp && sessionIdProp !== contextActiveSessionId) {
+      selectSession(sessionIdProp);
+    }
+  }, [contextActiveSessionId, selectSession, sessionIdProp]);
   const activeSession = useMemo(
     () => sessions.find((session) => session.id === activeSessionId) ?? null,
     [sessions, activeSessionId],
