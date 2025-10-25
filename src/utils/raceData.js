@@ -136,3 +136,32 @@ export const sessionRowToState = (sessionRow) => ({
   isPaused: coerceBoolean(sessionRow?.is_paused, false),
   raceTime: parseInteger(sessionRow?.race_time_ms) ?? 0,
 });
+
+export async function invalidateLastLap(sessionId, driverId, supabaseClient) {
+  if (!supabaseClient || !sessionId || !driverId) return;
+
+  const { data: last, error } = await supabaseClient
+    .from('laps')
+    .select('id, lap_number')
+    .eq('session_id', sessionId)
+    .eq('driver_id', driverId)
+    .order('lap_number', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) {
+    console.error('Failed to fetch last lap for invalidation', error);
+    return;
+  }
+
+  if (!last) return;
+
+  const { error: updateError } = await supabaseClient
+    .from('laps')
+    .update({ invalidated: true })
+    .eq('id', last.id);
+
+  if (updateError) {
+    console.error('Failed to invalidate lap', updateError);
+  }
+}
