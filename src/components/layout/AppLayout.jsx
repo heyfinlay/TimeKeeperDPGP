@@ -1,5 +1,6 @@
 import { NavLink, Outlet } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext.jsx';
+import { useEventSession } from '@/context/SessionContext.jsx';
 
 const NAV_ITEMS = [
   {
@@ -27,8 +28,14 @@ const NAV_ITEMS = [
 export default function AppLayout() {
   const { status, isSupabaseConfigured } = useAuth();
   const isAuthenticated = status === 'authenticated';
+  const { activeSessionId } = useEventSession();
+  const controlPath = activeSessionId ? `/control/${activeSessionId}` : '/sessions';
 
-  const visibleNavItems = NAV_ITEMS.filter((item) => {
+  const navItems = NAV_ITEMS.map((item) =>
+    item.to === '/control' ? { ...item, to: controlPath } : item,
+  );
+
+  const visibleNavItems = navItems.filter((item) => {
     if (!item.requiresAuth) return true;
     if (!isSupabaseConfigured) return true;
     return isAuthenticated;

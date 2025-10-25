@@ -9,6 +9,7 @@ import AccountSetup from '@/routes/AccountSetup.jsx';
 import AuthCallback from '@/routes/AuthCallback.jsx';
 import Control from '@/routes/Control.jsx';
 import Live from '@/routes/Live.jsx';
+import Sessions from '@/routes/Sessions.jsx';
 import AdminSessions from '@/routes/AdminSessions.jsx';
 
 export default function App() {
@@ -35,7 +36,16 @@ export default function App() {
               }
             />
             <Route
-              path="/control"
+              path="/sessions"
+              element={
+                <ProtectedRoute>
+                  <Sessions />
+                </ProtectedRoute>
+              }
+            />
+            <Route path="/control" element={<Navigate to="/sessions" replace />} />
+            <Route
+              path="/control/:sessionId"
               element={
                 <ProtectedRoute>
                   <Control />
@@ -43,6 +53,7 @@ export default function App() {
               }
             />
             <Route path="/live" element={<Live />} />
+            <Route path="/live/:sessionId" element={<Live />} />
             <Route
               path="/admin/sessions"
               element={
