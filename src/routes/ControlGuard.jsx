@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Navigate } from 'react-router-dom';
 import { isSupabaseConfigured, supabase } from '@/lib/supabaseClient.js';
 
-const ALLOWED_ROLES = new Set(['marshal', 'admin']);
+const ALLOWED_ROLES = new Set(['marshal', 'admin', 'race_control']);
 
 export default function ControlGuard({ children }) {
   const [status, setStatus] = useState(isSupabaseConfigured ? 'loading' : 'allowed');
