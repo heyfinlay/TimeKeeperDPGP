@@ -522,15 +522,11 @@ create policy "Session state readable" on public.session_state
   for select
   using (auth.uid() is not null);
 
-create policy "Session state admin updates" on public.session_state
+create policy "Session state member updates" on public.session_state
   for all
   using (
-    exists (
-      select 1 from public.profiles as p where p.id = auth.uid() and p.role = 'admin'
-    )
+    public.session_has_access(public.session_state.session_id)
   )
   with check (
-    exists (
-      select 1 from public.profiles as p where p.id = auth.uid() and p.role = 'admin'
-    )
+    public.session_has_access(public.session_state.session_id)
   );
