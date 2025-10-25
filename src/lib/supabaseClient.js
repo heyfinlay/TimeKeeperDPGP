@@ -250,23 +250,22 @@ export const subscribeToTable = (
   { schema = 'public', table, event = '*', filter },
   callback,
 ) => {
-  if (!isSupabaseConfigured) {
+  if (!isSupabaseConfigured || !supabase) {
     console.warn('Supabase realtime subscription skipped. Supabase is not configured.');
     return () => {};
   }
   if (typeof WebSocket === 'undefined') {
-    console.warn('Supabase realtime subscription skipped. WebSocket API is unavailable in this environment.');
+    console.warn(
+      'Supabase realtime subscription skipped. WebSocket API is unavailable in this environment.',
+    );
     return () => {};
   }
+
   const params = new URLSearchParams({
     apikey: SUPABASE_ANON_KEY,
     vsn: '1.0.0',
   });
-  const ws = new WebSocket(`${REALTIME_ENDPOINT}?${params.toString()}`, ['phoenix']);
   const channel = `realtime:${schema}:${table}`;
-  let heartbeatTimer = null;
-  let joined = false;
-
   const joinRef = Date.now().toString();
   const joinPayload = {
     topic: channel,
@@ -287,6 +286,13 @@ export const subscribeToTable = (
     ref: joinRef,
     join_ref: joinRef,
   };
+
+  let latestAccessToken = null;
+  let heartbeatTimer = null;
+  let joined = false;
+  let closed = false;
+
+  const ws = new WebSocket(`${REALTIME_ENDPOINT}?${params.toString()}`, ['phoenix']);
 
   const sendHeartbeat = () => {
     if (ws.readyState === WebSocket.OPEN) {
@@ -340,6 +346,10 @@ export const subscribeToTable = (
       }
       if (data.event === 'phx_error' || data.event === 'phx_close') {
         console.warn('Supabase realtime channel closed', data);
+        if (data.payload?.status === 'error' && latestAccessToken) {
+          // Attempt to re-authorize with the latest token.
+          sendAccessToken(latestAccessToken);
+        }
       }
     } catch (error) {
       console.error('Failed to parse realtime payload', error);
@@ -351,6 +361,7 @@ export const subscribeToTable = (
   };
 
   return () => {
+    closed = true;
     try {
       if (ws.readyState === WebSocket.OPEN) {
         ws.send(
@@ -367,6 +378,7 @@ export const subscribeToTable = (
       if (heartbeatTimer) {
         clearInterval(heartbeatTimer);
       }
+      authListener?.subscription?.unsubscribe?.();
     }
   };
 };
