@@ -22,6 +22,7 @@ const AuthContext = createContext({
 const DEFAULT_PROFILE = {
   id: null,
   role: 'marshal',
+  handle: null,
   display_name: null,
   ic_phone_number: null,
   assigned_driver_ids: [],
@@ -29,10 +30,11 @@ const DEFAULT_PROFILE = {
 };
 
 const PROFILE_COLUMNS =
-  'id, role, display_name, ic_phone_number, assigned_driver_ids, team_id';
+  'id, role, handle, display_name, ic_phone_number, assigned_driver_ids, team_id';
 const MUTABLE_PROFILE_FIELDS = new Set([
   'display_name',
   'role',
+  'handle',
   'ic_phone_number',
   'assigned_driver_ids',
   'team_id',
@@ -84,7 +86,7 @@ export const AuthProvider = ({ children }) => {
         const { data, error } = await supabase
           .from('profiles')
           .select(
-            'id, role, display_name, ic_phone_number, assigned_driver_ids, team_id, tier, experience_points',
+            'id, role, handle, display_name, ic_phone_number, assigned_driver_ids, team_id, tier, experience_points',
           )
           .eq('id', userId)
           .maybeSingle();
@@ -110,7 +112,7 @@ export const AuthProvider = ({ children }) => {
               display_name: displayName,
             })
             .select(
-              'id, role, display_name, ic_phone_number, assigned_driver_ids, team_id, tier, experience_points',
+              'id, role, handle, display_name, ic_phone_number, assigned_driver_ids, team_id, tier, experience_points',
             )
             .single();
 

@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { isSupabaseConfigured, supabase } from '@/lib/supabaseClient.js';
+import { useAuth } from '@/context/AuthContext.jsx';
+import { isSupabaseConfigured } from '@/lib/supabaseClient.js';
 
 export default function AccountSetup() {
   const [handle, setHandle] = useState('');
@@ -8,10 +9,39 @@ export default function AccountSetup() {
   const [error, setError] = useState(null);
   const [isSaving, setIsSaving] = useState(false);
   const navigate = useNavigate();
+  const { profile, updateProfile, user } = useAuth();
+
+  const derivedDisplayName = useMemo(() => {
+    if (profile?.display_name) return profile.display_name;
+    return (
+      user?.user_metadata?.full_name ||
+      user?.user_metadata?.name ||
+      user?.email?.split('@')?.[0] ||
+      ''
+    );
+  }, [profile?.display_name, user?.email, user?.user_metadata?.full_name, user?.user_metadata?.name]);
+
+  useEffect(() => {
+    setHandle(profile?.handle ?? '');
+    setDisplayName(derivedDisplayName ?? '');
+  }, [derivedDisplayName, profile?.handle]);
 
   async function save() {
-    if (!supabase || !isSupabaseConfigured) {
+    if (!isSupabaseConfigured) {
       navigate('/dashboard');
+      return;
+    }
+
+    const trimmedHandle = handle.trim();
+    const trimmedDisplayName = displayName.trim();
+
+    if (!trimmedDisplayName) {
+      setError('Please provide a display name for your profile.');
+      return;
+    }
+
+    if (!updateProfile) {
+      setError('Profile updates are currently unavailable.');
       return;
     }
 
@@ -19,25 +49,10 @@ export default function AccountSetup() {
     setError(null);
 
     try {
-      const {
-        data: { user },
-        error: userError,
-      } = await supabase.auth.getUser();
-      if (userError) throw userError;
-      if (!user) {
-        setError('You need to be signed in to update your profile.');
-        return;
-      }
-
-      const { error: upsertError } = await supabase.from('profiles').upsert({
-        id: user.id,
-        handle: handle.trim() || null,
-        display_name: displayName.trim() || null,
-        updated_at: new Date().toISOString(),
+      await updateProfile({
+        handle: trimmedHandle || null,
+        display_name: trimmedDisplayName || null,
       });
-
-      if (upsertError) throw upsertError;
-
       navigate('/dashboard');
     } catch (saveError) {
       console.error('Failed to save profile', saveError);
