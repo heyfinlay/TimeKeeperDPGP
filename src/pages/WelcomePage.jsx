@@ -128,7 +128,7 @@ const WelcomePage = () => {
             <Link to="/live" className="transition hover:text-white">
               Live timing
             </Link>
-            <Link to="/control" className="transition hover:text-white">
+            <Link to="/sessions" className="transition hover:text-white">
               Control tools
             </Link>
           </div>

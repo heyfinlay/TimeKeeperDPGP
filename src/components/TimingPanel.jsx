@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import AuthGate from './auth/AuthGate.jsx';
 import {
   AlertTriangle,
@@ -180,10 +181,11 @@ const parseManualLap = (input) => {
 const formatSessionTimestamp = (value) =>
   value ? new Date(value).toLocaleString() : 'Not set';
 
-const TimingPanel = () => {
+const TimingPanel = ({ sessionId: sessionIdProp = null }) => {
+  const navigate = useNavigate();
   const {
     sessions,
-    activeSessionId,
+    activeSessionId: contextActiveSessionId,
     selectSession,
     createSession,
     startSession,
@@ -194,12 +196,19 @@ const TimingPanel = () => {
     supportsSessions,
     fallbackToLegacySchema,
   } = useEventSession();
+  const activeSessionId = sessionIdProp ?? contextActiveSessionId;
   const { status, profile } = useAuth();
   const isAuthenticated = status === 'authenticated';
   const isAdmin = profile?.role?.toLowerCase() === 'admin';
   const supabaseClient = supabase;
   const sessionId = activeSessionId ?? LEGACY_SESSION_ID;
   const fallbackSessionId = sessionId;
+
+  useEffect(() => {
+    if (sessionIdProp && sessionIdProp !== contextActiveSessionId) {
+      selectSession(sessionIdProp);
+    }
+  }, [contextActiveSessionId, selectSession, sessionIdProp]);
 
   const activeSession = useMemo(
     () => sessions.find((session) => session.id === activeSessionId) ?? null,
@@ -227,9 +236,22 @@ const TimingPanel = () => {
     (event) => {
       const value = event.target.value;
       selectSession(value || null);
+      if (value) {
+        navigate(`/control/${value}`);
+      } else {
+        navigate('/sessions');
+      }
     },
-    [selectSession],
+    [navigate, selectSession],
   );
+
+  const handleCreateSession = useCallback(async () => {
+    const created = await createSession();
+    if (created?.id) {
+      selectSession(created.id);
+      navigate(`/control/${created.id}`);
+    }
+  }, [createSession, navigate, selectSession]);
 
   const [eventConfig, setEventConfig] = useState({
     eventType: DEFAULT_SESSION_STATE.eventType,
@@ -1796,7 +1818,7 @@ const TimingPanel = () => {
                   {isSessionLoading ? 'Refreshing…' : 'Refresh'}
                 </button>
                 <button
-                  onClick={() => void createSession()}
+                  onClick={() => void handleCreateSession()}
                   className="rounded-lg border border-[#9FF7D3]/40 bg-[#9FF7D3]/10 px-3 py-2 font-semibold uppercase tracking-wide text-[#9FF7D3] transition hover:border-[#9FF7D3]"
                 >
                   New Session

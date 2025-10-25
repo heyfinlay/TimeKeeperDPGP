@@ -154,7 +154,7 @@ const formatCountdown = (target, current) => {
 const DashboardPage = () => {
   const { status, user, profile, isSupabaseConfigured } = useAuth();
   const navigate = useNavigate();
-  const { sessions, refreshSessions } = useEventSession();
+  const { sessions, refreshSessions, activeSessionId } = useEventSession();
   const [markets, setMarkets] = useState(baseMarkets);
   const [isRefreshingSessions, setIsRefreshingSessions] = useState(false);
   const [now, setNow] = useState(() => new Date());
@@ -166,6 +166,7 @@ const DashboardPage = () => {
   );
   const profileComplete = Boolean(profile?.display_name?.trim());
   const [isTopUpOpen, setIsTopUpOpen] = useState(false);
+  const controlPath = activeSessionId ? `/control/${activeSessionId}` : '/sessions';
 
   useEffect(() => {
     if (!isSupabaseConfigured) return;
@@ -368,7 +369,7 @@ const DashboardPage = () => {
             <h2 className="text-2xl font-semibold text-white">Live pool overview</h2>
           </div>
           <Link
-            to="/control"
+            to={controlPath}
             className="inline-flex items-center gap-2 rounded-full border border-white/10 px-4 py-2 text-xs uppercase tracking-[0.35em] text-neutral-300 transition hover:border-white/30 hover:text-white"
           >
             Enter race control <ArrowRight className="h-4 w-4" />
