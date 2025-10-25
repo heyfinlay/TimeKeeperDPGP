@@ -23,12 +23,20 @@ const DEFAULT_PROFILE = {
   id: null,
   role: 'marshal',
   display_name: null,
+  ic_phone_number: null,
   assigned_driver_ids: [],
   team_id: null,
 };
 
-const PROFILE_COLUMNS = 'id, role, display_name, assigned_driver_ids, team_id';
-const MUTABLE_PROFILE_FIELDS = new Set(['display_name', 'role', 'assigned_driver_ids', 'team_id']);
+const PROFILE_COLUMNS =
+  'id, role, display_name, ic_phone_number, assigned_driver_ids, team_id';
+const MUTABLE_PROFILE_FIELDS = new Set([
+  'display_name',
+  'role',
+  'ic_phone_number',
+  'assigned_driver_ids',
+  'team_id',
+]);
 
 const isNoRowError = (error) => error?.code === 'PGRST116';
 
