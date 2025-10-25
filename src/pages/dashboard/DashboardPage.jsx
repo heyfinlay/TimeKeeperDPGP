@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext.jsx';
 import { useEventSession } from '../../context/SessionContext.jsx';
+import TopUpModal from '../../components/dashboard/TopUpModal.jsx';
 
 const MARKET_REFRESH_INTERVAL = 5000;
 const tierOrder = ['Silver', 'Gold', 'Diamond', 'VIP', 'Marshal', 'Admin'];
@@ -163,8 +164,8 @@ const DashboardPage = () => {
     () => (profile ? Object.prototype.hasOwnProperty.call(profile, 'ic_phone_number') : false),
     [profile],
   );
-  const profileComplete =
-    Boolean(profile?.display_name?.trim()) && (!profileSupportsIcPhone || Boolean(profile?.ic_phone_number?.trim()));
+  const profileComplete = Boolean(profile?.display_name?.trim());
+  const [isTopUpOpen, setIsTopUpOpen] = useState(false);
 
   useEffect(() => {
     if (!isSupabaseConfigured) return;
@@ -349,6 +350,14 @@ const DashboardPage = () => {
           >
             Update details <ArrowRight className="h-4 w-4" />
           </Link>
+          <button
+            type="button"
+            onClick={() => setIsTopUpOpen(true)}
+            className="inline-flex items-center justify-center gap-2 rounded-full border border-[#F5A97F]/30 bg-[#F5A97F]/10 px-4 py-2 text-xs uppercase tracking-[0.35em] text-[#F5A97F] transition hover:border-[#F5A97F]/60 hover:text-white"
+          >
+            Top up balance
+            <ArrowRight className="h-4 w-4" />
+          </button>
         </div>
       </section>
 
@@ -434,6 +443,7 @@ const DashboardPage = () => {
           })}
         </div>
       </section>
+      <TopUpModal isOpen={isTopUpOpen} onClose={() => setIsTopUpOpen(false)} />
     </div>
   );
 };

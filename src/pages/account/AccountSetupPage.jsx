@@ -36,8 +36,7 @@ const AccountSetupPage = () => {
   }, [derivedDisplayName, profile?.ic_phone_number, supportsIcPhone]);
 
   const isAuthenticated = status === 'authenticated' && !!user;
-  const isProfileComplete =
-    Boolean(profile?.display_name?.trim()) && (!supportsIcPhone || Boolean(profile?.ic_phone_number?.trim()));
+  const isProfileComplete = Boolean(profile?.display_name?.trim());
 
   useEffect(() => {
     if (!isSupabaseConfigured) return;
@@ -61,17 +60,12 @@ const AccountSetupPage = () => {
       setError('Please provide an account name.');
       return;
     }
-    if (supportsIcPhone && !trimmedPhone) {
-      setError('Please provide your IC phone number.');
-      return;
-    }
-
     setIsSubmitting(true);
     setError(null);
 
     try {
       const patch = supportsIcPhone
-        ? { display_name: trimmedDisplayName, ic_phone_number: trimmedPhone }
+        ? { display_name: trimmedDisplayName, ic_phone_number: trimmedPhone || null }
         : { display_name: trimmedDisplayName };
       await updateProfile(patch);
       navigate('/dashboard', { replace: true });
@@ -147,7 +141,7 @@ const AccountSetupPage = () => {
         {supportsIcPhone ? (
           <div className="flex flex-col gap-2">
             <label htmlFor="icPhone" className="text-xs font-semibold uppercase tracking-[0.35em] text-neutral-400">
-              IC phone number
+              IC Phone Number (optional)
             </label>
             <div className="relative">
               <Phone className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-[#9FF7D3]" />
@@ -156,12 +150,13 @@ const AccountSetupPage = () => {
                 name="icPhone"
                 value={icPhone}
                 onChange={(event) => setIcPhone(event.target.value)}
-                placeholder="+1 555 0100"
+                placeholder="+61 4xx xxx xxx"
+                inputMode="tel"
                 className="w-full rounded-full border border-white/10 bg-[#0B1120]/60 py-3 pl-12 pr-4 text-sm text-white outline-none transition focus:border-[#9FF7D3]/70 focus:ring-2 focus:ring-[#9FF7D3]/30"
               />
             </div>
             <p className="text-xs text-neutral-500">
-              Used only for critical incident escalation during live race control operations.
+              Used for verifying top-ups and contacting you in-game.
             </p>
           </div>
         ) : null}
