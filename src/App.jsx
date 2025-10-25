@@ -2,6 +2,7 @@ import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
 import { EventSessionProvider } from '@/context/SessionContext.jsx';
 import AuthGuard from '@/components/auth/AuthGuard.jsx';
 import ProtectedRoute from '@/components/auth/ProtectedRoute.jsx';
+import ControlGuard from '@/routes/ControlGuard.jsx';
 import AppLayout from '@/components/layout/AppLayout.jsx';
 import Welcome from '@/routes/Welcome.jsx';
 import Dashboard from '@/routes/Dashboard.jsx';
@@ -55,9 +56,9 @@ export default function App() {
             <Route
               path="/control/:sessionId"
               element={
-                <ProtectedRoute>
+                <ControlGuard>
                   <Control />
-                </ProtectedRoute>
+                </ControlGuard>
               }
             />
             <Route path="/live" element={<Live />} />
