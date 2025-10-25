@@ -4,21 +4,26 @@ import { useEventSession } from '@/context/SessionContext.jsx';
 
 const NAV_ITEMS = [
   {
-    to: '/dashboard',
+    id: 'dashboard',
     label: 'Dashboard',
+    buildPath: () => '/dashboard',
     activeClass: 'bg-[#F5A97F]/20 text-[#F5A97F]',
     hoverClass: 'hover:border-[#F5A97F]/50 hover:text-[#F5A97F]',
     requiresAuth: true,
   },
   {
-    to: '/live',
+    id: 'live',
     label: 'Live Timing',
+    buildPath: (activeSessionId) =>
+      activeSessionId ? `/live/${activeSessionId}` : '/sessions',
     activeClass: 'bg-[#7C6BFF]/20 text-[#dcd7ff]',
     hoverClass: 'hover:border-[#7C6BFF]/50 hover:text-[#7C6BFF]',
   },
   {
-    to: '/control',
+    id: 'control',
     label: 'Race Control',
+    buildPath: (activeSessionId) =>
+      activeSessionId ? `/control/${activeSessionId}` : '/sessions',
     activeClass: 'bg-[#9FF7D3]/20 text-[#9FF7D3]',
     hoverClass: 'hover:border-[#9FF7D3]/50 hover:text-[#9FF7D3]',
     requiresAuth: true,
@@ -29,11 +34,11 @@ export default function AppLayout() {
   const { status, isSupabaseConfigured } = useAuth();
   const isAuthenticated = status === 'authenticated';
   const { activeSessionId } = useEventSession();
-  const controlPath = activeSessionId ? `/control/${activeSessionId}` : '/sessions';
 
-  const navItems = NAV_ITEMS.map((item) =>
-    item.to === '/control' ? { ...item, to: controlPath } : item,
-  );
+  const navItems = NAV_ITEMS.map((item) => ({
+    ...item,
+    to: item.buildPath ? item.buildPath(activeSessionId) : item.to,
+  }));
 
   const visibleNavItems = navItems.filter((item) => {
     if (!item.requiresAuth) return true;
@@ -52,9 +57,9 @@ export default function AppLayout() {
             TimeKeeper
           </NavLink>
           <div className="flex flex-wrap items-center justify-center gap-2 text-xs uppercase tracking-[0.3em] text-neutral-400">
-            {visibleNavItems.map(({ to, label, activeClass, hoverClass }) => (
+            {visibleNavItems.map(({ id, to, label, activeClass, hoverClass }) => (
               <NavLink
-                key={to}
+                key={id}
                 to={to}
                 className={({ isActive }) =>
                   `rounded-full border border-transparent px-4 py-2 transition ${hoverClass} ${
