@@ -46,7 +46,7 @@ describe('hydrateDriverState', () => {
         number: 7,
         name: 'Driver',
         team: 'Team',
-        marshal_id: 'm1',
+        marshal_user_id: 'm1',
         session_id: 'session-1',
         laps: '2',
         last_lap_ms: '59000',
@@ -121,6 +121,7 @@ describe('toDriverRow', () => {
     });
 
     expect(row).toMatchObject({
+      marshal_user_id: 'm2',
       marshal_id: 'm2',
       last_lap_ms: 60500,
       best_lap_ms: 60000,

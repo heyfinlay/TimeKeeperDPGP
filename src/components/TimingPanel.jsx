@@ -408,7 +408,7 @@ const TimingPanel = () => {
       const mapped = rows.map((row) => ({
         id: row.id ?? createClientId(),
         action: row.message ?? '',
-        marshalId: row.marshal_id ?? 'Race Control',
+        marshalId: row.marshal_user_id ?? row.marshal_id ?? 'Race Control',
         timestamp: row.created_at ? new Date(row.created_at) : new Date(),
       }));
       const trimmed = mapped.slice(0, LOG_LIMIT);
@@ -452,6 +452,7 @@ const TimingPanel = () => {
               number: driver.number,
               name: driver.name,
               team: driver.team,
+              marshal_user_id: driver.marshalId,
               marshal_id: driver.marshalId,
               laps: 0,
               last_lap_ms: null,
@@ -642,6 +643,7 @@ const TimingPanel = () => {
                 {
                   id: entry.id,
                   message: action,
+                  marshal_user_id: marshalId,
                   marshal_id: marshalId,
                   session_id: sessionId,
                   created_at: entry.timestamp.toISOString(),
@@ -788,7 +790,8 @@ const TimingPanel = () => {
           const entry = {
             id: payload.new.id ?? createClientId(),
             action: payload.new.message ?? '',
-            marshalId: payload.new.marshal_id ?? 'Race Control',
+            marshalId:
+              payload.new.marshal_user_id ?? payload.new.marshal_id ?? 'Race Control',
             timestamp: payload.new.created_at
               ? new Date(payload.new.created_at)
               : new Date(),
