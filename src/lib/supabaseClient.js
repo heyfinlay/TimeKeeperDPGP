@@ -14,12 +14,26 @@ export const isSupabaseConfigured =
 const REST_ENDPOINT = isSupabaseConfigured
   ? `${SUPABASE_URL.replace(/\/$/, '')}/rest/v1`
   : null;
-const REALTIME_ENDPOINT = isSupabaseConfigured
-  ? `${SUPABASE_URL.replace('https://', 'wss://').replace(/\/$/, '')}/realtime/v1/websocket`
-  : null;
 const STORAGE_ENDPOINT = isSupabaseConfigured
   ? `${SUPABASE_URL.replace(/\/$/, '')}/storage/v1/object`
   : null;
+
+const AUTH_HEADERS = isSupabaseConfigured
+  ? {
+      apikey: SUPABASE_ANON_KEY,
+      Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+    }
+  : {};
+
+const DEFAULT_HEADERS = isSupabaseConfigured
+  ? {
+      ...AUTH_HEADERS,
+      Accept: 'application/json',
+    }
+  : {};
+
+/** @type {import('@supabase/supabase-js').SupabaseClient<Database> | null} */
+let supabaseClient = null;
 
 if (isSupabaseConfigured) {
   supabaseClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
@@ -27,35 +41,108 @@ if (isSupabaseConfigured) {
       persistSession: true,
       autoRefreshToken: true,
     },
-    body: body ? JSON.stringify(body) : undefined,
+  });
+}
+
+if (typeof globalThis !== 'undefined') {
+  globalThis.supabaseClient = supabaseClient;
+}
+
+const buildError = async (response) => {
+  const errorText = await response.text();
+  let parsed = null;
+  try {
+    parsed = errorText ? JSON.parse(errorText) : null;
+  } catch (parseError) {
+    parsed = null;
+  }
+  const error = new Error(`Supabase request failed (${response.status}): ${errorText}`);
+  error.status = response.status;
+  if (parsed && typeof parsed === 'object') {
+    error.code = parsed.code;
+    error.details = parsed.details;
+    error.hint = parsed.hint;
+    error.supabase = parsed;
+    if (typeof parsed.message === 'string') {
+      error.supabaseMessage = parsed.message;
+    }
+  }
+  return error;
+};
+
+const toSearchParams = (filters = {}) =>
+  Object.entries(filters).reduce((params, [key, value]) => {
+    if (value !== undefined && value !== null) {
+      params.set(key, value);
+    }
+    return params;
+  }, new URLSearchParams());
+
+const buildOrderParam = (order) => {
+  if (!order?.column) {
+    return null;
+  }
+  let orderValue = `${order.column}.${order.ascending === false ? 'desc' : 'asc'}`;
+  if (order.nullsFirst !== undefined) {
+    orderValue += order.nullsFirst ? '.nullsfirst' : '.nullslast';
+  }
+  return orderValue;
+};
+
+const request = async (
+  table,
+  { method = 'GET', filters, order, select = '*', body, signal, prefer } = {},
+) => {
+  if (!REST_ENDPOINT) {
+    throw new Error('Supabase is not configured.');
+  }
+
+  const url = new URL(`${REST_ENDPOINT}/${table}`);
+  if (select) {
+    url.searchParams.set('select', select);
+  }
+  if (filters) {
+    const filterParams = toSearchParams(filters);
+    filterParams.forEach((value, key) => {
+      url.searchParams.set(key, value);
+    });
+  }
+  const orderValue = buildOrderParam(order);
+  if (orderValue) {
+    url.searchParams.set('order', orderValue);
+  }
+
+  const headers = { ...DEFAULT_HEADERS };
+  if (prefer) {
+    headers.Prefer = prefer;
+  }
+
+  let payload;
+  if (body !== undefined) {
+    headers['Content-Type'] = 'application/json';
+    payload = typeof body === 'string' ? body : JSON.stringify(body);
+  }
+
+  const response = await fetch(url.toString(), {
+    method,
+    headers,
+    body: payload,
     signal,
   });
+
   if (!response.ok) {
-    const errorText = await response.text();
-    let parsed = null;
-    try {
-      parsed = errorText ? JSON.parse(errorText) : null;
-    } catch (parseError) {
-      parsed = null;
-    }
-    const error = new Error(`Supabase request failed (${response.status}): ${errorText}`);
-    error.status = response.status;
-    if (parsed && typeof parsed === 'object') {
-      error.code = parsed.code;
-      error.details = parsed.details;
-      error.hint = parsed.hint;
-      error.supabase = parsed;
-      if (typeof parsed.message === 'string') {
-        error.supabaseMessage = parsed.message;
-      }
-    }
-    throw error;
+    throw await buildError(response);
   }
+
   if (response.status === 204) {
     return null;
   }
+
   const text = await response.text();
-  if (!text) return null;
+  if (!text) {
+    return null;
+  }
+
   try {
     return JSON.parse(text);
   } catch (error) {
@@ -106,12 +193,12 @@ export const supabaseStorageUpload = async (
   body,
   { contentType = 'application/octet-stream', upsert = true } = {},
 ) => {
-  if (!isSupabaseConfigured) {
+  if (!isSupabaseConfigured || !STORAGE_ENDPOINT) {
     throw new Error('Supabase is not configured. Unable to upload to storage.');
   }
-  const url = `${STORAGE_ENDPOINT}/${bucket}/${encodeStoragePath(objectPath)}${
-    upsert ? '?upsert=true' : ''
-  }`;
+
+  const url = `${STORAGE_ENDPOINT}/${bucket}/${encodeStoragePath(objectPath)}${upsert ? '?upsert=true' : ''}`;
+
   const response = await fetch(url, {
     method: 'PUT',
     headers: {
@@ -120,67 +207,24 @@ export const supabaseStorageUpload = async (
     },
     body,
   });
+
   if (!response.ok) {
     const errorText = await response.text();
     throw new Error(`Supabase storage upload failed (${response.status}): ${errorText}`);
   }
-  return response.json().catch(() => null);
+
+  try {
+    return await response.json();
+  } catch (error) {
+    return null;
+  }
 };
 
 export const buildStorageObjectUrl = (bucket, objectPath) => {
-  if (!isSupabaseConfigured) return null;
-  return `${SUPABASE_URL.replace(/\/$/, '')}/storage/v1/object/${bucket}/${objectPath}`;
-};
-
-const HEARTBEAT_INTERVAL = 25000;
-
-export const subscribeToTable = (
-  { schema = 'public', table, event = '*', filter },
-  callback,
-) => {
   if (!isSupabaseConfigured) {
-    console.warn('Supabase realtime subscription skipped. Supabase is not configured.');
-    return () => {};
+    return null;
   }
-  if (typeof WebSocket === 'undefined') {
-    console.warn('Supabase realtime subscription skipped. WebSocket API is unavailable in this environment.');
-    return () => {};
-  }
-  const params = new URLSearchParams({
-    apikey: SUPABASE_ANON_KEY,
-    vsn: '1.0.0',
-  });
-  const ws = new WebSocket(`${REALTIME_ENDPOINT}?${params.toString()}`, ['phoenix']);
-  const channel = `realtime:${schema}:${table}`;
-  let heartbeatTimer = null;
-  let joined = false;
-
-  const joinRef = Date.now().toString();
-  const joinPayload = {
-    topic: channel,
-    event: 'phx_join',
-    payload: {
-      config: {
-        broadcast: { ack: false },
-        postgres_changes: [
-          {
-            event,
-            schema,
-            table,
-            ...(filter ? { filter } : {}),
-          },
-        ],
-      },
-    },
-  });
-}
-
-/** @type {import('@supabase/supabase-js').SupabaseClient<Database> | null} */
-export const supabase = supabaseClient;
-
-export const supabaseEnvironment = {
-  url: SUPABASE_URL,
-  anonKey: SUPABASE_ANON_KEY,
+  return `${SUPABASE_URL.replace(/\/$/, '')}/storage/v1/object/${bucket}/${objectPath}`;
 };
 
 const includesCaseInsensitive = (source, search) => {
@@ -227,3 +271,57 @@ export const isColumnMissingError = (error, column) => {
   }
   return false;
 };
+
+export const subscribeToTable = (
+  { schema = 'public', table, event = '*', filter },
+  callback,
+) => {
+  if (!isSupabaseConfigured || !supabaseClient) {
+    console.warn('Supabase realtime subscription skipped. Supabase is not configured.');
+    return () => {};
+  }
+  if (!table) {
+    console.warn('Supabase realtime subscription skipped. Table is required.');
+    return () => {};
+  }
+
+  const channelName = [`realtime`, schema, table, event, filter ?? 'all']
+    .filter(Boolean)
+    .join('-');
+
+  const channel = supabaseClient
+    .channel(channelName)
+    .on(
+      'postgres_changes',
+      {
+        event,
+        schema,
+        table,
+        ...(filter ? { filter } : {}),
+      },
+      (payload) => {
+        try {
+          callback(payload);
+        } catch (error) {
+          console.error('Supabase realtime callback failed', error);
+        }
+      },
+    );
+
+  channel.subscribe((status) => {
+    if (status === 'CHANNEL_ERROR') {
+      console.error(`Supabase realtime subscription error for ${channelName}`);
+    }
+  });
+
+  return () => {
+    supabaseClient.removeChannel(channel);
+  };
+};
+
+export const supabaseEnvironment = {
+  url: SUPABASE_URL,
+  anonKey: SUPABASE_ANON_KEY,
+};
+
+export const supabase = supabaseClient;

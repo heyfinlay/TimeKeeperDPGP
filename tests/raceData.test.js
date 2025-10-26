@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, test } from 'vitest';
 import {
   DEFAULT_SESSION_STATE,
   LEGACY_SESSION_ID,
