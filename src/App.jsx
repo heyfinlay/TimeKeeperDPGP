@@ -1,42 +1,82 @@
-import { useState } from 'react';
-import TimingPanel from './components/TimingPanel.jsx';
-import LiveTimingBoard from './components/LiveTimingBoard.jsx';
-import { EventSessionProvider } from './context/SessionContext.jsx';
+import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
+import { EventSessionProvider } from '@/context/SessionContext.jsx';
+import AuthGuard from '@/components/auth/AuthGuard.jsx';
+import ProtectedRoute from '@/components/auth/ProtectedRoute.jsx';
+import SessionAccessGuard from '@/components/auth/SessionAccessGuard.jsx';
+import AppLayout from '@/components/layout/AppLayout.jsx';
+import Welcome from '@/routes/Welcome.jsx';
+import Dashboard from '@/routes/Dashboard.jsx';
+import AccountSetup from '@/routes/AccountSetup.jsx';
+import AuthCallback from '@/routes/AuthCallback.jsx';
+import Control from '@/routes/Control.jsx';
+import LiveTiming from '@/routes/LiveTiming.jsx';
+import LiveSessions from '@/routes/LiveSessions.jsx';
+import NewSession from '@/routes/NewSession.jsx';
+import AdminSessions from '@/routes/AdminSessions.jsx';
 
-const App = () => {
+export default function App() {
   return (
-    <EventSessionProvider>
-      <div className="min-h-screen bg-[#05070F]">
-        <nav className="fixed inset-x-0 top-0 z-50 border-b border-neutral-900/80 bg-[#05070F]/90 backdrop-blur">
-          <div className="mx-auto flex max-w-6xl items-center justify-center gap-2 px-4 py-3 text-sm uppercase tracking-[0.25em] text-neutral-400">
-            <button
-              onClick={() => setView('control')}
-              className={`rounded-full px-4 py-2 transition ${
-                view === 'control'
-                  ? 'bg-[#9FF7D3]/20 text-[#9FF7D3]'
-                  : 'border border-transparent hover:border-[#9FF7D3]/40 hover:text-[#9FF7D3]'
-              }`}
-            >
-              Race Control
-            </button>
-            <button
-              onClick={() => setView('live')}
-              className={`rounded-full px-4 py-2 transition ${
-                view === 'live'
-                  ? 'bg-[#7C6BFF]/20 text-[#beb4ff]'
-                  : 'border border-transparent hover:border-[#7C6BFF]/40 hover:text-[#beb4ff]'
-              }`}
-            >
-              Live Timing Board
-            </button>
-          </div>
-        </nav>
-        <div className="pt-16">
-          {view === 'control' ? <TimingPanel /> : <LiveTimingBoard />}
-        </div>
-      </div>
-    </EventSessionProvider>
+    <BrowserRouter>
+      <EventSessionProvider>
+        <Routes>
+          <Route element={<AppLayout />}>
+            <Route path="/" element={<Welcome />} />
+            <Route
+              path="/account/setup"
+              element={
+                <AuthGuard>
+                  <AccountSetup />
+                </AuthGuard>
+              }
+            />
+            <Route
+              path="/dashboard"
+              element={
+                <AuthGuard>
+                  <Dashboard />
+                </AuthGuard>
+              }
+            />
+            <Route
+              path="/sessions"
+              element={
+                <ProtectedRoute>
+                  <LiveSessions />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/sessions/new"
+              element={
+                <ProtectedRoute>
+                  <NewSession />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/control/:sessionId"
+              element={
+                <ProtectedRoute>
+                  <SessionAccessGuard>
+                    <Control />
+                  </SessionAccessGuard>
+                </ProtectedRoute>
+              }
+            />
+            <Route path="/live/:sessionId" element={<LiveTiming />} />
+            <Route
+              path="/admin/sessions"
+              element={
+                <ProtectedRoute>
+                  <AdminSessions />
+                </ProtectedRoute>
+              }
+            />
+          </Route>
+          <Route path="/auth/callback" element={<AuthCallback />} />
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
+      </EventSessionProvider>
+    </BrowserRouter>
   );
-};
-
-export default App;
+}

@@ -808,9 +808,26 @@ const TimingPanel = () => {
       },
     );
     return () => {
-      supabaseClient.removeChannel(driverChannel);
-      supabaseClient.removeChannel(sessionChannel);
-      supabaseClient.removeChannel(logChannel);
+      try {
+        driverUnsub?.();
+      } catch (error) {
+        console.error('Failed to unsubscribe driver channel', error);
+      }
+      try {
+        lapUnsub?.();
+      } catch (error) {
+        console.error('Failed to unsubscribe lap channel', error);
+      }
+      try {
+        sessionUnsub?.();
+      } catch (error) {
+        console.error('Failed to unsubscribe session channel', error);
+      }
+      try {
+        logUnsub?.();
+      } catch (error) {
+        console.error('Failed to unsubscribe log channel', error);
+      }
     };
   }, [activeSessionId, refreshDriversFromSupabase, sessionId, supportsSessions]);
 

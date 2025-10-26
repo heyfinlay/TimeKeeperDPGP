@@ -1,7 +1,7 @@
 import LiveTimingBoard from '../components/LiveTimingBoard.jsx';
 
-const LiveTimingPage = () => {
-  return <LiveTimingBoard />;
+const LiveTimingPage = ({ sessionId = null }) => {
+  return <LiveTimingBoard sessionId={sessionId} />;
 };
 
 export default LiveTimingPage;
