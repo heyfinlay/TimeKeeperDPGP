@@ -86,19 +86,6 @@ create table if not exists public.race_events (
   created_at timestamptz default timezone('utc', now())
 );
 
-create table if not exists public.session_entries (
-  id uuid primary key default gen_random_uuid(),
-  session_id uuid not null references public.sessions(id) on delete cascade,
-  driver_id uuid references public.drivers(id) on delete set null,
-  driver_number integer,
-  driver_name text,
-  team_name text,
-  position integer,
-  marshal_user_id uuid references auth.users(id),
-  created_at timestamptz default timezone('utc', now()),
-  updated_at timestamptz default timezone('utc', now())
-);
-
 alter table public.drivers
   add column if not exists session_id uuid references public.sessions(id);
 
@@ -142,10 +129,6 @@ begin
   update public.race_events
   set session_id = default_session_id
   where session_id is null;
-
-  update public.session_entries
-  set session_id = default_session_id
-  where session_id is null;
 end $$;
 
 alter table public.drivers
@@ -164,10 +147,6 @@ alter table public.race_events
   alter column session_id set default '00000000-0000-0000-0000-000000000000',
   alter column session_id set not null;
 
-alter table public.session_entries
-  alter column session_id set default '00000000-0000-0000-0000-000000000000',
-  alter column session_id set not null;
-
 create unique index if not exists session_state_session_unique_idx
   on public.session_state (session_id);
 
@@ -178,44 +157,6 @@ stable
 as $$
   select coalesce(auth.jwt()->>'role', '') = 'admin';
 $$;
-
--- Ensure profiles table matches client expectations
-create table if not exists public.profiles (
-  id uuid primary key references auth.users(id) on delete cascade,
-  display_name text,
-  role text not null default 'marshal',
-  assigned_driver_ids text[] default array[]::text[],
-  team_id uuid,
-  ic_phone_number text,
-  tier text,
-  experience_points integer not null default 0,
-  created_at timestamptz default timezone('utc', now()),
-  updated_at timestamptz default timezone('utc', now())
-);
-
-alter table public.profiles
-  alter column role set default 'marshal';
-
-alter table public.profiles
-  add column if not exists assigned_driver_ids text[] default array[]::text[];
-
-alter table public.profiles
-  add column if not exists team_id uuid;
-
-alter table public.profiles
-  add column if not exists ic_phone_number text;
-
-alter table public.profiles
-  add column if not exists tier text;
-
-alter table public.profiles
-  add column if not exists experience_points integer not null default 0;
-
-alter table public.profiles
-  add column if not exists created_at timestamptz default timezone('utc', now());
-
-alter table public.profiles
-  add column if not exists updated_at timestamptz default timezone('utc', now());
 
 create or replace function public.session_has_access(target_session_id uuid)
 returns boolean
@@ -246,7 +187,6 @@ $$;
 alter table public.sessions enable row level security;
 alter table public.session_members enable row level security;
 alter table public.session_logs enable row level security;
-alter table public.session_entries enable row level security;
 alter table public.drivers enable row level security;
 alter table public.laps enable row level security;
 alter table public.session_state enable row level security;
@@ -313,12 +253,6 @@ for all
 using (public.is_admin())
 with check (public.is_admin());
 
-create policy if not exists "Session scoped access for session entries"
-on public.session_entries
-for all
-using (public.session_has_access(public.session_entries.session_id))
-with check (public.session_has_access(public.session_entries.session_id));
-
 create policy if not exists "Owners record session logs"
 on public.session_logs
 for insert
@@ -328,11 +262,6 @@ create policy if not exists "Members view session logs"
 on public.session_logs
 for select
 using (public.session_has_access(public.session_logs.session_id));
-
-create policy if not exists "Members view session entries"
-on public.session_entries
-for select
-using (public.session_has_access(public.session_entries.session_id));
 
 create policy if not exists "Session scoped access for drivers"
 on public.drivers
@@ -384,42 +313,14 @@ with check (
   and public.session_has_access(nullif(split_part(name, '/', 1), '')::uuid)
 );
 
-do $$
-declare
-  realtime_tables constant text[] := array[
-    'public.sessions',
-    'public.session_members',
-    'public.session_logs',
-    'public.session_entries',
-    'public.drivers',
-    'public.laps',
-    'public.session_state',
-    'public.race_events',
-    'public.profiles'
-  ];
-  target_table text;
-  target_schema text;
-  target_name text;
-begin
-  foreach target_table in array realtime_tables loop
-    target_schema := split_part(target_table, '.', 1);
-    target_name := split_part(target_table, '.', 2);
-
-    if to_regclass(target_table) is not null and not exists (
-      select 1
-      from pg_publication_tables
-      where pubname = 'supabase_realtime'
-        and schemaname = target_schema
-        and tablename = target_name
-    ) then
-      execute format(
-        'alter publication supabase_realtime add table %I.%I',
-        target_schema,
-        target_name
-      );
-    end if;
-  end loop;
-end $$;
+alter publication supabase_realtime add table public.sessions;
+alter publication supabase_realtime add table public.session_members;
+alter publication supabase_realtime add table public.session_logs;
+alter publication supabase_realtime add table public.drivers;
+alter publication supabase_realtime add table public.laps;
+alter publication supabase_realtime add table public.session_state;
+alter publication supabase_realtime add table public.race_events;
+alter publication supabase_realtime add table public.profiles;
 
 alter table public.drivers enable row level security;
 alter table public.laps enable row level security;
@@ -583,11 +484,15 @@ create policy "Session state readable" on public.session_state
   for select
   using (auth.uid() is not null);
 
-create policy "Session state member updates" on public.session_state
+create policy "Session state admin updates" on public.session_state
   for all
   using (
-    public.session_has_access(public.session_state.session_id)
+    exists (
+      select 1 from public.profiles as p where p.id = auth.uid() and p.role = 'admin'
+    )
   )
   with check (
-    public.session_has_access(public.session_state.session_id)
+    exists (
+      select 1 from public.profiles as p where p.id = auth.uid() and p.role = 'admin'
+    )
   );

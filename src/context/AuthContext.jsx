@@ -8,14 +8,11 @@ import {
   useState,
 } from 'react';
 import { isSupabaseConfigured, supabase } from '../lib/supabaseClient.js';
-import { PROFILE_COLUMN_SELECTION, saveProfile } from '../lib/profile.js';
 
 const AuthContext = createContext({
   status: isSupabaseConfigured ? 'loading' : 'disabled',
   user: null,
   profile: null,
-  profileError: null,
-  isHydratingProfile: false,
   signInWithDiscord: () => Promise.resolve(),
   signOut: () => Promise.resolve(),
 });
@@ -23,25 +20,10 @@ const AuthContext = createContext({
 const DEFAULT_PROFILE = {
   id: null,
   role: 'marshal',
-  handle: null,
   display_name: null,
-  ic_phone_number: null,
   assigned_driver_ids: [],
   team_id: null,
-  tier: null,
-  experience_points: 0,
 };
-
-const MUTABLE_PROFILE_FIELDS = new Set([
-  'display_name',
-  'role',
-  'handle',
-  'ic_phone_number',
-  'assigned_driver_ids',
-  'team_id',
-  'tier',
-  'experience_points',
-]);
 
 const isNoRowError = (error) => error?.code === 'PGRST116';
 
@@ -50,100 +32,54 @@ export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
   const [profile, setProfile] = useState(null);
   const [profileError, setProfileError] = useState(null);
-  const [isHydratingProfile, setIsHydratingProfile] = useState(false);
-  const fetchingProfileRef = useRef({ userId: null, promise: null });
-  const activeProfileRequestsRef = useRef(0);
+  const fetchingProfileRef = useRef(false);
 
   const hydrateProfile = useCallback(async (nextUser) => {
     if (!isSupabaseConfigured || !supabase || !nextUser) {
-      fetchingProfileRef.current = { userId: null, promise: null };
-      activeProfileRequestsRef.current = 0;
       setProfile(null);
-      setProfileError(null);
-      setIsHydratingProfile(false);
-      return null;
+      return;
     }
-    const userId = nextUser.id;
-    if (!userId) {
-      fetchingProfileRef.current = { userId: null, promise: null };
-      activeProfileRequestsRef.current = 0;
-      setProfile(null);
-      setProfileError(null);
-      setIsHydratingProfile(false);
-      return null;
-    }
-
-    if (
-      fetchingProfileRef.current.promise &&
-      fetchingProfileRef.current.userId === userId
-    ) {
-      return fetchingProfileRef.current.promise;
-    }
-
-    activeProfileRequestsRef.current += 1;
-    setIsHydratingProfile(true);
-    setProfileError(null);
-
-    const profilePromise = (async () => {
-      try {
-        const { data, error } = await supabase
-          .from('profiles')
-          .select(PROFILE_COLUMN_SELECTION)
-          .eq('id', userId)
-          .maybeSingle();
-
-        if (error && !isNoRowError(error)) {
-          throw error;
-        }
-
-        let hydratedProfile = null;
-
-        if (!data) {
-          const displayName =
-            nextUser.user_metadata?.full_name ||
-            nextUser.user_metadata?.name ||
-            nextUser.email ||
-            'Marshal';
-
-          const { data: created, error: insertError } = await supabase
-            .from('profiles')
-            .insert({
-              id: userId,
-              role: 'marshal',
-              display_name: displayName,
-            })
-            .select(PROFILE_COLUMN_SELECTION)
-            .single();
-
-          if (insertError) {
-            throw insertError;
-          }
-
-          hydratedProfile =
-            created ?? { ...DEFAULT_PROFILE, id: userId, display_name: displayName };
-        } else {
-          hydratedProfile = { ...DEFAULT_PROFILE, ...data };
-        }
-
-        setProfile(hydratedProfile);
-        setProfileError(null);
-        return hydratedProfile;
-      } catch (error) {
-        console.error('Failed to load profile', error);
-        setProfileError(error);
-        setProfile(null);
+    if (fetchingProfileRef.current) return;
+    fetchingProfileRef.current = true;
+    try {
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('id', nextUser.id)
+        .maybeSingle();
+      if (error && !isNoRowError(error)) {
         throw error;
-      } finally {
-        if (fetchingProfileRef.current.userId === userId) {
-          fetchingProfileRef.current = { userId: null, promise: null };
-        }
-        activeProfileRequestsRef.current = Math.max(0, activeProfileRequestsRef.current - 1);
-        setIsHydratingProfile(activeProfileRequestsRef.current > 0);
       }
-    })();
-
-    fetchingProfileRef.current = { userId, promise: profilePromise };
-    return profilePromise;
+      if (!data) {
+        const displayName =
+          nextUser.user_metadata?.full_name ||
+          nextUser.user_metadata?.name ||
+          nextUser.email ||
+          'Marshal';
+        const { data: created, error: insertError } = await supabase
+          .from('profiles')
+          .insert({
+            id: nextUser.id,
+            role: 'marshal',
+            display_name: displayName,
+          })
+          .select()
+          .single();
+        if (insertError) {
+          throw insertError;
+        }
+        setProfile(created ?? { ...DEFAULT_PROFILE, id: nextUser.id, display_name: displayName });
+      } else {
+        setProfile({ ...DEFAULT_PROFILE, ...data });
+      }
+      setProfileError(null);
+    } catch (error) {
+      console.error('Failed to load profile', error);
+      setProfileError(error);
+      setProfile(null);
+    } finally {
+      fetchingProfileRef.current = false;
+    }
   }, []);
 
   useEffect(() => {
@@ -165,12 +101,10 @@ export const AuthProvider = ({ children }) => {
       const sessionUser = data?.session?.user ?? null;
       setUser(sessionUser);
       setStatus(sessionUser ? 'authenticated' : 'unauthenticated');
-      if (!sessionUser) {
-        fetchingProfileRef.current = { userId: null, promise: null };
-        activeProfileRequestsRef.current = 0;
+      if (sessionUser) {
+        void hydrateProfile(sessionUser);
+      } else {
         setProfile(null);
-        setProfileError(null);
-        setIsHydratingProfile(false);
       }
     };
 
@@ -180,12 +114,10 @@ export const AuthProvider = ({ children }) => {
       const sessionUser = session?.user ?? null;
       setUser(sessionUser);
       setStatus(sessionUser ? 'authenticated' : 'unauthenticated');
-      if (!sessionUser) {
-        fetchingProfileRef.current = { userId: null, promise: null };
-        activeProfileRequestsRef.current = 0;
+      if (sessionUser) {
+        void hydrateProfile(sessionUser);
+      } else {
         setProfile(null);
-        setProfileError(null);
-        setIsHydratingProfile(false);
       }
     });
 
@@ -195,54 +127,13 @@ export const AuthProvider = ({ children }) => {
     };
   }, [hydrateProfile]);
 
-  useEffect(() => {
-    if (!user) {
-      return;
-    }
-    const profilePromise = hydrateProfile(user);
-    if (profilePromise && typeof profilePromise.catch === 'function') {
-      profilePromise.catch(() => {});
-    }
-  }, [hydrateProfile, user]);
-
-  const AUTH_CALLBACK_URL = useMemo(() => {
-    const fallback = (() => {
-      if (typeof window !== 'undefined' && window?.location?.origin) {
-        return `${window.location.origin.replace(/\/$/, '')}/auth/callback`;
-      }
-      return 'https://time-keeper-dpgp.vercel.app/auth/callback';
-    })();
-
-    const configured = import.meta.env.VITE_AUTH_CALLBACK_URL;
-    if (typeof configured !== 'string' || configured.length === 0) {
-      return fallback;
-    }
-
-    try {
-      const parsed = new URL(configured);
-      if (parsed.hostname.includes('supabase.co')) {
-        console.warn('Ignoring Supabase-hosted auth callback URL; falling back to application route.');
-        return fallback;
-      }
-      return configured;
-    } catch (error) {
-      console.warn('Invalid auth callback URL provided; falling back to application route.', error);
-      return fallback;
-    }
-  }, []);
-
   const signInWithDiscord = useCallback(async () => {
     if (!isSupabaseConfigured || !supabase) return;
-    const { error } = await supabase.auth.signInWithOAuth({
-      provider: 'discord',
-      options: {
-        redirectTo: AUTH_CALLBACK_URL,
-      },
-    });
+    const { error } = await supabase.auth.signInWithOAuth({ provider: 'discord' });
     if (error) {
       console.error('Discord sign-in failed', error);
     }
-  }, [AUTH_CALLBACK_URL]);
+  }, []);
 
   const signOut = useCallback(async () => {
     if (!isSupabaseConfigured || !supabase) return;
@@ -252,50 +143,17 @@ export const AuthProvider = ({ children }) => {
     }
   }, []);
 
-  const updateProfile = useCallback(
-    async (patch = {}) => {
-      if (!isSupabaseConfigured || !supabase || !user) {
-        throw new Error('Cannot update profile without an authenticated Supabase session.');
-      }
-
-      const filteredPatch = Object.fromEntries(
-        Object.entries(patch).filter(([key]) => MUTABLE_PROFILE_FIELDS.has(key)),
-      );
-
-      if (Object.keys(filteredPatch).length === 0) {
-        return profile;
-      }
-
-      const updated = await saveProfile(filteredPatch, { supabase, userId: user.id });
-      const nextProfile = updated ? { ...DEFAULT_PROFILE, ...updated } : profile;
-      setProfile(nextProfile);
-      return nextProfile;
-    },
-    [user, isSupabaseConfigured, profile],
-  );
-
-  const syncProfile = useCallback((nextProfile) => {
-    if (nextProfile) {
-      setProfile({ ...DEFAULT_PROFILE, ...nextProfile });
-    } else {
-      setProfile(null);
-    }
-  }, []);
-
   const value = useMemo(
     () => ({
       status,
       user,
       profile,
       profileError,
-      isHydratingProfile,
       signInWithDiscord,
       signOut,
-      updateProfile,
-      syncProfile,
       isSupabaseConfigured,
     }),
-    [status, user, profile, profileError, signInWithDiscord, signOut, updateProfile, syncProfile],
+    [status, user, profile, profileError, signInWithDiscord, signOut],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

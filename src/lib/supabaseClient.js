@@ -1,5 +1,7 @@
 import { createClient } from '@supabase/supabase-js';
 
+/** @typedef {import('./database.types').Database} Database */
+
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
@@ -9,26 +11,6 @@ export const isSupabaseConfigured =
   typeof SUPABASE_ANON_KEY === 'string' &&
   SUPABASE_ANON_KEY.length > 0;
 
-const supabaseOptions = {
-  auth: {
-    persistSession: true,
-    storage: typeof window !== 'undefined' ? window.localStorage : undefined,
-    autoRefreshToken: true,
-    detectSessionInUrl: false,
-  },
-  realtime: {
-    params: {
-      eventsPerSecond: 5,
-    },
-  },
-};
-
-export const supabase = isSupabaseConfigured
-  ? /** @type {import('@supabase/supabase-js').SupabaseClient | null} */ (
-      createClient(SUPABASE_URL, SUPABASE_ANON_KEY, supabaseOptions)
-    )
-  : null;
-
 const REST_ENDPOINT = isSupabaseConfigured
   ? `${SUPABASE_URL.replace(/\/$/, '')}/rest/v1`
   : null;
@@ -36,131 +18,131 @@ const STORAGE_ENDPOINT = isSupabaseConfigured
   ? `${SUPABASE_URL.replace(/\/$/, '')}/storage/v1/object`
   : null;
 
-const resolveAccessToken = async ({ accessToken, requireSession = false } = {}) => {
-  if (!isSupabaseConfigured || !supabase) {
-    if (requireSession) {
-      throw new Error('Supabase session is required but Supabase is not configured.');
+const AUTH_HEADERS = isSupabaseConfigured
+  ? {
+      apikey: SUPABASE_ANON_KEY,
+      Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
     }
+  : {};
+
+const DEFAULT_HEADERS = isSupabaseConfigured
+  ? {
+      ...AUTH_HEADERS,
+      Accept: 'application/json',
+    }
+  : {};
+
+/** @type {import('@supabase/supabase-js').SupabaseClient<Database> | null} */
+let supabaseClient = null;
+
+if (isSupabaseConfigured) {
+  supabaseClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+    auth: {
+      persistSession: true,
+      autoRefreshToken: true,
+    },
+  });
+}
+
+if (typeof globalThis !== 'undefined') {
+  globalThis.supabaseClient = supabaseClient;
+}
+
+const buildError = async (response) => {
+  const errorText = await response.text();
+  let parsed = null;
+  try {
+    parsed = errorText ? JSON.parse(errorText) : null;
+  } catch (parseError) {
+    parsed = null;
+  }
+  const error = new Error(`Supabase request failed (${response.status}): ${errorText}`);
+  error.status = response.status;
+  if (parsed && typeof parsed === 'object') {
+    error.code = parsed.code;
+    error.details = parsed.details;
+    error.hint = parsed.hint;
+    error.supabase = parsed;
+    if (typeof parsed.message === 'string') {
+      error.supabaseMessage = parsed.message;
+    }
+  }
+  return error;
+};
+
+const toSearchParams = (filters = {}) =>
+  Object.entries(filters).reduce((params, [key, value]) => {
+    if (value !== undefined && value !== null) {
+      params.set(key, value);
+    }
+    return params;
+  }, new URLSearchParams());
+
+const buildOrderParam = (order) => {
+  if (!order?.column) {
     return null;
   }
-
-  if (accessToken) {
-    return accessToken;
+  let orderValue = `${order.column}.${order.ascending === false ? 'desc' : 'asc'}`;
+  if (order.nullsFirst !== undefined) {
+    orderValue += order.nullsFirst ? '.nullsfirst' : '.nullslast';
   }
-
-  try {
-    const { data, error } = await supabase.auth.getSession();
-    if (error) {
-      console.error('Failed to resolve Supabase session', error);
-    }
-    const sessionToken = data?.session?.access_token;
-    if (sessionToken) {
-      return sessionToken;
-    }
-  } catch (sessionError) {
-    console.error('Unexpected error while resolving Supabase session', sessionError);
-  }
-
-  if (requireSession) {
-    throw new Error('Supabase session is required but not available.');
-  }
-
-  return SUPABASE_ANON_KEY ?? null;
-};
-
-export const getAuthHeaders = async ({ accessToken, requireSession = false } = {}) => {
-  if (!isSupabaseConfigured) {
-    return {};
-  }
-
-  const token = await resolveAccessToken({ accessToken, requireSession });
-  if (!token) {
-    return {};
-  }
-
-  return {
-    apikey: SUPABASE_ANON_KEY,
-    Authorization: `Bearer ${token}`,
-  };
-};
-
-const parseFilters = (filters = {}) => {
-  const searchParams = new URLSearchParams();
-  Object.entries(filters).forEach(([key, value]) => {
-    if (value !== undefined && value !== null) {
-      searchParams.append(key, value);
-    }
-  });
-  return searchParams;
+  return orderValue;
 };
 
 const request = async (
   table,
-  {
-    method = 'GET',
-    filters,
-    body,
-    prefer,
-    signal,
-    headers = {},
-    select,
-    order,
-    accessToken,
-    requireSession = false,
-  } = {},
+  { method = 'GET', filters, order, select = '*', body, signal, prefer } = {},
 ) => {
-  if (!isSupabaseConfigured) {
-    throw new Error('Supabase is not configured. Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY.');
+  if (!REST_ENDPOINT) {
+    throw new Error('Supabase is not configured.');
   }
-  const searchParams = parseFilters(filters);
+
+  const url = new URL(`${REST_ENDPOINT}/${table}`);
   if (select) {
-    searchParams.set('select', select);
+    url.searchParams.set('select', select);
   }
-  if (order?.column) {
-    const direction = order.ascending === false ? 'desc' : 'asc';
-    searchParams.set('order', `${order.column}.${direction}`);
+  if (filters) {
+    const filterParams = toSearchParams(filters);
+    filterParams.forEach((value, key) => {
+      url.searchParams.set(key, value);
+    });
   }
-  const url = `${REST_ENDPOINT}/${table}${
-    searchParams.toString() ? `?${searchParams.toString()}` : ''
-  }`;
-  const authHeaders = await getAuthHeaders({ accessToken, requireSession });
-  const response = await fetch(url, {
+  const orderValue = buildOrderParam(order);
+  if (orderValue) {
+    url.searchParams.set('order', orderValue);
+  }
+
+  const headers = { ...DEFAULT_HEADERS };
+  if (prefer) {
+    headers.Prefer = prefer;
+  }
+
+  let payload;
+  if (body !== undefined) {
+    headers['Content-Type'] = 'application/json';
+    payload = typeof body === 'string' ? body : JSON.stringify(body);
+  }
+
+  const response = await fetch(url.toString(), {
     method,
-    headers: {
-      ...authHeaders,
-      ...(body ? { 'Content-Type': 'application/json' } : {}),
-      ...(prefer ? { Prefer: prefer } : {}),
-      ...headers,
-    },
-    body: body ? JSON.stringify(body) : undefined,
+    headers,
+    body: payload,
     signal,
   });
+
   if (!response.ok) {
-    const errorText = await response.text();
-    let parsed = null;
-    try {
-      parsed = errorText ? JSON.parse(errorText) : null;
-    } catch (parseError) {
-      parsed = null;
-    }
-    const error = new Error(`Supabase request failed (${response.status}): ${errorText}`);
-    error.status = response.status;
-    if (parsed && typeof parsed === 'object') {
-      error.code = parsed.code;
-      error.details = parsed.details;
-      error.hint = parsed.hint;
-      error.supabase = parsed;
-      if (typeof parsed.message === 'string') {
-        error.supabaseMessage = parsed.message;
-      }
-    }
-    throw error;
+    throw await buildError(response);
   }
+
   if (response.status === 204) {
     return null;
   }
+
   const text = await response.text();
-  if (!text) return null;
+  if (!text) {
+    return null;
+  }
+
   try {
     return JSON.parse(text);
   } catch (error) {
@@ -209,89 +191,40 @@ export const supabaseStorageUpload = async (
   bucket,
   objectPath,
   body,
-  {
-    contentType = 'application/octet-stream',
-    upsert = true,
-    accessToken,
-    requireSession = false,
-  } = {},
+  { contentType = 'application/octet-stream', upsert = true } = {},
 ) => {
-  if (!isSupabaseConfigured) {
+  if (!isSupabaseConfigured || !STORAGE_ENDPOINT) {
     throw new Error('Supabase is not configured. Unable to upload to storage.');
   }
-  const url = `${STORAGE_ENDPOINT}/${bucket}/${encodeStoragePath(objectPath)}${
-    upsert ? '?upsert=true' : ''
-  }`;
-  const authHeaders = await getAuthHeaders({ accessToken, requireSession });
+
+  const url = `${STORAGE_ENDPOINT}/${bucket}/${encodeStoragePath(objectPath)}${upsert ? '?upsert=true' : ''}`;
+
   const response = await fetch(url, {
     method: 'PUT',
     headers: {
-      ...authHeaders,
+      ...AUTH_HEADERS,
       'Content-Type': contentType,
     },
     body,
   });
+
   if (!response.ok) {
     const errorText = await response.text();
     throw new Error(`Supabase storage upload failed (${response.status}): ${errorText}`);
   }
-  return response.json().catch(() => null);
+
+  try {
+    return await response.json();
+  } catch (error) {
+    return null;
+  }
 };
 
 export const buildStorageObjectUrl = (bucket, objectPath) => {
-  if (!isSupabaseConfigured) return null;
-  return `${SUPABASE_URL.replace(/\/$/, '')}/storage/v1/object/${bucket}/${objectPath}`;
-};
-
-export const subscribeToTable = (
-  { schema = 'public', table, event = '*', filter },
-  callback,
-) => {
-  if (!isSupabaseConfigured || !supabase) {
-    console.warn('Supabase realtime subscription skipped. Supabase is not configured.');
-    return () => {};
+  if (!isSupabaseConfigured) {
+    return null;
   }
-
-  const channelName = `table:${schema}:${table}:${Math.random().toString(36).slice(2)}`;
-  const channel = supabase.channel(channelName);
-
-  channel.on(
-    'postgres_changes',
-    {
-      event,
-      schema,
-      table,
-      ...(filter ? { filter } : {}),
-    },
-    (payload) => {
-      callback?.(payload);
-    },
-  );
-
-  channel
-    .subscribe((status) => {
-      if (status === 'CHANNEL_ERROR') {
-        console.error('Supabase realtime channel error', { schema, table, filter });
-      }
-    })
-    .catch((error) => {
-      console.error('Failed to subscribe to Supabase realtime channel', error);
-    });
-
-  let active = true;
-
-  return () => {
-    if (!active) return;
-    active = false;
-    channel.unsubscribe().catch((error) => {
-      console.error('Failed to unsubscribe from Supabase realtime channel', error);
-    });
-  };
-};
-
-export const supabaseEnvironment = {
-  url: SUPABASE_URL,
-  anonKey: SUPABASE_ANON_KEY,
+  return `${SUPABASE_URL.replace(/\/$/, '')}/storage/v1/object/${bucket}/${objectPath}`;
 };
 
 const includesCaseInsensitive = (source, search) => {
@@ -338,3 +271,57 @@ export const isColumnMissingError = (error, column) => {
   }
   return false;
 };
+
+export const subscribeToTable = (
+  { schema = 'public', table, event = '*', filter },
+  callback,
+) => {
+  if (!isSupabaseConfigured || !supabaseClient) {
+    console.warn('Supabase realtime subscription skipped. Supabase is not configured.');
+    return () => {};
+  }
+  if (!table) {
+    console.warn('Supabase realtime subscription skipped. Table is required.');
+    return () => {};
+  }
+
+  const channelName = [`realtime`, schema, table, event, filter ?? 'all']
+    .filter(Boolean)
+    .join('-');
+
+  const channel = supabaseClient
+    .channel(channelName)
+    .on(
+      'postgres_changes',
+      {
+        event,
+        schema,
+        table,
+        ...(filter ? { filter } : {}),
+      },
+      (payload) => {
+        try {
+          callback(payload);
+        } catch (error) {
+          console.error('Supabase realtime callback failed', error);
+        }
+      },
+    );
+
+  channel.subscribe((status) => {
+    if (status === 'CHANNEL_ERROR') {
+      console.error(`Supabase realtime subscription error for ${channelName}`);
+    }
+  });
+
+  return () => {
+    supabaseClient.removeChannel(channel);
+  };
+};
+
+export const supabaseEnvironment = {
+  url: SUPABASE_URL,
+  anonKey: SUPABASE_ANON_KEY,
+};
+
+export const supabase = supabaseClient;

@@ -1,6 +1,4 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import AuthGate from './auth/AuthGate.jsx';
 import {
   AlertTriangle,
   Car,
@@ -25,7 +23,6 @@ import {
   isColumnMissingError,
   isSupabaseConfigured,
   subscribeToTable,
-  supabase,
   supabaseDelete,
   supabaseInsert,
   supabaseSelect,
@@ -40,7 +37,6 @@ import {
   sessionRowToState,
   toDriverRow,
 } from '../utils/raceData';
-import { useAuth } from '../context/AuthContext.jsx';
 import { useEventSession } from '../context/SessionContext.jsx';
 
 const DEFAULT_MARSHALS = [
@@ -181,11 +177,10 @@ const parseManualLap = (input) => {
 const formatSessionTimestamp = (value) =>
   value ? new Date(value).toLocaleString() : 'Not set';
 
-const TimingPanel = ({ sessionId: sessionIdProp = null }) => {
-  const navigate = useNavigate();
+const TimingPanel = () => {
   const {
     sessions,
-    activeSessionId: contextActiveSessionId,
+    activeSessionId,
     selectSession,
     createSession,
     startSession,
@@ -196,19 +191,8 @@ const TimingPanel = ({ sessionId: sessionIdProp = null }) => {
     supportsSessions,
     fallbackToLegacySchema,
   } = useEventSession();
-  const activeSessionId = sessionIdProp ?? contextActiveSessionId;
-  const { status, profile } = useAuth();
-  const isAuthenticated = status === 'authenticated';
-  const isAdmin = profile?.role?.toLowerCase() === 'admin';
-  const supabaseClient = supabase;
   const sessionId = activeSessionId ?? LEGACY_SESSION_ID;
   const fallbackSessionId = sessionId;
-
-  useEffect(() => {
-    if (sessionIdProp && sessionIdProp !== contextActiveSessionId) {
-      selectSession(sessionIdProp);
-    }
-  }, [contextActiveSessionId, selectSession, sessionIdProp]);
 
   const activeSession = useMemo(
     () => sessions.find((session) => session.id === activeSessionId) ?? null,
@@ -236,22 +220,9 @@ const TimingPanel = ({ sessionId: sessionIdProp = null }) => {
     (event) => {
       const value = event.target.value;
       selectSession(value || null);
-      if (value) {
-        navigate(`/control/${value}`);
-      } else {
-        navigate('/sessions');
-      }
     },
-    [navigate, selectSession],
+    [selectSession],
   );
-
-  const handleCreateSession = useCallback(async () => {
-    const created = await createSession();
-    if (created?.id) {
-      selectSession(created.id);
-      navigate(`/control/${created.id}`);
-    }
-  }, [createSession, navigate, selectSession]);
 
   const [eventConfig, setEventConfig] = useState({
     eventType: DEFAULT_SESSION_STATE.eventType,
@@ -286,43 +257,6 @@ const TimingPanel = ({ sessionId: sessionIdProp = null }) => {
   const [bestLapDrafts, setBestLapDrafts] = useState({});
   const [marshalProfiles, setMarshalProfiles] = useState([]);
 
-  const assignedDriverIds = useMemo(() => {
-    if (!Array.isArray(profile?.assigned_driver_ids)) {
-      return [];
-    }
-    return profile.assigned_driver_ids
-      .map((id) => (typeof id === 'string' ? id.trim() : ''))
-      .filter(Boolean);
-  }, [profile?.assigned_driver_ids]);
-
-  const assignedDriverIdSet = useMemo(
-    () => new Set(assignedDriverIds),
-    [assignedDriverIds],
-  );
-
-  const marshalUserId = profile?.id ?? null;
-  const hasProfile = Boolean(profile);
-
-  const visibleDrivers = useMemo(() => {
-    if (isAdmin || !hasProfile) {
-      return drivers;
-    }
-    if (!assignedDriverIdSet.size && !marshalUserId) {
-      return [];
-    }
-    return drivers.filter((driver) => {
-      const driverMarshalId = resolveDriverMarshalId(driver);
-      const matchesAssigned =
-        assignedDriverIdSet.size > 0 && typeof driver.id === 'string'
-          ? assignedDriverIdSet.has(driver.id)
-          : false;
-      const matchesMarshal = marshalUserId
-        ? driverMarshalId === marshalUserId
-        : false;
-      return matchesAssigned || matchesMarshal;
-    });
-  }, [assignedDriverIdSet, drivers, hasProfile, isAdmin, marshalUserId]);
-
   const raceStartRef = useRef(null);
   const pauseStartRef = useRef(null);
   const pausedDurationRef = useRef(0);
@@ -344,17 +278,6 @@ const TimingPanel = ({ sessionId: sessionIdProp = null }) => {
   const lastRaceTimeSyncRef = useRef(0);
   const logsRef = useRef([]);
   const supabaseReady = isSupabaseConfigured && Boolean(supabaseClient) && isAuthenticated;
-  const [isBootstrapped, setIsBootstrapped] = useState(false);
-
-  useEffect(() => {
-    setIsBootstrapped(false);
-  }, [sessionId, supportsSessions]);
-
-  useEffect(() => {
-    if (!supabaseReady) {
-      setIsBootstrapped(false);
-    }
-  }, [supabaseReady]);
 
   const withSessionFilter = useCallback(
     (filters = {}, sessionOverride = sessionId) =>
@@ -485,7 +408,7 @@ const TimingPanel = ({ sessionId: sessionIdProp = null }) => {
       const mapped = rows.map((row) => ({
         id: row.id ?? createClientId(),
         action: row.message ?? '',
-        marshalId: row.marshal_id ?? 'Race Control',
+        marshalId: row.marshal_user_id ?? row.marshal_id ?? 'Race Control',
         timestamp: row.created_at ? new Date(row.created_at) : new Date(),
       }));
       const trimmed = mapped.slice(0, LOG_LIMIT);
@@ -507,18 +430,7 @@ const TimingPanel = ({ sessionId: sessionIdProp = null }) => {
       setIsInitialising(false);
       return;
     }
-    if (!isAuthenticated) {
-      setIsInitialising(false);
-      setIsBootstrapped(false);
-      return;
-    }
     if (!supabaseReady) {
-      setIsBootstrapped(false);
-      return;
-    }
-    if (supportsSessions && !activeSessionId) {
-      setIsInitialising(false);
-      setIsBootstrapped(false);
       return;
     }
     setIsInitialising(true);
@@ -540,6 +452,7 @@ const TimingPanel = ({ sessionId: sessionIdProp = null }) => {
               number: driver.number,
               name: driver.name,
               team: driver.team,
+              marshal_user_id: driver.marshalId,
               marshal_id: driver.marshalId,
               laps: 0,
               last_lap_ms: null,
@@ -586,7 +499,7 @@ const TimingPanel = ({ sessionId: sessionIdProp = null }) => {
         };
         await supabaseUpsert('session_state', sanitizeRowsForSupabase([sessionRow], sessionId));
       }
-      const hydrated = sessionRowToState(sessionRow);
+      const hydrated = sessionRowToState(hydratedRow);
       sessionStateRef.current = {
         ...sessionRow,
         session_id: sessionId,
@@ -636,7 +549,6 @@ const TimingPanel = ({ sessionId: sessionIdProp = null }) => {
           : [],
       }));
 
-      setIsBootstrapped(true);
       setSupabaseError(null);
     } catch (error) {
       if (handleSchemaMismatch(error)) {
@@ -647,7 +559,6 @@ const TimingPanel = ({ sessionId: sessionIdProp = null }) => {
           'Unable to load data from Supabase. Confirm credentials and schema are correct.',
         );
       }
-      setIsBootstrapped(false);
     } finally {
       setIsInitialising(false);
     }
@@ -655,16 +566,9 @@ const TimingPanel = ({ sessionId: sessionIdProp = null }) => {
     activeSessionId,
     applyDriverData,
     handleSchemaMismatch,
-    isAuthenticated,
-    isAdmin,
-    isSupabaseConfigured,
-    profile,
     refreshLogsFromSupabase,
     sanitizeRowsForSupabase,
     sessionId,
-    supabaseClient,
-    supabaseReady,
-    supportsSessions,
     withSessionFilter,
   ]);
 
@@ -722,7 +626,7 @@ const TimingPanel = ({ sessionId: sessionIdProp = null }) => {
       const entry = {
         id: createClientId(),
         action,
-        marshalId,
+        marshalId: actor,
         timestamp: new Date(),
       };
       setLogs((prev) => {
@@ -739,6 +643,7 @@ const TimingPanel = ({ sessionId: sessionIdProp = null }) => {
                 {
                   id: entry.id,
                   message: action,
+                  marshal_user_id: marshalId,
                   marshal_id: marshalId,
                   session_id: sessionId,
                   created_at: entry.timestamp.toISOString(),
@@ -839,130 +744,92 @@ const TimingPanel = ({ sessionId: sessionIdProp = null }) => {
   }, [activeSessionId]);
 
   useEffect(() => {
-    let unsubscribers = [];
-    let cancelled = false;
-
-    const setupRealtime = async () => {
-      if (!supabaseReady || !supabaseClient) {
-        return;
-      }
-
-      try {
-        const { data, error } = await supabaseClient.auth.getSession();
-        if (cancelled) {
-          return;
+    if (!isSupabaseConfigured) {
+      return () => {};
+    }
+    const subscriptionConfig = (table) =>
+      supportsSessions ? { table, filter: `session_id=eq.${sessionId}` } : { table };
+    const driverUnsub = subscribeToTable(
+      subscriptionConfig('drivers'),
+      () => {
+        refreshDriversFromSupabase();
+      },
+    );
+    const lapUnsub = subscribeToTable(
+      subscriptionConfig('laps'),
+      () => {
+        refreshDriversFromSupabase();
+      },
+    );
+    const sessionUnsub = subscribeToTable(
+      subscriptionConfig('session_state'),
+      (payload) => {
+        if (payload?.new) {
+          const hydrated = sessionRowToState(payload.new);
+          sessionStateRef.current = {
+            ...payload.new,
+            session_id: sessionId,
+            track_status: hydrated.trackStatus,
+            flag_status: hydrated.flagStatus,
+          };
+          setLogs((prev) => {
+            if (prev.some((log) => log.id === entry.id)) {
+              return prev;
+            }
+            const next = [entry, ...prev].slice(0, LOG_LIMIT);
+            logsRef.current = next;
+            return next;
+          });
         }
-        if (error) {
-          console.error('Failed to resolve Supabase session for realtime subscriptions', error);
+      },
+    );
+    const logUnsub = subscribeToTable(
+      subscriptionConfig('race_events'),
+      (payload) => {
+        if (payload?.new) {
+          const entry = {
+            id: payload.new.id ?? createClientId(),
+            action: payload.new.message ?? '',
+            marshalId:
+              payload.new.marshal_user_id ?? payload.new.marshal_id ?? 'Race Control',
+            timestamp: payload.new.created_at
+              ? new Date(payload.new.created_at)
+              : new Date(),
+          };
+          setLogs((prev) => {
+            if (prev.some((log) => log.id === entry.id)) {
+              return prev;
+            }
+            const next = [entry, ...prev].slice(0, LOG_LIMIT);
+            logsRef.current = next;
+            return next;
+          });
         }
-        const session = data?.session;
-        if (!session) {
-          return;
-        }
-      } catch (sessionError) {
-        console.error('Failed to load Supabase session for realtime subscriptions', sessionError);
-        return;
-      }
-
-      if (cancelled || !isBootstrapped) {
-        return;
-      }
-
-      if (supportsSessions && !activeSessionId) {
-        return;
-      }
-
-      const subscriptionConfig = (table) =>
-        supportsSessions ? { table, filter: `session_id=eq.${sessionId}` } : { table };
-
-      const driverUnsub = subscribeToTable(
-        subscriptionConfig('drivers'),
-        () => {
-          refreshDriversFromSupabase();
-        },
-      );
-      const lapUnsub = subscribeToTable(
-        subscriptionConfig('laps'),
-        () => {
-          refreshDriversFromSupabase();
-        },
-      );
-      const sessionUnsub = subscribeToTable(
-        subscriptionConfig('session_state'),
-        (payload) => {
-          if (payload?.new) {
-            const hydrated = sessionRowToState(payload.new);
-            sessionStateRef.current = {
-              ...payload.new,
-              id: payload.new.id ?? sessionId,
-              session_id: sessionId,
-              track_status: hydrated.trackStatus,
-              flag_status: hydrated.flagStatus,
-            };
-            setEventConfig((prev) => ({
-              ...prev,
-              eventType: hydrated.eventType,
-              totalLaps: hydrated.totalLaps,
-              totalDuration: hydrated.totalDuration,
-            }));
-            setProcedurePhase(hydrated.procedurePhase);
-            setTrackStatus(hydrated.trackStatus);
-            setAnnouncement(hydrated.announcement);
-            setAnnouncementDraft(hydrated.announcement);
-            setIsTiming(hydrated.isTiming);
-            setIsPaused(hydrated.isPaused);
-            setRaceTime(hydrated.raceTime);
-          }
-        },
-      );
-      const logUnsub = subscribeToTable(
-        subscriptionConfig('race_events'),
-        (payload) => {
-          if (payload?.new) {
-            const entry = {
-              id: payload.new.id ?? createClientId(),
-              action: payload.new.message ?? '',
-              marshalId: payload.new.marshal_id ?? 'Race Control',
-              timestamp: payload.new.created_at
-                ? new Date(payload.new.created_at)
-                : new Date(),
-            };
-            setLogs((prev) => {
-              if (prev.some((log) => log.id === entry.id)) {
-                return prev;
-              }
-              const next = [entry, ...prev].slice(0, LOG_LIMIT);
-              logsRef.current = next;
-              return next;
-            });
-          }
-        },
-      );
-
-      unsubscribers = [driverUnsub, lapUnsub, sessionUnsub, logUnsub];
-    };
-
-    void setupRealtime();
-
+      },
+    );
     return () => {
-      cancelled = true;
-      unsubscribers.forEach((unsub) => {
-        try {
-          unsub?.();
-        } catch (unsubscribeError) {
-          console.error('Failed to unsubscribe from Supabase realtime channel', unsubscribeError);
-        }
-      });
+      try {
+        driverUnsub?.();
+      } catch (error) {
+        console.error('Failed to unsubscribe driver channel', error);
+      }
+      try {
+        lapUnsub?.();
+      } catch (error) {
+        console.error('Failed to unsubscribe lap channel', error);
+      }
+      try {
+        sessionUnsub?.();
+      } catch (error) {
+        console.error('Failed to unsubscribe session channel', error);
+      }
+      try {
+        logUnsub?.();
+      } catch (error) {
+        console.error('Failed to unsubscribe log channel', error);
+      }
     };
-  }, [
-    activeSessionId,
-    isBootstrapped,
-    refreshDriversFromSupabase,
-    sessionId,
-    supabaseClient,
-    supabaseReady,
-    supportsSessions,
-  ]);
+  }, [activeSessionId, refreshDriversFromSupabase, sessionId, supportsSessions]);
 
   const getMarshalName = useCallback(
     (marshalId) => {
@@ -996,7 +863,7 @@ const TimingPanel = ({ sessionId: sessionIdProp = null }) => {
         }),
       );
       if (!updatedDriver) return;
-      const marshalName = getMarshalName(resolveDriverMarshalId(updatedDriver));
+      const marshalName = getMarshalName(updatedDriver.marshalId);
       void logAction(
         `Best lap overridden for #${updatedDriver.number} (${formatLapTime(lapMs)})`,
         marshalName,
@@ -1213,7 +1080,7 @@ const TimingPanel = ({ sessionId: sessionIdProp = null }) => {
       setRecentLapDriverId(null);
     }, 500);
     if (updatedDriver) {
-      const marshalName = getMarshalName(resolveDriverMarshalId(updatedDriver));
+      const marshalName = getMarshalName(updatedDriver.marshalId);
       void logAction(
         `Lap recorded for #${updatedDriver.number} (${formatLapTime(
           updatedDriver.lastLap,
@@ -1270,7 +1137,7 @@ const TimingPanel = ({ sessionId: sessionIdProp = null }) => {
     if (retiredDriver) {
       void logAction(
         `Driver #${retiredDriver.number} retired`,
-        getMarshalName(resolveDriverMarshalId(retiredDriver)),
+        getMarshalName(retiredDriver.marshalId),
       );
       void persistDriverState(retiredDriver);
     }
@@ -1297,7 +1164,7 @@ const TimingPanel = ({ sessionId: sessionIdProp = null }) => {
         `Pit stop ${updatedDriver.pitComplete ? 'completed' : 'cleared'} for #${
           updatedDriver.number
         }`,
-        getMarshalName(resolveDriverMarshalId(updatedDriver)),
+        getMarshalName(updatedDriver.marshalId),
       );
       void persistDriverState(updatedDriver);
     }
@@ -1347,7 +1214,7 @@ const TimingPanel = ({ sessionId: sessionIdProp = null }) => {
       if (!updatedDriver) {
         return;
       }
-      const marshalName = getMarshalName(resolveDriverMarshalId(updatedDriver));
+      const marshalName = getMarshalName(updatedDriver.marshalId);
       void logAction(
         `Lap invalidated for #${updatedDriver.number}`,
         marshalName,
@@ -1415,7 +1282,7 @@ const TimingPanel = ({ sessionId: sessionIdProp = null }) => {
       if (!updatedDriver) {
         return;
       }
-      const marshalName = getMarshalName(resolveDriverMarshalId(updatedDriver));
+      const marshalName = getMarshalName(updatedDriver.marshalId);
       void logAction(
         `Lap restarted for #${updatedDriver.number} after invalidation`,
         marshalName,
@@ -1442,7 +1309,7 @@ const TimingPanel = ({ sessionId: sessionIdProp = null }) => {
       if (driverIndex === -1) {
         return;
       }
-      const driver = visibleDrivers[driverIndex];
+      const driver = drivers[driverIndex];
       if (!driver) {
         return;
       }
@@ -1466,7 +1333,7 @@ const TimingPanel = ({ sessionId: sessionIdProp = null }) => {
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
     };
-  }, [invalidateLastLap, logLap, startLapAfterInvalid, togglePitStop, visibleDrivers]);
+  }, [drivers, invalidateLastLap, logLap, startLapAfterInvalid, togglePitStop]);
 
   const setDriverFlag = (driverId, driverFlag) => {
     let flaggedDriver = null;
@@ -1482,7 +1349,7 @@ const TimingPanel = ({ sessionId: sessionIdProp = null }) => {
     if (flaggedDriver) {
       void logAction(
         `Driver alert set to ${driverFlag.toUpperCase()} for #${flaggedDriver.number}`,
-        getMarshalName(resolveDriverMarshalId(flaggedDriver)),
+        getMarshalName(flaggedDriver.marshalId),
       );
       void persistDriverState(flaggedDriver);
     }
@@ -1511,7 +1378,7 @@ const TimingPanel = ({ sessionId: sessionIdProp = null }) => {
       return { key: -best, secondary: best };
     };
 
-    const sorted = [...visibleDrivers]
+    const sorted = [...drivers]
       .map((driver) => ({ driver, metric: metric(driver) }))
       .sort((a, b) => {
         if (eventConfig.eventType === 'Race') {
@@ -1570,7 +1437,7 @@ const TimingPanel = ({ sessionId: sessionIdProp = null }) => {
       });
 
     return sorted;
-  }, [eventConfig.eventType, visibleDrivers]);
+  }, [drivers, eventConfig.eventType]);
 
   const openSetup = () => {
     const sessionId = activeSessionId ?? LEGACY_SESSION_ID;
@@ -1855,7 +1722,7 @@ const TimingPanel = ({ sessionId: sessionIdProp = null }) => {
                   {isSessionLoading ? 'Refreshing…' : 'Refresh'}
                 </button>
                 <button
-                  onClick={() => void handleCreateSession()}
+                  onClick={() => void createSession()}
                   className="rounded-lg border border-[#9FF7D3]/40 bg-[#9FF7D3]/10 px-3 py-2 font-semibold uppercase tracking-wide text-[#9FF7D3] transition hover:border-[#9FF7D3]"
                 >
                   New Session
@@ -2066,15 +1933,13 @@ const TimingPanel = ({ sessionId: sessionIdProp = null }) => {
                   Click or use hotkeys to log laps instantly.
                 </span>
               </div>
-              {visibleDrivers.length === 0 ? (
+              {drivers.length === 0 ? (
                 <div className="rounded-2xl border border-white/5 bg-[#0b1022]/80 p-6 text-center text-sm text-white/60">
-                  {drivers.length === 0
-                    ? 'No drivers configured. Add drivers in setup to begin timing.'
-                    : 'No drivers assigned to you yet. Contact race control for access.'}
+                  No drivers configured. Add drivers in setup to begin timing.
                 </div>
               ) : (
                 <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
-                  {visibleDrivers.map((driver, index) => {
+                  {drivers.map((driver, index) => {
                     const canLogLap =
                       isTiming &&
                       !isPaused &&
@@ -2082,7 +1947,7 @@ const TimingPanel = ({ sessionId: sessionIdProp = null }) => {
                       !driver.hasInvalidToResolve;
                     const cardHotkey = HOTKEYS[index] ?? null;
                     const isFlashing = recentLapDriverId === driver.id;
-                    const marshalName = getMarshalName(resolveDriverMarshalId(driver));
+                    const marshalName = getMarshalName(driver.marshalId);
                     const pitMarked = driver.pitComplete;
                     const statusClass =
                       driver.status === 'ontrack'
@@ -2296,7 +2161,7 @@ const TimingPanel = ({ sessionId: sessionIdProp = null }) => {
                           <td className="px-2 py-2">
                             <div className="font-semibold text-neutral-100">{driver.name}</div>
                             <div className="text-[10px] text-neutral-500">
-                              {getMarshalName(resolveDriverMarshalId(driver))}
+                              {getMarshalName(driver.marshalId)}
                             </div>
                           </td>
                           <td className="px-2 py-2 text-center font-semibold">{driver.laps}</td>
@@ -2331,16 +2196,7 @@ const TimingPanel = ({ sessionId: sessionIdProp = null }) => {
               </div>
               <ul className="mt-3 space-y-2 text-xs text-neutral-300">
                 {eventConfig.marshals.map((marshal) => {
-                  const assignedDrivers = visibleDrivers.filter((driver) => {
-                    const driverMarshalId = resolveDriverMarshalId(driver);
-                    if (driverMarshalId) {
-                      return driverMarshalId === marshal.id;
-                    }
-                    if (marshal.id === marshalUserId && assignedDriverIdSet.size > 0) {
-                      return typeof driver.id === 'string' && assignedDriverIdSet.has(driver.id);
-                    }
-                    return false;
-                  });
+                  const assignedDrivers = drivers.filter((driver) => driver.marshalId === marshal.id);
                   return (
                     <li
                       key={marshal.id}

@@ -10,6 +10,7 @@ export const toDriverRow = (driver) => ({
   name: driver.name,
   team: driver.team,
   marshal_user_id: driver.marshalId ? driver.marshalId : null,
+  marshal_id: driver.marshalId ? driver.marshalId : null,
   laps: driver.laps,
   last_lap_ms: driver.lastLap,
   best_lap_ms: driver.bestLap,
@@ -102,15 +103,12 @@ export const hydrateDriverState = (driverRow, lapRowsMap) => {
     (lapEntries.length ? lapEntries[lapEntries.length - 1].lapTime : null);
   const bestLap =
     parseInteger(driverRow.best_lap_ms) ?? (lapTimes.length ? Math.min(...lapTimes) : null);
-  const marshalId =
-    driverRow.marshal_user_id ?? driverRow.marshal_id ?? driverRow.marshalId ?? null;
-
   return {
     id: driverRow.id,
     number: driverRow.number,
     name: driverRow.name,
     team: driverRow.team,
-    marshalId,
+    marshalId: driverRow.marshal_user_id ?? driverRow.marshal_id,
     sessionId: driverRow.session_id ?? LEGACY_SESSION_ID,
     laps,
     lapTimes,
@@ -139,32 +137,3 @@ export const sessionRowToState = (sessionRow) => ({
   isPaused: coerceBoolean(sessionRow?.is_paused, false),
   raceTime: parseInteger(sessionRow?.race_time_ms) ?? 0,
 });
-
-export async function invalidateLastLap(sessionId, driverId, supabaseClient) {
-  if (!supabaseClient || !sessionId || !driverId) return;
-
-  const { data: last, error } = await supabaseClient
-    .from('laps')
-    .select('id, lap_number')
-    .eq('session_id', sessionId)
-    .eq('driver_id', driverId)
-    .order('lap_number', { ascending: false })
-    .limit(1)
-    .maybeSingle();
-
-  if (error) {
-    console.error('Failed to fetch last lap for invalidation', error);
-    return;
-  }
-
-  if (!last) return;
-
-  const { error: updateError } = await supabaseClient
-    .from('laps')
-    .update({ invalidated: true })
-    .eq('id', last.id);
-
-  if (updateError) {
-    console.error('Failed to invalidate lap', updateError);
-  }
-}

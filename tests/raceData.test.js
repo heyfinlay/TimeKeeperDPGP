@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, test } from 'vitest';
 import {
   DEFAULT_SESSION_STATE,
   LEGACY_SESSION_ID,
@@ -46,7 +46,7 @@ describe('hydrateDriverState', () => {
         number: 7,
         name: 'Driver',
         team: 'Team',
-        marshal_id: 'm1',
+        marshal_user_id: 'm1',
         session_id: 'session-1',
         laps: '2',
         last_lap_ms: '59000',
@@ -62,24 +62,6 @@ describe('hydrateDriverState', () => {
     expect(driver.lapTimes).toEqual([60000, 59000]);
     expect(driver.lastLap).toBe(59000);
     expect(driver.sessionId).toBe('session-1');
-  });
-
-  test('hydrates marshal assignment from marshal_user_id fallback', () => {
-    const driver = hydrateDriverState(
-      {
-        id: 'driver-2',
-        number: 8,
-        name: 'Driver 2',
-        team: 'Team',
-        marshal_user_id: 'marshal-user-1',
-        session_id: 'session-2',
-        laps: '0',
-        total_time_ms: '0',
-      },
-      new Map(),
-    );
-
-    expect(driver.marshalId).toBe('marshal-user-1');
   });
 });
 
@@ -140,6 +122,7 @@ describe('toDriverRow', () => {
 
     expect(row).toMatchObject({
       marshal_user_id: 'm2',
+      marshal_id: 'm2',
       last_lap_ms: 60500,
       best_lap_ms: 60000,
       total_time_ms: 320000,
