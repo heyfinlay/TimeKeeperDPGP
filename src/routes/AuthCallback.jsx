@@ -16,11 +16,62 @@ export default function AuthCallback() {
 
     (async () => {
       try {
-        const { error } = await supabase.auth.exchangeCodeForSession(window.location.href);
+        const searchParams = new URLSearchParams(window.location.search ?? '');
+        const hashParams = new URLSearchParams((window.location.hash ?? '').replace(/^#/, ''));
+
+        const errorDescription =
+          searchParams.get('error_description') ||
+          hashParams.get('error_description') ||
+          hashParams.get('error');
+        if (errorDescription) {
+          console.error('Supabase auth callback returned an error', errorDescription);
+          if (isMounted) navigate('/', { replace: true });
+          return;
+        }
+
+        const authCode = searchParams.get('code') || hashParams.get('code');
+        if (!authCode) {
+          console.error('Supabase auth callback is missing an auth code.');
+          if (isMounted) navigate('/', { replace: true });
+          return;
+        }
+
+        const { error } = await supabase.auth.exchangeCodeForSession(authCode);
         if (error) {
           console.error('Failed to exchange auth code for session', error);
           if (isMounted) navigate('/', { replace: true });
           return;
+        }
+
+        try {
+          const cleanedUrl = new URL(window.location.href);
+          ['code', 'state', 'scope', 'provider', 'error', 'error_description'].forEach((param) => {
+            cleanedUrl.searchParams.delete(param);
+          });
+
+          if (cleanedUrl.hash) {
+            const hashSearchParams = new URLSearchParams(cleanedUrl.hash.replace(/^#/, ''));
+            [
+              'code',
+              'access_token',
+              'refresh_token',
+              'expires_in',
+              'token_type',
+              'provider',
+              'error',
+              'error_description',
+              'provider_token',
+              'provider_refresh_token',
+            ].forEach((param) => {
+              hashSearchParams.delete(param);
+            });
+            const newHash = hashSearchParams.toString();
+            cleanedUrl.hash = newHash ? `#${newHash}` : '';
+          }
+
+          window.history.replaceState(null, document.title, `${cleanedUrl.pathname}${cleanedUrl.search}${cleanedUrl.hash}`);
+        } catch (urlError) {
+          console.warn('Failed to clean auth params from callback URL', urlError);
         }
 
         const {
