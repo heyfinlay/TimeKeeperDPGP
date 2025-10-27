@@ -152,11 +152,28 @@ create unique index if not exists session_state_session_unique_idx
 
 create or replace function public.is_admin()
 returns boolean
-language sql
+language plpgsql
 stable
+security definer
+set search_path = public
 as $$
-  select coalesce(auth.jwt()->>'role', '') = 'admin';
+declare
+  jwt_role text := coalesce(auth.jwt()->>'role', '');
+begin
+  if jwt_role = 'admin' then
+    return true;
+  end if;
+
+  return exists (
+    select 1
+    from public.profiles p
+    where p.id = auth.uid()
+      and p.role = 'admin'
+  );
+end;
 $$;
+
+grant execute on function public.is_admin() to authenticated, anon;
 
 create or replace function public.session_has_access(target_session_id uuid)
 returns boolean
@@ -336,44 +353,24 @@ create policy "Profiles are readable by owner or admins" on public.profiles
   for select
   using (
     auth.uid() = id
-    or exists (
-      select 1
-      from public.profiles as p
-      where p.id = auth.uid() and p.role = 'admin'
-    )
+    or public.is_admin()
   );
 
 create policy "Profiles are manageable by owner or admins" on public.profiles
   for all
   using (
     auth.uid() = id
-    or exists (
-      select 1
-      from public.profiles as p
-      where p.id = auth.uid() and p.role = 'admin'
-    )
+    or public.is_admin()
   )
   with check (
     auth.uid() = id
-    or exists (
-      select 1
-      from public.profiles as p
-      where p.id = auth.uid() and p.role = 'admin'
-    )
+    or public.is_admin()
   );
 
 create policy "Drivers admin full access" on public.drivers
   for all
-  using (
-    exists (
-      select 1 from public.profiles as p where p.id = auth.uid() and p.role = 'admin'
-    )
-  )
-  with check (
-    exists (
-      select 1 from public.profiles as p where p.id = auth.uid() and p.role = 'admin'
-    )
-  );
+  using (public.is_admin())
+  with check (public.is_admin());
 
 create policy "Drivers marshal access" on public.drivers
   for select
