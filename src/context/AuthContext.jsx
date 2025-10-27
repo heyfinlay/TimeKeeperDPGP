@@ -8,6 +8,7 @@ import {
   useState,
 } from 'react';
 import { isSupabaseConfigured, supabase } from '../lib/supabaseClient.js';
+import { saveProfile } from '../lib/profile.js';
 
 const AuthContext = createContext({
   status: isSupabaseConfigured ? 'loading' : 'disabled',
@@ -15,6 +16,7 @@ const AuthContext = createContext({
   profile: null,
   signInWithDiscord: () => Promise.resolve(),
   signOut: () => Promise.resolve(),
+  updateProfile: () => Promise.resolve(),
 });
 
 const DEFAULT_PROFILE = {
@@ -148,6 +150,26 @@ export const AuthProvider = ({ children }) => {
     }
   }, []);
 
+  const updateProfile = useCallback(
+    async (patch = {}) => {
+      if (!isSupabaseConfigured || !supabase) {
+        throw new Error('Supabase is not configured.');
+      }
+      try {
+        const updated = await saveProfile(patch, { supabase, userId: user?.id });
+        if (updated) {
+          setProfile({ ...DEFAULT_PROFILE, ...updated });
+          setProfileError(null);
+        }
+        return updated;
+      } catch (updateError) {
+        console.error('Failed to update profile', updateError);
+        throw updateError;
+      }
+    },
+    [user?.id],
+  );
+
   const value = useMemo(
     () => ({
       status,
@@ -157,8 +179,9 @@ export const AuthProvider = ({ children }) => {
       signInWithDiscord,
       signOut,
       isSupabaseConfigured,
+      updateProfile,
     }),
-    [status, user, profile, profileError, signInWithDiscord, signOut],
+    [status, user, profile, profileError, signInWithDiscord, signOut, updateProfile],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
