@@ -263,10 +263,12 @@ with check (
   )
 );
 
-create policy if not exists "Members view membership"
+drop policy if exists "Members view membership" on public.session_members;
+
+create policy "Members view membership"
 on public.session_members
 for select
-using (public.session_has_access(public.session_members.session_id));
+using (auth.uid() = public.session_members.user_id);
 
 create policy if not exists "Admins manage session logs"
 on public.session_logs
