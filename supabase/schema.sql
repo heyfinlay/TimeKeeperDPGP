@@ -162,6 +162,8 @@ create or replace function public.session_has_access(target_session_id uuid)
 returns boolean
 language sql
 stable
+security definer
+set search_path = public
 as $$
   select
     public.is_admin()
@@ -183,6 +185,8 @@ as $$
       )
     );
 $$;
+
+grant execute on function public.session_has_access(uuid) to authenticated, anon;
 
 alter table public.sessions enable row level security;
 alter table public.session_members enable row level security;
