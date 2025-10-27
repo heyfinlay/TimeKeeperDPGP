@@ -129,7 +129,12 @@ export const AuthProvider = ({ children }) => {
 
   const signInWithDiscord = useCallback(async () => {
     if (!isSupabaseConfigured || !supabase) return;
-    const { error } = await supabase.auth.signInWithOAuth({ provider: 'discord' });
+    const redirectTo =
+      typeof window !== 'undefined' ? `${window.location.origin}/auth/callback` : undefined;
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider: 'discord',
+      options: redirectTo ? { redirectTo } : {},
+    });
     if (error) {
       console.error('Discord sign-in failed', error);
     }
