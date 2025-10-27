@@ -30,15 +30,28 @@ export default function AuthCallback() {
         }
 
         const authCode = searchParams.get('code') || hashParams.get('code');
-        if (!authCode) {
-          console.error('Supabase auth callback is missing an auth code.');
-          if (isMounted) navigate('/', { replace: true });
-          return;
-        }
+        const accessToken = hashParams.get('access_token');
+        const refreshToken = hashParams.get('refresh_token');
 
-        const { error } = await supabase.auth.exchangeCodeForSession(authCode);
-        if (error) {
-          console.error('Failed to exchange auth code for session', error);
+        if (authCode) {
+          const { error } = await supabase.auth.exchangeCodeForSession(authCode);
+          if (error) {
+            console.error('Failed to exchange auth code for session', error);
+            if (isMounted) navigate('/', { replace: true });
+            return;
+          }
+        } else if (accessToken && refreshToken) {
+          const { error } = await supabase.auth.setSession({
+            access_token: accessToken,
+            refresh_token: refreshToken,
+          });
+          if (error) {
+            console.error('Failed to set Supabase session from callback tokens', error);
+            if (isMounted) navigate('/', { replace: true });
+            return;
+          }
+        } else {
+          console.error('Supabase auth callback is missing an auth code and tokens.');
           if (isMounted) navigate('/', { replace: true });
           return;
         }
