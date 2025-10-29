@@ -1,14 +1,15 @@
 import { isSupabaseConfigured, supabase } from '@/lib/supabaseClient.js';
 
 const LOG_LAP_RPC = 'log_lap_atomic';
+const INVALIDATE_LAST_LAP_RPC = 'invalidate_last_lap_atomic';
 
-const isMissingRpcError = (error) => {
+const isMissingRpcError = (error, rpcName) => {
   if (!error) return false;
   if (error.code === 'PGRST116' || error.code === 'PGRST204') {
     return true;
   }
   const message = String(error.message ?? error.details ?? '').toLowerCase();
-  return message.includes(LOG_LAP_RPC) && message.includes('function');
+  return message.includes(rpcName) && message.includes('function');
 };
 
 const ensureSupabase = () => {
@@ -81,7 +82,7 @@ export async function logLapAtomic({ sessionId, driverId, lapTimeMs }) {
     p_lap_time_ms: lapTimeMs,
   });
   if (error) {
-    if (isMissingRpcError(error)) {
+    if (isMissingRpcError(error, LOG_LAP_RPC)) {
       return fallbackLogLap({ sessionId, driverId, lapTimeMs });
     }
     throw error;
@@ -89,26 +90,106 @@ export async function logLapAtomic({ sessionId, driverId, lapTimeMs }) {
   return data;
 }
 
-export async function invalidateLastLap({ sessionId, driverId }) {
-  ensureSupabase();
-  const { data: lastLap, error: selectError } = await supabase
+const fallbackInvalidateLastLap = async ({ sessionId, driverId, mode }) => {
+  const { data: lastLap, error: lastLapError } = await supabase
     .from('laps')
     .select('id')
     .eq('session_id', sessionId)
     .eq('driver_id', driverId)
-    .eq('invalidated', false)
-    .order('lap_number', { ascending: false })
+    .order('recorded_at', { ascending: false })
     .limit(1)
     .maybeSingle();
-  if (selectError) throw selectError;
+  if (lastLapError) throw lastLapError;
   if (!lastLap?.id) {
-    return null;
+    throw new Error('No laps recorded for this driver.');
   }
-  const { error: updateError } = await supabase
+
+  const lapUpdates = { invalidated: true };
+  if (mode === 'remove_lap') {
+    lapUpdates.checkpoint_missed = true;
+  } else {
+    lapUpdates.checkpoint_missed = false;
+  }
+
+  const { error: updateLapError } = await supabase
     .from('laps')
-    .update({ invalidated: true })
+    .update(lapUpdates)
     .eq('id', lastLap.id)
     .eq('session_id', sessionId);
-  if (updateError) throw updateError;
-  return lastLap;
+  if (updateLapError) throw updateLapError;
+
+  const { data: driverRow, error: driverError } = await supabase
+    .from('drivers')
+    .select('laps')
+    .eq('id', driverId)
+    .eq('session_id', sessionId)
+    .maybeSingle();
+  if (driverError) throw driverError;
+
+  const { data: validLaps, error: validLapsError } = await supabase
+    .from('laps')
+    .select('lap_time_ms, recorded_at')
+    .eq('session_id', sessionId)
+    .eq('driver_id', driverId)
+    .eq('invalidated', false);
+  if (validLapsError) throw validLapsError;
+
+  const timestampForLap = (lap) => {
+    if (!lap?.recorded_at) return 0;
+    const timestamp = new Date(lap.recorded_at).getTime();
+    return Number.isNaN(timestamp) ? 0 : timestamp;
+  };
+
+  const sortedValidLaps = Array.isArray(validLaps)
+    ? [...validLaps].sort((a, b) => timestampForLap(b) - timestampForLap(a))
+    : [];
+  const lastValidLap = sortedValidLaps[0]?.lap_time_ms ?? null;
+  const bestValidLap = sortedValidLaps.reduce((best, current) => {
+    if (current?.lap_time_ms === null || current?.lap_time_ms === undefined) {
+      return best;
+    }
+    return best === null ? current.lap_time_ms : Math.min(best, current.lap_time_ms);
+  }, null);
+  const totalValidTime = sortedValidLaps.reduce((sum, current) => {
+    if (current?.lap_time_ms === null || current?.lap_time_ms === undefined) {
+      return sum;
+    }
+    return sum + current.lap_time_ms;
+  }, 0);
+
+  let lapsCount = driverRow?.laps ?? 0;
+  if (mode === 'remove_lap') {
+    lapsCount = Math.max(lapsCount - 1, 0);
+  }
+
+  const { error: updateDriverError } = await supabase
+    .from('drivers')
+    .update({
+      last_lap_ms: lastValidLap,
+      best_lap_ms: bestValidLap,
+      total_time_ms: totalValidTime,
+      laps: lapsCount,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', driverId)
+    .eq('session_id', sessionId);
+  if (updateDriverError) throw updateDriverError;
+
+  return lastLap.id;
+};
+
+export async function invalidateLastLap({ sessionId, driverId, mode = 'time_only' }) {
+  ensureSupabase();
+  const { error } = await supabase.rpc(INVALIDATE_LAST_LAP_RPC, {
+    p_session_id: sessionId,
+    p_driver_id: driverId,
+    p_mode: mode,
+  });
+  if (error) {
+    if (isMissingRpcError(error, INVALIDATE_LAST_LAP_RPC)) {
+      return fallbackInvalidateLastLap({ sessionId, driverId, mode });
+    }
+    throw error;
+  }
+  return null;
 }

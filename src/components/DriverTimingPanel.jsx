@@ -49,7 +49,7 @@ export default function DriverTimingPanel({ driver, canWrite = false }) {
   const sessionId = useSessionId();
   const [manualTime, setManualTime] = useState('');
   const [isSaving, setIsSaving] = useState(false);
-  const [isInvalidating, setIsInvalidating] = useState(false);
+  const [pendingInvalidation, setPendingInvalidation] = useState(null);
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(null);
 
@@ -94,19 +94,19 @@ export default function DriverTimingPanel({ driver, canWrite = false }) {
     }
   };
 
-  const handleInvalidate = async () => {
-    if (!canWrite || isInvalidating) return;
-    setIsInvalidating(true);
+  const handleInvalidate = async (mode) => {
+    if (!canWrite || pendingInvalidation) return;
+    setPendingInvalidation(mode);
     setError(null);
     setSuccess(null);
     try {
-      await invalidateLastLap({ sessionId, driverId: driver.id });
-      setSuccess('Last lap invalidated');
+      await invalidateLastLap({ sessionId, driverId: driver.id, mode });
+      setSuccess(mode === 'remove_lap' ? 'Lap removed' : 'Lap time invalidated');
     } catch (invalidateError) {
       console.error('Failed to invalidate lap', invalidateError);
       setError(invalidateError?.message ?? 'Unable to invalidate lap.');
     } finally {
-      setIsInvalidating(false);
+      setPendingInvalidation(null);
     }
   };
 
@@ -151,11 +151,19 @@ export default function DriverTimingPanel({ driver, canWrite = false }) {
           </button>
           <button
             type="button"
-            onClick={handleInvalidate}
-            disabled={!canWrite || isInvalidating}
+            onClick={() => handleInvalidate('time_only')}
+            disabled={!canWrite || Boolean(pendingInvalidation)}
+            className="rounded-full border border-amber-400/40 bg-amber-400/10 px-4 py-2 font-semibold text-amber-100 transition hover:border-amber-400/70 hover:text-white disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {pendingInvalidation === 'time_only' ? 'Invalidating…' : 'Invalidate time'}
+          </button>
+          <button
+            type="button"
+            onClick={() => handleInvalidate('remove_lap')}
+            disabled={!canWrite || Boolean(pendingInvalidation)}
             className="rounded-full border border-rose-500/40 bg-rose-500/10 px-4 py-2 font-semibold text-rose-200 transition hover:border-rose-500/70 hover:text-white disabled:cursor-not-allowed disabled:opacity-60"
           >
-            {isInvalidating ? 'Invalidating…' : 'Invalidate last'}
+            {pendingInvalidation === 'remove_lap' ? 'Removing…' : 'Remove lap'}
           </button>
         </div>
       </form>

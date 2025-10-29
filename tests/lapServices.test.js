@@ -23,6 +23,34 @@ const createFilterChain = (resultPromise) => {
   return chain;
 };
 
+const createLastLapChain = (resultPromise) => {
+  const maybeSingle = vi.fn(() => resultPromise);
+  const limit = vi.fn(() => ({ maybeSingle }));
+  const order = vi.fn(() => ({ limit }));
+  const secondEq = vi.fn(() => ({ order }));
+  const firstEq = vi.fn(() => ({ eq: secondEq }));
+  return {
+    select: vi.fn(() => ({ eq: firstEq })),
+    __firstEq: firstEq,
+    __secondEq: secondEq,
+    __order: order,
+    __limit: limit,
+    __maybeSingle: maybeSingle,
+  };
+};
+
+const createListSelectChain = (resultPromise) => {
+  const thirdEq = vi.fn(() => resultPromise);
+  const secondEq = vi.fn(() => ({ eq: thirdEq }));
+  const firstEq = vi.fn(() => ({ eq: secondEq }));
+  return {
+    select: vi.fn(() => ({ eq: firstEq })),
+    __firstEq: firstEq,
+    __secondEq: secondEq,
+    __thirdEq: thirdEq,
+  };
+};
+
 const createUpdateChain = (resultPromise) => {
   const secondEq = vi.fn(() => resultPromise);
   const firstEq = vi.fn(() => ({
@@ -158,12 +186,60 @@ describe('lap services', () => {
     expect(driverUpdateChain.__secondEq).toHaveBeenCalledWith('session_id', 'session-2');
   });
 
-  test('invalidateLastLap marks most recent lap', async () => {
+  test('invalidateLastLap uses RPC with default mode', async () => {
     supabase.rpc.mockResolvedValue({ data: null, error: null });
-    const selectChain = createFilterChain(
-      Promise.resolve({ data: { id: 'lap-10' }, error: null }),
+
+    await invalidateLastLap({ sessionId: 'session-3', driverId: 'driver-3' });
+
+    expect(supabase.rpc).toHaveBeenCalledWith('invalidate_last_lap_atomic', {
+      p_session_id: 'session-3',
+      p_driver_id: 'driver-3',
+      p_mode: 'time_only',
+    });
+    expect(supabase.from).not.toHaveBeenCalled();
+  });
+
+  test('invalidateLastLap allows removing laps', async () => {
+    supabase.rpc.mockResolvedValue({ data: null, error: null });
+
+    await invalidateLastLap({
+      sessionId: 'session-4',
+      driverId: 'driver-4',
+      mode: 'remove_lap',
+    });
+
+    expect(supabase.rpc).toHaveBeenCalledWith('invalidate_last_lap_atomic', {
+      p_session_id: 'session-4',
+      p_driver_id: 'driver-4',
+      p_mode: 'remove_lap',
+    });
+  });
+
+  test('invalidateLastLap falls back when RPC is missing', async () => {
+    supabase.rpc.mockResolvedValue({
+      data: null,
+      error: { code: 'PGRST116', message: 'function invalidate_last_lap_atomic does not exist' },
+    });
+
+    const lastLapChain = createLastLapChain(
+      Promise.resolve({ data: { id: 'lap-99' }, error: null }),
     );
-    const updateChain = createUpdateChain(
+    const updateLapChain = createUpdateChain(
+      Promise.resolve({ data: null, error: null }),
+    );
+    const driverSelectChain = createFilterChain(
+      Promise.resolve({ data: { laps: 8 }, error: null }),
+    );
+    const validLapListChain = createListSelectChain(
+      Promise.resolve({
+        data: [
+          { lap_time_ms: 65000, recorded_at: '2024-01-01T00:02:00Z' },
+          { lap_time_ms: 66000, recorded_at: '2024-01-01T00:01:00Z' },
+        ],
+        error: null,
+      }),
+    );
+    const driverUpdateChain = createUpdateChain(
       Promise.resolve({ data: null, error: null }),
     );
 
@@ -171,26 +247,55 @@ describe('lap services', () => {
     supabase.from.mockImplementation((table) => {
       if (table === 'laps' && call === 0) {
         call += 1;
-        return {
-          select: vi.fn(() => selectChain),
-        };
+        return lastLapChain;
       }
       if (table === 'laps' && call === 1) {
         call += 1;
-        return updateChain;
+        return updateLapChain;
       }
-      throw new Error(`Unexpected call ${call} for table ${table}`);
+      if (table === 'drivers' && call === 2) {
+        call += 1;
+        return { select: vi.fn(() => driverSelectChain) };
+      }
+      if (table === 'laps' && call === 3) {
+        call += 1;
+        return validLapListChain;
+      }
+      if (table === 'drivers' && call === 4) {
+        call += 1;
+        return driverUpdateChain;
+      }
+      throw new Error(`Unexpected table ${table} at call ${call}`);
     });
 
-    await invalidateLastLap({ sessionId: 'session-3', driverId: 'driver-3' });
+    await invalidateLastLap({ sessionId: 'session-5', driverId: 'driver-5', mode: 'remove_lap' });
 
-    expect(selectChain.eq.mock.calls).toEqual([
-      ['session_id', 'session-3'],
-      ['driver_id', 'driver-3'],
-      ['invalidated', false],
+    expect(supabase.rpc).toHaveBeenCalledWith('invalidate_last_lap_atomic', {
+      p_session_id: 'session-5',
+      p_driver_id: 'driver-5',
+      p_mode: 'remove_lap',
+    });
+
+    expect(lastLapChain.select).toHaveBeenCalledWith('id');
+    expect(lastLapChain.__firstEq).toHaveBeenCalledWith('session_id', 'session-5');
+    expect(lastLapChain.__secondEq).toHaveBeenCalledWith('driver_id', 'driver-5');
+    expect(lastLapChain.__order).toHaveBeenCalledWith('recorded_at', { ascending: false });
+    expect(lastLapChain.__limit).toHaveBeenCalledWith(1);
+    expect(updateLapChain.update).toHaveBeenCalledWith({ invalidated: true, checkpoint_missed: true });
+    expect(driverSelectChain.eq.mock.calls).toEqual([
+      ['id', 'driver-5'],
+      ['session_id', 'session-5'],
     ]);
-    expect(updateChain.update).toHaveBeenCalledWith({ invalidated: true });
-    expect(updateChain.__firstEq).toHaveBeenCalledWith('id', 'lap-10');
-    expect(updateChain.__secondEq).toHaveBeenCalledWith('session_id', 'session-3');
+    expect(validLapListChain.select).toHaveBeenCalledWith('lap_time_ms, recorded_at');
+    expect(validLapListChain.__firstEq).toHaveBeenCalledWith('session_id', 'session-5');
+    expect(validLapListChain.__secondEq).toHaveBeenCalledWith('driver_id', 'driver-5');
+    expect(validLapListChain.__thirdEq).toHaveBeenCalledWith('invalidated', false);
+    expect(driverUpdateChain.update).toHaveBeenCalledWith({
+      last_lap_ms: 65000,
+      best_lap_ms: 65000,
+      total_time_ms: 131000,
+      laps: 7,
+      updated_at: expect.any(String),
+    });
   });
 });
