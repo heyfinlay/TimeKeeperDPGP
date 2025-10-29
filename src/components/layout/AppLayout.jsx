@@ -20,10 +20,9 @@ const NAV_ITEMS = [
     hoverClass: 'hover:border-[#7C6BFF]/50 hover:text-[#7C6BFF]',
   },
   {
-    id: 'control',
-    label: 'Race Control',
-    buildPath: (activeSessionId) =>
-      activeSessionId ? `/control/${activeSessionId}` : '/sessions',
+    id: 'sessions',
+    label: 'Sessions',
+    buildPath: () => '/sessions',
     activeClass: 'bg-[#9FF7D3]/20 text-[#9FF7D3]',
     hoverClass: 'hover:border-[#9FF7D3]/50 hover:text-[#9FF7D3]',
     requiresAuth: true,

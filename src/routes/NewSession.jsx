@@ -2,14 +2,10 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext.jsx';
 import { useEventSession } from '@/context/SessionContext.jsx';
+import { supabase } from '@/lib/supabaseClient.js';
 import { DEFAULT_SESSION_STATE } from '@/utils/raceData.js';
 
 const EVENT_TYPES = ['Practice', 'Qualifying', 'Race'];
-
-const DEFAULT_MARSHALS = [
-  { id: 'marshal-1', name: 'Marshal 1' },
-  { id: 'marshal-2', name: 'Marshal 2' },
-];
 
 const DEFAULT_DRIVERS = [
   { id: 'driver-1', number: 1, name: 'Driver 1', team: 'Team EMS' },
@@ -38,12 +34,12 @@ const steps = [
   { title: 'Marshals & teams', description: 'Assign marshals and confirm team information.' },
 ];
 
-const toDriverDraft = (driver, marshals) => ({
+const toDriverDraft = (driver) => ({
   id: driver.id,
   number: String(driver.number ?? ''),
   name: driver.name ?? '',
   team: driver.team ?? '',
-  marshalId: marshals[0]?.id ?? '',
+  marshalId: '',
   enabled: true,
 });
 
@@ -66,9 +62,11 @@ export default function NewSession() {
     totalLaps: String(DEFAULT_SESSION_STATE.totalLaps),
     totalDuration: String(DEFAULT_SESSION_STATE.totalDuration),
   });
-  const [marshals, setMarshals] = useState(DEFAULT_MARSHALS);
+  const [marshalDirectory, setMarshalDirectory] = useState([]);
+  const [marshalDirectoryError, setMarshalDirectoryError] = useState(null);
+  const [isLoadingMarshals, setIsLoadingMarshals] = useState(false);
   const [drivers, setDrivers] = useState(() =>
-    DEFAULT_DRIVERS.map((driver) => toDriverDraft(driver, DEFAULT_MARSHALS)),
+    DEFAULT_DRIVERS.map((driver) => toDriverDraft(driver)),
   );
   const [error, setError] = useState(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -87,10 +85,81 @@ export default function NewSession() {
     [drivers],
   );
 
-  const marshalOptions = useMemo(
-    () => [{ id: '', name: 'Race Control' }, ...marshals],
-    [marshals],
-  );
+  const marshalOptions = useMemo(() => marshalDirectory, [marshalDirectory]);
+
+  const marshalLookup = useMemo(() => {
+    const map = new Map();
+    marshalDirectory.forEach((marshal) => {
+      map.set(marshal.id, marshal);
+    });
+    return map;
+  }, [marshalDirectory]);
+
+  const marshalAssignments = useMemo(() => {
+    const groups = new Map();
+    enabledDrivers.forEach((driver) => {
+      const marshalId = isUuid(driver.marshalId) ? driver.marshalId : null;
+      const key = marshalId ?? 'unassigned';
+      if (!groups.has(key)) {
+        const marshal = marshalId ? marshalLookup.get(marshalId) : null;
+        groups.set(key, {
+          id: marshalId,
+          label: marshalId
+            ? marshal?.name ?? `Marshal ${marshalId.slice(0, 8)}`
+            : 'Unassigned drivers',
+          drivers: [],
+          isMissingProfile: Boolean(marshalId && !marshal),
+        });
+      }
+      groups.get(key).drivers.push(driver);
+    });
+    return Array.from(groups.values());
+  }, [enabledDrivers, marshalLookup]);
+
+  useEffect(() => {
+    if (!isSupabaseConfigured || !supportsSessions || !supabase) {
+      setMarshalDirectory([]);
+      return;
+    }
+    let isMounted = true;
+    const loadMarshals = async () => {
+      setIsLoadingMarshals(true);
+      setMarshalDirectoryError(null);
+      try {
+        const { data, error } = await supabase
+          .from('profiles')
+          .select('id, display_name, role')
+          .eq('role', 'marshal')
+          .order('display_name', { ascending: true, nullsFirst: false });
+        if (error) {
+          throw error;
+        }
+        const directory = (data ?? []).map((entry) => ({
+          id: entry.id,
+          name: entry.display_name || entry.id.slice(0, 8),
+        }));
+        if (isMounted) {
+          setMarshalDirectory(directory);
+        }
+      } catch (loadError) {
+        console.error('Failed to load marshals', loadError);
+        if (isMounted) {
+          setMarshalDirectory([]);
+          setMarshalDirectoryError(
+            'Unable to load marshals from Supabase. Confirm marshal profiles exist before finishing setup.',
+          );
+        }
+      } finally {
+        if (isMounted) {
+          setIsLoadingMarshals(false);
+        }
+      }
+    };
+    void loadMarshals();
+    return () => {
+      isMounted = false;
+    };
+  }, [isSupabaseConfigured, supportsSessions]);
 
   const handleCreateSession = useCallback(
     async (event) => {
@@ -161,22 +230,9 @@ export default function NewSession() {
         number: '',
         name: '',
         team: '',
-        marshalId: marshals[0]?.id ?? '',
+        marshalId: '',
         enabled: true,
       },
-    ]);
-  }, [marshals]);
-
-  const handleMarshalNameChange = useCallback((marshalId, value) => {
-    setMarshals((prev) =>
-      prev.map((marshal) => (marshal.id === marshalId ? { ...marshal, name: value } : marshal)),
-    );
-  }, []);
-
-  const handleAddMarshal = useCallback(() => {
-    setMarshals((prev) => [
-      ...prev,
-      { id: createId('marshal'), name: `Marshal ${prev.length + 1}` },
     ]);
   }, []);
 
@@ -201,6 +257,25 @@ export default function NewSession() {
     setIsSubmitting(true);
     const sessionId = createdSession.id;
     try {
+      const driversMissingMarshal = enabledDrivers.filter(
+        (driver) => !isUuid(driver.marshalId),
+      );
+      if (driversMissingMarshal.length > 0) {
+        setError('Assign each driver to a marshal profile before finishing setup.');
+        setIsSubmitting(false);
+        return;
+      }
+
+      const availableMarshalIds = new Set(marshalDirectory.map((marshal) => marshal.id));
+      const missingMarshalProfiles = enabledDrivers.filter(
+        (driver) => !availableMarshalIds.has(driver.marshalId),
+      );
+      if (missingMarshalProfiles.length > 0) {
+        setError('One or more marshal assignments reference profiles that are not available in Supabase.');
+        setIsSubmitting(false);
+        return;
+      }
+
       const totalLaps = Number.parseInt(sessionStateDraft.totalLaps, 10);
       const totalDuration = Number.parseInt(sessionStateDraft.totalDuration, 10);
       const nowIso = new Date().toISOString();
@@ -292,6 +367,7 @@ export default function NewSession() {
   }, [
     createdSession?.id,
     enabledDrivers,
+    marshalDirectory,
     navigate,
     refreshSessions,
     seedSessionData,
@@ -473,6 +549,21 @@ export default function NewSession() {
               Add driver
             </button>
           </div>
+          {isLoadingMarshals ? (
+            <div className="rounded-2xl border border-white/10 bg-[#060910]/70 px-4 py-3 text-xs text-neutral-300">
+              Loading marshal profiles from Supabase…
+            </div>
+          ) : null}
+          {marshalDirectoryError ? (
+            <div className="rounded-2xl border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-xs text-amber-200">
+              {marshalDirectoryError}
+            </div>
+          ) : null}
+          {!isLoadingMarshals && !marshalDirectory.length ? (
+            <div className="rounded-2xl border border-rose-500/30 bg-rose-500/10 px-4 py-3 text-xs text-rose-200">
+              No marshal profiles were found. Create marshal accounts in Supabase and refresh before finishing setup.
+            </div>
+          ) : null}
           <div className="overflow-hidden rounded-2xl border border-white/5">
             <table className="min-w-full divide-y divide-white/5 text-sm text-neutral-200">
               <thead className="bg-white/5 text-xs uppercase tracking-[0.3em] text-neutral-400">
@@ -524,8 +615,9 @@ export default function NewSession() {
                         onChange={(event) => handleDriverChange(driver.id, 'marshalId', event.target.value)}
                         className="w-full rounded-full border border-white/10 bg-[#0B1120]/60 px-4 py-2 text-sm text-white outline-none transition focus:border-[#9FF7D3]/70 focus:ring-2 focus:ring-[#9FF7D3]/30"
                       >
+                        <option value="">Select marshal…</option>
                         {marshalOptions.map((marshal) => (
-                          <option key={marshal.id || 'race-control'} value={marshal.id}>
+                          <option key={marshal.id} value={marshal.id}>
                             {marshal.name}
                           </option>
                         ))}
@@ -564,30 +656,67 @@ export default function NewSession() {
           <div className="flex flex-col gap-3">
             <h2 className="text-lg font-semibold text-white">Marshal assignments</h2>
             <p className="text-sm text-neutral-400">
-              Update marshal call signs and confirm each driver&apos;s coverage before launching race control.
+              Confirm each marshal&apos;s Supabase profile and driver coverage before launching race control.
             </p>
           </div>
-          <div className="flex flex-col gap-3">
-            {marshals.map((marshal) => (
-              <div key={marshal.id} className="flex flex-col gap-2">
-                <label className="text-xs font-semibold uppercase tracking-[0.35em] text-neutral-500">
-                  Marshal {marshal.id.slice(0, 6)}
-                </label>
-                <input
-                  value={marshal.name}
-                  onChange={(event) => handleMarshalNameChange(marshal.id, event.target.value)}
-                  className="w-full rounded-full border border-white/10 bg-[#0B1120]/60 px-4 py-3 text-sm text-white outline-none transition focus:border-[#9FF7D3]/70 focus:ring-2 focus:ring-[#9FF7D3]/30"
-                />
+          {isLoadingMarshals ? (
+            <div className="rounded-2xl border border-white/10 bg-[#060910]/70 px-4 py-3 text-xs text-neutral-300">
+              Loading marshal profiles from Supabase…
+            </div>
+          ) : null}
+          {marshalDirectoryError ? (
+            <div className="rounded-2xl border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-xs text-amber-200">
+              {marshalDirectoryError}
+            </div>
+          ) : null}
+          <div className="flex flex-col gap-4">
+            {marshalAssignments.length === 0 ? (
+              <div className="rounded-2xl border border-white/10 bg-[#060910]/70 px-4 py-3 text-sm text-neutral-300">
+                Enable at least one driver and assign them to a marshal to review session access.
+              </div>
+            ) : null}
+            {marshalAssignments.map((group) => (
+              <div key={group.id ?? 'unassigned'} className="rounded-2xl border border-white/10 bg-[#060910]/70 p-4">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div className="flex flex-col">
+                    <span className="text-xs font-semibold uppercase tracking-[0.35em] text-neutral-500">
+                      {group.id ? 'Marshal profile' : 'Unassigned drivers'}
+                    </span>
+                    <span className="text-sm font-semibold text-white">{group.label}</span>
+                  </div>
+                  {group.id ? (
+                    <code className="rounded-full border border-white/10 bg-black/40 px-3 py-1 text-[11px] tracking-[0.2em] text-neutral-300">
+                      {group.id}
+                    </code>
+                  ) : null}
+                </div>
+                <div className="mt-3 flex flex-col gap-2 text-sm text-neutral-300">
+                  {group.drivers.map((driver) => (
+                    <div key={driver.id} className="flex items-center justify-between gap-3 rounded-xl border border-white/5 bg-black/30 px-3 py-2">
+                      <div className="flex flex-col">
+                        <span className="font-semibold text-white">
+                          {(driver.name || '').trim() || `Driver ${driver.number || ''}`}
+                        </span>
+                        <span className="text-[11px] uppercase tracking-[0.3em] text-neutral-500">
+                          #{driver.number || '—'} • {(driver.team || '').trim() || 'No team'}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                {group.isMissingProfile ? (
+                  <div className="mt-3 rounded-xl border border-rose-500/40 bg-rose-500/10 px-3 py-2 text-xs text-rose-200">
+                    Marshal profile not found in Supabase. Verify the account exists and has the marshal role.
+                  </div>
+                ) : null}
+                {!group.id ? (
+                  <div className="mt-3 rounded-xl border border-rose-500/40 bg-rose-500/10 px-3 py-2 text-xs text-rose-200">
+                    Assign these drivers to a marshal profile before finishing setup.
+                  </div>
+                ) : null}
               </div>
             ))}
           </div>
-          <button
-            type="button"
-            onClick={handleAddMarshal}
-            className="self-start rounded-full border border-white/10 px-4 py-2 text-xs font-semibold uppercase tracking-[0.35em] text-white transition hover:border-white/40"
-          >
-            Add marshal
-          </button>
           <div className="rounded-2xl border border-white/5 bg-[#060910]/70 p-4 text-sm text-neutral-300">
             <p>
               <span className="font-semibold text-white">Drivers ready:</span> {enabledDrivers.length}
