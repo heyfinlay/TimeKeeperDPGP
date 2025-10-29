@@ -31,18 +31,18 @@ export default function LiveSessions() {
 
   useEffect(() => {
     if (!supportsSessions) {
-      navigate(`/control/${LEGACY_SESSION_ID}`, { replace: true });
       return;
     }
     if (!refreshSessions) return;
     refreshSessions().catch((refreshError) => {
       console.error('Failed to refresh sessions for live session list', refreshError);
     });
-  }, [navigate, refreshSessions, supportsSessions]);
+  }, [refreshSessions, supportsSessions]);
 
   const openSessions = useMemo(() => {
     if (!Array.isArray(sessions)) return [];
     return sessions
+      .filter((session) => session?.id && session.id !== LEGACY_SESSION_ID)
       .filter((session) => (session?.status ?? '').toLowerCase() !== 'completed')
       .sort((a, b) => {
         const aStatus = statusOrder.get((a?.status ?? '').toLowerCase()) ?? 3;
@@ -56,12 +56,28 @@ export default function LiveSessions() {
       });
   }, [sessions]);
 
+  const activeSessionIsLegacy = activeSessionId === LEGACY_SESSION_ID;
+  const safeActiveSessionId =
+    !supportsSessions || activeSessionIsLegacy ? null : activeSessionId;
+
   const handleNavigate = useCallback(
     (path) => () => {
       navigate(path);
     },
     [navigate],
   );
+
+  if (!supportsSessions) {
+    return (
+      <div className="mx-auto flex max-w-2xl flex-col gap-4 rounded-3xl border border-white/5 bg-[#060910]/80 px-8 py-12 text-center text-gray-200">
+        <h1 className="text-2xl font-semibold text-white">Managed sessions unavailable</h1>
+        <p className="text-sm text-neutral-400">
+          This Supabase project is missing the sessions schema required for multi-session control. Migrate the
+          database to enable the new workflow.
+        </p>
+      </div>
+    );
+  }
 
   return (
     <div className="mx-auto flex w-full max-w-4xl flex-col gap-8">
@@ -101,14 +117,14 @@ export default function LiveSessions() {
           <div className="flex flex-col gap-1 text-left">
             <span className="text-xs uppercase tracking-[0.35em] text-neutral-500">Active session</span>
             <span className="text-sm font-semibold text-white">
-              {activeSessionId ? `Session ${activeSessionId.slice(0, 8)}…` : 'None selected'}
+              {safeActiveSessionId ? `Session ${safeActiveSessionId.slice(0, 8)}…` : 'None selected'}
             </span>
           </div>
           <div className="flex flex-wrap items-center gap-2 text-xs">
             <Link
-              to={activeSessionId ? `/control/${activeSessionId}` : '#'}
+              to={safeActiveSessionId ? `/control/${safeActiveSessionId}` : '#'}
               className={`rounded-full border px-4 py-2 font-semibold uppercase tracking-[0.35em] transition ${
-                activeSessionId
+                safeActiveSessionId
                   ? 'border-[#9FF7D3]/40 bg-[#9FF7D3]/15 text-[#9FF7D3] hover:border-[#9FF7D3]/70 hover:text-white'
                   : 'pointer-events-none border-white/10 text-neutral-600'
               }`}
@@ -116,9 +132,9 @@ export default function LiveSessions() {
               Open control
             </Link>
             <Link
-              to={activeSessionId ? `/live/${activeSessionId}` : '#'}
+              to={safeActiveSessionId ? `/live/${safeActiveSessionId}` : '#'}
               className={`rounded-full border px-4 py-2 font-semibold uppercase tracking-[0.35em] transition ${
-                activeSessionId
+                safeActiveSessionId
                   ? 'border-[#7C6BFF]/40 bg-[#7C6BFF]/15 text-[#dcd7ff] hover:border-[#7C6BFF]/70 hover:text-white'
                   : 'pointer-events-none border-white/10 text-neutral-600'
               }`}

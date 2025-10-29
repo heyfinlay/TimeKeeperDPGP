@@ -40,6 +40,27 @@ const createLegacySessionRow = () => ({
 
 const encodePath = (sessionId) => sessionId.replaceAll(':', '-');
 
+const includesCaseInsensitive = (source, search) => {
+  if (!source || !search) return false;
+  return source.toLowerCase().includes(search.toLowerCase());
+};
+
+const describeSessionError = (error, actionMessage) => {
+  if (!error) {
+    return actionMessage;
+  }
+  const details =
+    typeof error?.supabaseMessage === 'string'
+      ? error.supabaseMessage
+      : typeof error?.message === 'string'
+        ? error.message
+        : '';
+  if (error?.code === '42P17' || includesCaseInsensitive(details, 'infinite recursion detected in policy')) {
+    return `${actionMessage} Supabase row level security policies for the sessions table appear to reference themselves and are causing an infinite recursion. Update the policies and try again.`;
+  }
+  return actionMessage;
+};
+
 const toCsv = (rows = []) => {
   if (!rows.length) return '';
   const headers = Array.from(
@@ -190,7 +211,14 @@ export const EventSessionProvider = ({ children }) => {
         return fallbackToLegacySchema();
       }
       console.error('Failed to refresh sessions', refreshError);
-      setError('Unable to load sessions from Supabase.');
+      setSessions([]);
+      setActiveSessionId(null);
+      setError(
+        describeSessionError(
+          refreshError,
+          'Unable to load sessions from Supabase.',
+        ),
+      );
       return [];
     } finally {
       setIsLoading(false);
@@ -293,7 +321,12 @@ export const EventSessionProvider = ({ children }) => {
         return created ?? null;
       } catch (insertError) {
         console.error('Failed to create session', insertError);
-        setError('Unable to create session.');
+        setError(
+          describeSessionError(
+            insertError,
+            'Unable to create session.',
+          ),
+        );
         return null;
       }
     },

@@ -1,7 +1,6 @@
 import { useEffect, useMemo } from 'react';
 import { Navigate, useParams } from 'react-router-dom';
 import { useEventSession } from '@/context/SessionContext.jsx';
-import { LEGACY_SESSION_ID } from '@/utils/raceData.js';
 import { isSupabaseConfigured } from '@/lib/supabaseClient.js';
 
 export default function SessionAccessGuard({ children }) {
@@ -29,10 +28,17 @@ export default function SessionAccessGuard({ children }) {
   }
 
   if (!supportsSessions) {
-    if (sessionId !== LEGACY_SESSION_ID) {
-      return <Navigate to={`/control/${LEGACY_SESSION_ID}`} replace />;
-    }
-    return children;
+    return (
+      <div className="flex min-h-[40vh] items-center justify-center">
+        <div className="max-w-lg rounded-2xl border border-white/5 bg-[#060910]/80 px-6 py-5 text-center text-sm text-neutral-300">
+          <p className="text-base font-semibold text-white">Managed sessions unavailable</p>
+          <p className="mt-2 text-neutral-400">
+            This Supabase project is missing the sessions schema required for race control. Return to the session list and
+            update your database before trying again.
+          </p>
+        </div>
+      </div>
+    );
   }
 
   if (!isSupabaseConfigured) {
