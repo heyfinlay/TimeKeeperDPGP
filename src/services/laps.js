@@ -71,7 +71,15 @@ const fallbackLogLap = async ({ sessionId, driverId, lapTimeMs }) => {
     .eq('session_id', sessionId);
   if (updateError) throw updateError;
 
-  return inserted;
+  return {
+    lap_id: inserted?.id ?? null,
+    session_id: sessionId,
+    driver_id: driverId,
+    laps,
+    last_lap_ms: lapTimeMs,
+    best_lap_ms: bestLap,
+    total_time_ms: totalTime,
+  };
 };
 
 export async function logLapAtomic({ sessionId, driverId, lapTimeMs }) {
@@ -87,7 +95,7 @@ export async function logLapAtomic({ sessionId, driverId, lapTimeMs }) {
     }
     throw error;
   }
-  return data;
+  return data?.[0] ?? null;
 }
 
 const fallbackInvalidateLastLap = async ({ sessionId, driverId, mode }) => {
@@ -175,12 +183,20 @@ const fallbackInvalidateLastLap = async ({ sessionId, driverId, mode }) => {
     .eq('session_id', sessionId);
   if (updateDriverError) throw updateDriverError;
 
-  return lastLap.id;
+  return {
+    invalidated_lap_id: lastLap.id,
+    session_id: sessionId,
+    driver_id: driverId,
+    laps: lapsCount,
+    last_lap_ms: lastValidLap ?? null,
+    best_lap_ms: bestValidLap ?? null,
+    total_time_ms: totalValidTime ?? 0,
+  };
 };
 
 export async function invalidateLastLap({ sessionId, driverId, mode = 'time_only' }) {
   ensureSupabase();
-  const { error } = await supabase.rpc(INVALIDATE_LAST_LAP_RPC, {
+  const { data, error } = await supabase.rpc(INVALIDATE_LAST_LAP_RPC, {
     p_session_id: sessionId,
     p_driver_id: driverId,
     p_mode: mode,
@@ -191,5 +207,5 @@ export async function invalidateLastLap({ sessionId, driverId, mode = 'time_only
     }
     throw error;
   }
-  return null;
+  return data?.[0] ?? null;
 }

@@ -87,7 +87,20 @@ describe('lap services', () => {
   });
 
   test('logLapAtomic uses RPC when available', async () => {
-    supabase.rpc.mockResolvedValue({ data: [{ lap_id: 'lap-1' }], error: null });
+    supabase.rpc.mockResolvedValue({
+      data: [
+        {
+          lap_id: 'lap-1',
+          session_id: 'session-1',
+          driver_id: 'driver-1',
+          laps: 4,
+          last_lap_ms: 65000,
+          best_lap_ms: 64000,
+          total_time_ms: 260000,
+        },
+      ],
+      error: null,
+    });
     supabase.from.mockImplementation(() => {
       throw new Error('from should not be called when RPC succeeds');
     });
@@ -103,7 +116,15 @@ describe('lap services', () => {
       p_driver_id: 'driver-1',
       p_lap_time_ms: 65000,
     });
-    expect(result).toEqual([{ lap_id: 'lap-1' }]);
+    expect(result).toEqual({
+      lap_id: 'lap-1',
+      session_id: 'session-1',
+      driver_id: 'driver-1',
+      laps: 4,
+      last_lap_ms: 65000,
+      best_lap_ms: 64000,
+      total_time_ms: 260000,
+    });
   });
 
   test('logLapAtomic falls back when RPC is missing', async () => {
@@ -153,7 +174,7 @@ describe('lap services', () => {
       throw new Error(`Unexpected table ${table} at call ${call}`);
     });
 
-    await logLapAtomic({
+    const result = await logLapAtomic({
       sessionId: 'session-2',
       driverId: 'driver-2',
       lapTimeMs: 65000,
@@ -184,12 +205,35 @@ describe('lap services', () => {
     });
     expect(driverUpdateChain.__firstEq).toHaveBeenCalledWith('id', 'driver-2');
     expect(driverUpdateChain.__secondEq).toHaveBeenCalledWith('session_id', 'session-2');
+
+    expect(result).toEqual({
+      lap_id: 'lap-new',
+      session_id: 'session-2',
+      driver_id: 'driver-2',
+      laps: 5,
+      last_lap_ms: 65000,
+      best_lap_ms: 62000,
+      total_time_ms: 305000,
+    });
   });
 
   test('invalidateLastLap uses RPC with default mode', async () => {
-    supabase.rpc.mockResolvedValue({ data: null, error: null });
+    supabase.rpc.mockResolvedValue({
+      data: [
+        {
+          invalidated_lap_id: 'lap-3',
+          session_id: 'session-3',
+          driver_id: 'driver-3',
+          laps: 5,
+          last_lap_ms: 64000,
+          best_lap_ms: 62000,
+          total_time_ms: 320000,
+        },
+      ],
+      error: null,
+    });
 
-    await invalidateLastLap({ sessionId: 'session-3', driverId: 'driver-3' });
+    const result = await invalidateLastLap({ sessionId: 'session-3', driverId: 'driver-3' });
 
     expect(supabase.rpc).toHaveBeenCalledWith('invalidate_last_lap_atomic', {
       p_session_id: 'session-3',
@@ -197,12 +241,34 @@ describe('lap services', () => {
       p_mode: 'time_only',
     });
     expect(supabase.from).not.toHaveBeenCalled();
+    expect(result).toEqual({
+      invalidated_lap_id: 'lap-3',
+      session_id: 'session-3',
+      driver_id: 'driver-3',
+      laps: 5,
+      last_lap_ms: 64000,
+      best_lap_ms: 62000,
+      total_time_ms: 320000,
+    });
   });
 
   test('invalidateLastLap allows removing laps', async () => {
-    supabase.rpc.mockResolvedValue({ data: null, error: null });
+    supabase.rpc.mockResolvedValue({
+      data: [
+        {
+          invalidated_lap_id: 'lap-4',
+          session_id: 'session-4',
+          driver_id: 'driver-4',
+          laps: 7,
+          last_lap_ms: 63000,
+          best_lap_ms: 60000,
+          total_time_ms: 441000,
+        },
+      ],
+      error: null,
+    });
 
-    await invalidateLastLap({
+    const result = await invalidateLastLap({
       sessionId: 'session-4',
       driverId: 'driver-4',
       mode: 'remove_lap',
@@ -212,6 +278,15 @@ describe('lap services', () => {
       p_session_id: 'session-4',
       p_driver_id: 'driver-4',
       p_mode: 'remove_lap',
+    });
+    expect(result).toEqual({
+      invalidated_lap_id: 'lap-4',
+      session_id: 'session-4',
+      driver_id: 'driver-4',
+      laps: 7,
+      last_lap_ms: 63000,
+      best_lap_ms: 60000,
+      total_time_ms: 441000,
     });
   });
 
@@ -268,7 +343,7 @@ describe('lap services', () => {
       throw new Error(`Unexpected table ${table} at call ${call}`);
     });
 
-    await invalidateLastLap({ sessionId: 'session-5', driverId: 'driver-5', mode: 'remove_lap' });
+    const result = await invalidateLastLap({ sessionId: 'session-5', driverId: 'driver-5', mode: 'remove_lap' });
 
     expect(supabase.rpc).toHaveBeenCalledWith('invalidate_last_lap_atomic', {
       p_session_id: 'session-5',
@@ -296,6 +371,16 @@ describe('lap services', () => {
       total_time_ms: 131000,
       laps: 7,
       updated_at: expect.any(String),
+    });
+
+    expect(result).toEqual({
+      invalidated_lap_id: 'lap-99',
+      session_id: 'session-5',
+      driver_id: 'driver-5',
+      laps: 7,
+      last_lap_ms: 65000,
+      best_lap_ms: 65000,
+      total_time_ms: 131000,
     });
   });
 });
