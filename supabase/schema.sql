@@ -457,6 +457,24 @@ for all
 using (public.is_admin())
 with check (public.is_admin());
 
+create policy "Owners manage their sessions"
+on public.sessions
+for all
+using (auth.uid() = created_by or created_by is null)
+with check (auth.uid() = created_by or created_by is null);
+
+create policy "Members view shared sessions"
+on public.sessions
+for select
+using (
+  exists (
+    select 1
+    from public.session_members sm
+    where sm.session_id = public.sessions.id
+      and sm.user_id = auth.uid()
+  )
+);
+
 drop policy if exists "Admins manage session members" on public.session_members;
 drop policy if exists "Owners manage membership" on public.session_members;
 drop policy if exists "Members view membership" on public.session_members;
@@ -467,6 +485,40 @@ for all
 using (public.is_admin())
 with check (public.is_admin());
 
+create policy "Owners manage membership"
+on public.session_members
+for all
+using (
+  exists (
+    select 1
+    from public.sessions s
+    where s.id = public.session_members.session_id
+      and s.created_by = auth.uid()
+  )
+)
+with check (
+  exists (
+    select 1
+    from public.sessions s
+    where s.id = public.session_members.session_id
+      and s.created_by = auth.uid()
+  )
+);
+
+create policy "Members view membership"
+on public.session_members
+for select
+using (
+  public.is_admin()
+  or auth.uid() = public.session_members.user_id
+  or exists (
+    select 1
+    from public.sessions s
+    where s.id = public.session_members.session_id
+      and (s.created_by = auth.uid() or s.created_by is null)
+  )
+);
+
 drop policy if exists "Admins manage session logs" on public.session_logs;
 drop policy if exists "Owners record session logs" on public.session_logs;
 drop policy if exists "Members view session logs" on public.session_logs;
@@ -476,6 +528,16 @@ on public.session_logs
 for all
 using (public.is_admin())
 with check (public.is_admin());
+
+create policy "Owners record session logs"
+on public.session_logs
+for insert
+with check (public.session_has_access(public.session_logs.session_id));
+
+create policy "Members view session logs"
+on public.session_logs
+for select
+using (public.session_has_access(public.session_logs.session_id));
 
 drop policy if exists "Session scoped access for drivers" on public.drivers;
 drop policy if exists "Drivers admin full access" on public.drivers;
@@ -488,6 +550,12 @@ for all
 using (public.is_admin())
 with check (public.is_admin());
 
+create policy "Session scoped access for drivers"
+on public.drivers
+for all
+using (public.session_has_access(public.drivers.session_id))
+with check (public.session_has_access(public.drivers.session_id));
+
 drop policy if exists "Session scoped access for laps" on public.laps;
 drop policy if exists "Laps admin full access" on public.laps;
 drop policy if exists "Laps marshal access" on public.laps;
@@ -497,6 +565,12 @@ on public.laps
 for all
 using (public.is_admin())
 with check (public.is_admin());
+
+create policy "Session scoped access for laps"
+on public.laps
+for all
+using (public.session_has_access(public.laps.session_id))
+with check (public.session_has_access(public.laps.session_id));
 
 drop policy if exists "Session scoped access for session state" on public.session_state;
 drop policy if exists "Session state readable" on public.session_state;
@@ -508,6 +582,12 @@ for all
 using (public.is_admin())
 with check (public.is_admin());
 
+create policy "Session scoped access for session state"
+on public.session_state
+for all
+using (public.session_has_access(public.session_state.session_id))
+with check (public.session_has_access(public.session_state.session_id));
+
 drop policy if exists "Session scoped access for race events" on public.race_events;
 drop policy if exists "Race events readable" on public.race_events;
 drop policy if exists "Race events writeable" on public.race_events;
@@ -517,6 +597,12 @@ on public.race_events
 for all
 using (public.is_admin())
 with check (public.is_admin());
+
+create policy "Session scoped access for race events"
+on public.race_events
+for all
+using (public.session_has_access(public.race_events.session_id))
+with check (public.session_has_access(public.race_events.session_id));
 
 insert into storage.buckets (id, name, public)
 values ('session-logs', 'session-logs', false)
@@ -533,6 +619,18 @@ using (
 )
 with check (
   bucket_id = 'session-logs' and public.is_admin()
+);
+
+create policy "Session members manage session log bucket"
+on storage.objects
+for all
+using (
+  bucket_id = 'session-logs'
+  and public.session_has_access(nullif(split_part(name, '/', 1), '')::uuid)
+)
+with check (
+  bucket_id = 'session-logs'
+  and public.session_has_access(nullif(split_part(name, '/', 1), '')::uuid)
 );
 
 alter publication supabase_realtime add table public.sessions;
