@@ -467,12 +467,7 @@ create policy "Members view shared sessions"
 on public.sessions
 for select
 using (
-  exists (
-    select 1
-    from public.session_members sm
-    where sm.session_id = public.sessions.id
-      and sm.user_id = auth.uid()
-  )
+  public.session_has_access(public.sessions.id)
 );
 
 drop policy if exists "Admins manage session members" on public.session_members;
@@ -509,14 +504,8 @@ create policy "Members view membership"
 on public.session_members
 for select
 using (
-  public.is_admin()
+  public.session_has_access(public.session_members.session_id)
   or auth.uid() = public.session_members.user_id
-  or exists (
-    select 1
-    from public.sessions s
-    where s.id = public.session_members.session_id
-      and (s.created_by = auth.uid() or s.created_by is null)
-  )
 );
 
 drop policy if exists "Admins manage session logs" on public.session_logs;
