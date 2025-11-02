@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { useSessionId } from '@/state/SessionContext.jsx';
+import { useSessionContext, useSessionId } from '@/state/SessionContext.jsx';
 import { isSupabaseConfigured, subscribeToTable, supabase } from '@/lib/supabaseClient.js';
 
 const DRIVERS_SELECT_COLUMNS =
@@ -7,6 +7,7 @@ const DRIVERS_SELECT_COLUMNS =
 
 export function useSessionDrivers({ onlyMine = false, userId } = {}) {
   const sessionId = useSessionId();
+  const { isAdmin } = useSessionContext();
   const [drivers, setDrivers] = useState([]);
   const [isLoading, setIsLoading] = useState(isSupabaseConfigured);
   const [error, setError] = useState(null);
@@ -41,7 +42,8 @@ export function useSessionDrivers({ onlyMine = false, userId } = {}) {
           .select(DRIVERS_SELECT_COLUMNS)
           .eq('session_id', sessionId)
           .order('number', { ascending: true, nullsFirst: true });
-        if (onlyMine && userId) {
+        const restrictByMarshal = onlyMine && userId && !isAdmin;
+        if (restrictByMarshal) {
           query = query.eq('marshal_user_id', userId);
         }
         const { data, error: selectError } = await query;
@@ -62,7 +64,7 @@ export function useSessionDrivers({ onlyMine = false, userId } = {}) {
         setIsLoading(false);
       }
     },
-    [sessionId, onlyMine, userId],
+    [sessionId, onlyMine, userId, isAdmin],
   );
 
   useEffect(() => {

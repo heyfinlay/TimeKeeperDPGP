@@ -6,6 +6,7 @@ import SessionAccessGuard from '@/components/auth/SessionAccessGuard.jsx';
 import AppLayout from '@/components/layout/AppLayout.jsx';
 import Welcome from '@/routes/Welcome.jsx';
 import Dashboard from '@/routes/Dashboard.jsx';
+import AdminDashboardPage from '@/pages/dashboard/AdminDashboardPage.jsx';
 import AccountSetup from '@/routes/AccountSetup.jsx';
 import AuthCallback from '@/routes/AuthCallback.jsx';
 import Control from '@/routes/Control.jsx';
@@ -34,6 +35,14 @@ export default function App() {
               element={
                 <AuthGuard>
                   <Dashboard />
+                </AuthGuard>
+              }
+            />
+            <Route
+              path="/dashboard/admin"
+              element={
+                <AuthGuard requireAdmin>
+                  <AdminDashboardPage />
                 </AuthGuard>
               }
             />

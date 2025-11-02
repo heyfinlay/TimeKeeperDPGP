@@ -1,4 +1,5 @@
 import { createContext, useContext, useMemo } from 'react';
+import { useAdminAccess } from '@/components/auth/AuthGuard.jsx';
 
 const SessionContext = createContext(null);
 
@@ -7,9 +8,11 @@ export function SessionProvider({ sessionId, children }) {
     throw new Error('SessionProvider requires a sessionId prop.');
   }
 
+  const { isAdmin } = useAdminAccess();
+
   const value = useMemo(
-    () => ({ sessionId }),
-    [sessionId],
+    () => ({ sessionId, isAdmin: Boolean(isAdmin) }),
+    [sessionId, isAdmin],
   );
 
   return <SessionContext.Provider value={value}>{children}</SessionContext.Provider>;
