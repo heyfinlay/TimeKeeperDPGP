@@ -30,18 +30,45 @@ bun test
 
 ## Supabase Setup
 
-1. Create a Supabase project and copy the project URL and anon public key.
-2. Run the SQL in [`supabase/schema.sql`](./supabase/schema.sql) inside the Supabase SQL editor to provision the required tables (`drivers`, `laps`, `session_state`, `race_events`) and enable realtime streaming.
-3. Set the following environment variables before running the app:
+1. Create a Supabase project and install the Supabase CLI (`brew install supabase/tap/supabase`).
+2. Authenticate and link the CLI to your project:
 
    ```bash
-   export VITE_SUPABASE_URL="https://<your-project>.supabase.co"
-   export VITE_SUPABASE_ANON_KEY="<your-anon-key>"
+   supabase login
+   supabase link --project-ref <project-ref>
    ```
 
-   For local development you can place these values in a `.env.local` file at the project root.
+3. Apply the tracked migrations and edge functions:
 
-The control panel will fall back to local-only mode if the variables are missing, but realtime broadcasting and persistence require Supabase to be configured.
+   ```bash
+   supabase db push
+   ```
+
+   This loads the schema from `supabase/migrations/**` and syncs the `admin-auth` edge function. To rebuild the database locally with seed data (including the initial admin credential) run `supabase db reset`.
+
+4. Provide the following environment variables to the Vite app (e.g. in `.env.local`):
+
+   ```bash
+   VITE_SUPABASE_URL="https://<your-project>.supabase.co"
+   VITE_SUPABASE_ANON_KEY="<your-anon-key>"
+   # Optional override; defaults to your project's functions domain.
+   VITE_ADMIN_AUTH_ENDPOINT="https://<your-project>.functions.supabase.co"
+   ```
+
+   Without these values the UI runs in offline fallback mode and skips Supabase features.
+
+5. Configure the secrets required by the `admin-auth` edge function:
+
+   ```bash
+   supabase secrets set \
+     admin_credentials='[{"username":"control","password":"<plain-text-pass>","user_id":"<supabase-user-uuid>","role":"admin"}]' \
+     JWT_SECRET='<32+ char random secret>'
+   ```
+
+   - `admin_credentials` accepts an array/object of entries containing the plain-text password that race control staff will use.
+   - `JWT_SECRET` must match the signing key configured under **Project Settings → API → JWT Auth** (or use `supabase secrets set JWT_SECRET=$(openssl rand -hex 32)` and copy the value into the dashboard).
+
+Regenerate tokens whenever rotating admin accounts and keep the secrets out of version control.
 
 ## Features
 

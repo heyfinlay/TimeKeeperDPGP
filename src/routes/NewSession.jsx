@@ -20,8 +20,22 @@ const DEFAULT_DRIVERS = [
   { id: 'driver-10', number: 10, name: 'Driver 10', team: 'Team Pitlane' },
 ];
 
-const createId = (prefix) =>
-  globalThis.crypto?.randomUUID?.() ?? `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+const createUuid = () => {
+  if (typeof globalThis.crypto?.randomUUID === 'function') {
+    return globalThis.crypto.randomUUID();
+  }
+  let timestamp = Date.now();
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (char) => {
+    const random = ((timestamp + Math.random() * 16) % 16) | 0;
+    timestamp = Math.floor(timestamp / 16);
+    if (char === 'x') {
+      return random.toString(16);
+    }
+    return ((random & 0x3) | 0x8).toString(16);
+  });
+};
+
+const createId = () => createUuid();
 
 const isUuid = (value) =>
   typeof value === 'string' &&
@@ -226,7 +240,7 @@ export default function NewSession() {
     setDrivers((prev) => [
       ...prev,
       {
-        id: createId('driver'),
+        id: createId(),
         number: '',
         name: '',
         team: '',
@@ -280,6 +294,23 @@ export default function NewSession() {
       const totalDuration = Number.parseInt(sessionStateDraft.totalDuration, 10);
       const nowIso = new Date().toISOString();
 
+      const resolveDriverId = (() => {
+        const cache = new Map();
+        return (rawId) => {
+          if (cache.has(rawId)) {
+            return cache.get(rawId);
+          }
+          const normalized = isUuid(rawId) ? rawId : createId();
+          cache.set(rawId, normalized);
+          return normalized;
+        };
+      })();
+
+      const normalizedDrivers = enabledDrivers.map((driver) => ({
+        ...driver,
+        id: resolveDriverId(driver.id),
+      }));
+
       const sessionStateRow = {
         id: sessionId,
         session_id: sessionId,
@@ -298,7 +329,7 @@ export default function NewSession() {
         updated_at: nowIso,
       };
 
-      const driverRows = enabledDrivers.map((driver) => {
+      const driverRows = normalizedDrivers.map((driver) => {
         const parsedNumber = driver.number ? Number.parseInt(driver.number, 10) : null;
         return {
           id: driver.id,
@@ -319,10 +350,10 @@ export default function NewSession() {
         };
       });
 
-      const entryRows = enabledDrivers.map((driver, index) => {
+      const entryRows = normalizedDrivers.map((driver, index) => {
         const parsedNumber = driver.number ? Number.parseInt(driver.number, 10) : null;
         return {
-          id: createId('entry'),
+          id: createId(),
           session_id: sessionId,
           driver_id: driver.id,
           driver_number: Number.isNaN(parsedNumber) ? null : parsedNumber,
