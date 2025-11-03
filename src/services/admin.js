@@ -71,6 +71,17 @@ export async function assignMarshalToDriver({ sessionId, driverId, marshalUserId
   }
   const resolvedMarshalId = marshalUserId && String(marshalUserId).trim().length ? marshalUserId : null;
 
+  const { data: currentDriver, error: currentDriverError } = await supabase
+    .from('drivers')
+    .select('id, marshal_user_id')
+    .eq('session_id', sessionId)
+    .eq('id', driverId)
+    .maybeSingle();
+  if (currentDriverError) {
+    throw currentDriverError;
+  }
+  const previousMarshalId = currentDriver?.marshal_user_id ?? null;
+
   const { data: updatedDriver, error: driverError } = await supabase
     .from('drivers')
     .update({ marshal_user_id: resolvedMarshalId })
@@ -91,6 +102,28 @@ export async function assignMarshalToDriver({ sessionId, driverId, marshalUserId
       );
     if (membershipError) {
       throw membershipError;
+    }
+  }
+
+  if (previousMarshalId && previousMarshalId !== resolvedMarshalId) {
+    const { count: remainingAssignments, error: marshalAssignmentCountError } = await supabase
+      .from('drivers')
+      .select('id', { head: true, count: 'exact' })
+      .eq('session_id', sessionId)
+      .eq('marshal_user_id', previousMarshalId);
+    if (marshalAssignmentCountError) {
+      throw marshalAssignmentCountError;
+    }
+    if ((remainingAssignments ?? 0) === 0) {
+      const { error: revokeError } = await supabase
+        .from('session_members')
+        .delete()
+        .eq('session_id', sessionId)
+        .eq('user_id', previousMarshalId)
+        .eq('role', 'marshal');
+      if (revokeError) {
+        throw revokeError;
+      }
     }
   }
 

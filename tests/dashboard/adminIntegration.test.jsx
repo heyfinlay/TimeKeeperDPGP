@@ -56,25 +56,38 @@ describe('admin integrations', () => {
   });
 
   test('assignMarshalToDriver updates driver and ensures membership', async () => {
-    const maybeSingle = vi.fn(() => Promise.resolve({
+    const fetchMaybeSingle = vi.fn(() => Promise.resolve({
       data: { id: 'driver-1', marshal_user_id: 'marshal-1' },
       error: null,
     }));
-    const select = vi.fn(() => ({ maybeSingle }));
-    const secondEq = vi.fn(() => ({ select }));
-    const firstEq = vi.fn(() => ({ eq: secondEq }));
-    const update = vi.fn(() => ({ eq: firstEq }));
+    const fetchEqId = vi.fn(() => ({ maybeSingle: fetchMaybeSingle }));
+    const fetchEqSession = vi.fn(() => ({ eq: fetchEqId }));
+    const fetchSelect = vi.fn(() => ({ eq: fetchEqSession }));
+
+    const updateMaybeSingle = vi.fn(() => Promise.resolve({
+      data: { id: 'driver-1', marshal_user_id: 'marshal-1' },
+      error: null,
+    }));
+    const updateSelect = vi.fn(() => ({ maybeSingle: updateMaybeSingle }));
+    const updateEqId = vi.fn(() => ({ select: updateSelect }));
+    const updateEqSession = vi.fn(() => ({ eq: updateEqId }));
+    const update = vi.fn(() => ({ eq: updateEqSession }));
+
     const upsert = vi.fn(() => Promise.resolve({ error: null }));
 
-    supabase.from.mockImplementation((table) => {
-      if (table === 'drivers') {
+    supabase.from
+      .mockImplementationOnce((table) => {
+        expect(table).toBe('drivers');
+        return { select: fetchSelect };
+      })
+      .mockImplementationOnce((table) => {
+        expect(table).toBe('drivers');
         return { update };
-      }
-      if (table === 'session_members') {
+      })
+      .mockImplementationOnce((table) => {
+        expect(table).toBe('session_members');
         return { upsert };
-      }
-      throw new Error(`Unexpected table ${table}`);
-    });
+      });
 
     const result = await assignMarshalToDriver({
       sessionId: 'session-1',
@@ -82,16 +95,85 @@ describe('admin integrations', () => {
       marshalUserId: 'marshal-1',
     });
 
+    expect(fetchSelect).toHaveBeenCalledWith('id, marshal_user_id');
+    expect(fetchEqSession).toHaveBeenCalledWith('session_id', 'session-1');
+    expect(fetchEqId).toHaveBeenCalledWith('id', 'driver-1');
+    expect(fetchMaybeSingle).toHaveBeenCalled();
+
     expect(update).toHaveBeenCalledWith({ marshal_user_id: 'marshal-1' });
-    expect(firstEq).toHaveBeenCalledWith('session_id', 'session-1');
-    expect(secondEq).toHaveBeenCalledWith('id', 'driver-1');
-    expect(select).toHaveBeenCalledWith('id, marshal_user_id, session_id, name, number');
-    expect(maybeSingle).toHaveBeenCalled();
+    expect(updateEqSession).toHaveBeenCalledWith('session_id', 'session-1');
+    expect(updateEqId).toHaveBeenCalledWith('id', 'driver-1');
+    expect(updateSelect).toHaveBeenCalledWith('id, marshal_user_id, session_id, name, number');
+    expect(updateMaybeSingle).toHaveBeenCalled();
+
     expect(upsert).toHaveBeenCalledWith(
       { session_id: 'session-1', user_id: 'marshal-1', role: 'marshal' },
       { onConflict: 'session_id,user_id' },
     );
     expect(result).toEqual({ id: 'driver-1', marshal_user_id: 'marshal-1' });
+  });
+
+  test('assignMarshalToDriver revokes previous marshal when unassigned', async () => {
+    const fetchMaybeSingle = vi.fn(() => Promise.resolve({
+      data: { id: 'driver-1', marshal_user_id: 'marshal-old' },
+      error: null,
+    }));
+    const fetchEqId = vi.fn(() => ({ maybeSingle: fetchMaybeSingle }));
+    const fetchEqSession = vi.fn(() => ({ eq: fetchEqId }));
+    const fetchSelect = vi.fn(() => ({ eq: fetchEqSession }));
+
+    const updateMaybeSingle = vi.fn(() => Promise.resolve({
+      data: { id: 'driver-1', marshal_user_id: null },
+      error: null,
+    }));
+    const updateSelect = vi.fn(() => ({ maybeSingle: updateMaybeSingle }));
+    const updateEqId = vi.fn(() => ({ select: updateSelect }));
+    const updateEqSession = vi.fn(() => ({ eq: updateEqId }));
+    const update = vi.fn(() => ({ eq: updateEqSession }));
+
+    const countEqMarshal = vi.fn(() => Promise.resolve({ data: null, error: null, count: 0 }));
+    const countEqSession = vi.fn(() => ({ eq: countEqMarshal }));
+    const countSelect = vi.fn(() => ({ eq: countEqSession }));
+
+    const deleteEqRole = vi.fn(() => Promise.resolve({ error: null }));
+    const deleteEqUser = vi.fn(() => ({ eq: deleteEqRole }));
+    const deleteEqSession = vi.fn(() => ({ eq: deleteEqUser }));
+    const destroy = vi.fn(() => ({ eq: deleteEqSession }));
+
+    supabase.from
+      .mockImplementationOnce((table) => {
+        expect(table).toBe('drivers');
+        return { select: fetchSelect };
+      })
+      .mockImplementationOnce((table) => {
+        expect(table).toBe('drivers');
+        return { update };
+      })
+      .mockImplementationOnce((table) => {
+        expect(table).toBe('drivers');
+        return { select: countSelect };
+      })
+      .mockImplementationOnce((table) => {
+        expect(table).toBe('session_members');
+        return { delete: destroy };
+      });
+
+    await assignMarshalToDriver({
+      sessionId: 'session-1',
+      driverId: 'driver-1',
+      marshalUserId: null,
+    });
+
+    expect(fetchSelect).toHaveBeenCalledWith('id, marshal_user_id');
+    expect(fetchMaybeSingle).toHaveBeenCalled();
+    expect(update).toHaveBeenCalledWith({ marshal_user_id: null });
+    expect(countSelect).toHaveBeenCalledWith('id', { head: true, count: 'exact' });
+    expect(countEqSession).toHaveBeenCalledWith('session_id', 'session-1');
+    expect(countEqMarshal).toHaveBeenCalledWith('marshal_user_id', 'marshal-old');
+    expect(destroy).toHaveBeenCalled();
+    expect(deleteEqSession).toHaveBeenCalledWith('session_id', 'session-1');
+    expect(deleteEqUser).toHaveBeenCalledWith('user_id', 'marshal-old');
+    expect(deleteEqRole).toHaveBeenCalledWith('role', 'marshal');
   });
 
   test('SessionProvider surfaces admin privileges for control access', () => {
