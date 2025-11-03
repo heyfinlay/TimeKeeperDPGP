@@ -28,6 +28,18 @@ create table if not exists public.session_logs (
   created_at timestamptz default timezone('utc', now())
 );
 
+create table if not exists public.admin_credentials (
+  id uuid primary key default gen_random_uuid(),
+  username text not null,
+  password_hash text not null,
+  created_at timestamptz not null default timezone('utc', now()),
+  rotated_at timestamptz,
+  constraint admin_credentials_username_key unique (username)
+);
+
+create unique index if not exists admin_credentials_username_idx
+  on public.admin_credentials (lower(username));
+
 create table if not exists public.drivers (
   id uuid primary key,
   number integer not null,
@@ -107,6 +119,60 @@ alter table public.race_events
 
 alter table public.session_logs
   add column if not exists object_url text;
+
+do $$
+declare
+  existing_role text;
+begin
+  if not exists (
+    select 1
+    from pg_type
+    where typname = 'profile_role'
+      and pg_type.typnamespace = 'public'::regnamespace
+  ) then
+    execute $$create type public.profile_role as enum ('marshal')$$;
+  end if;
+
+  if exists (
+    select 1
+    from information_schema.columns
+    where table_schema = 'public'
+      and table_name = 'profiles'
+      and column_name = 'role'
+  ) then
+    for existing_role in
+      select distinct lower(role)
+      from public.profiles
+      where role is not null and length(trim(role)) > 0
+    loop
+      begin
+        execute format('alter type public.profile_role add value %L', existing_role);
+      exception
+        when duplicate_object then null;
+      end;
+    end loop;
+
+    begin
+      execute $$alter type public.profile_role add value 'admin'$$;
+    exception
+      when duplicate_object then null;
+    end;
+
+    begin
+      execute $$alter type public.profile_role add value 'race_control'$$;
+    exception
+      when duplicate_object then null;
+    end;
+
+    alter table public.profiles
+      alter column role type public.profile_role
+      using lower(coalesce(role, 'marshal'))::public.profile_role;
+
+    alter table public.profiles
+      alter column role set default 'marshal'::public.profile_role;
+  end if;
+end;
+$$;
 
 do $$
 declare
@@ -379,38 +445,42 @@ alter table public.drivers enable row level security;
 alter table public.laps enable row level security;
 alter table public.session_state enable row level security;
 alter table public.race_events enable row level security;
+alter table public.admin_credentials enable row level security;
 
-create policy if not exists "Admins manage all sessions"
+drop policy if exists "Admins manage all sessions" on public.sessions;
+drop policy if exists "Owners manage their sessions" on public.sessions;
+drop policy if exists "Members view shared sessions" on public.sessions;
+
+create policy "Admin full access to sessions"
 on public.sessions
 for all
 using (public.is_admin())
 with check (public.is_admin());
 
-create policy if not exists "Owners manage their sessions"
+create policy "Owners manage their sessions"
 on public.sessions
 for all
 using (auth.uid() = created_by or created_by is null)
 with check (auth.uid() = created_by or created_by is null);
 
-create policy if not exists "Members view shared sessions"
+create policy "Members view shared sessions"
 on public.sessions
 for select
 using (
-  exists (
-    select 1
-    from public.session_members sm
-    where sm.session_id = public.sessions.id
-      and sm.user_id = auth.uid()
-  )
+  public.session_has_access(public.sessions.id)
 );
 
-create policy if not exists "Admins manage session members"
+drop policy if exists "Admins manage session members" on public.session_members;
+drop policy if exists "Owners manage membership" on public.session_members;
+drop policy if exists "Members view membership" on public.session_members;
+
+create policy "Admin full access to session members"
 on public.session_members
 for all
 using (public.is_admin())
 with check (public.is_admin());
 
-create policy if not exists "Owners manage membership"
+create policy "Owners manage membership"
 on public.session_members
 for all
 using (
@@ -430,55 +500,94 @@ with check (
   )
 );
 
-create policy if not exists "Members view membership"
+create policy "Members view membership"
 on public.session_members
 for select
 using (
-  public.is_admin()
+  public.session_has_access(public.session_members.session_id)
   or auth.uid() = public.session_members.user_id
-  or exists (
-    select 1
-    from public.sessions s
-    where s.id = public.session_members.session_id
-      and (s.created_by = auth.uid() or s.created_by is null)
-  )
 );
 
-create policy if not exists "Admins manage session logs"
+drop policy if exists "Admins manage session logs" on public.session_logs;
+drop policy if exists "Owners record session logs" on public.session_logs;
+drop policy if exists "Members view session logs" on public.session_logs;
+
+create policy "Admin full access to session logs"
 on public.session_logs
 for all
 using (public.is_admin())
 with check (public.is_admin());
 
-create policy if not exists "Owners record session logs"
+create policy "Owners record session logs"
 on public.session_logs
 for insert
 with check (public.session_has_access(public.session_logs.session_id));
 
-create policy if not exists "Members view session logs"
+create policy "Members view session logs"
 on public.session_logs
 for select
 using (public.session_has_access(public.session_logs.session_id));
 
-create policy if not exists "Session scoped access for drivers"
+drop policy if exists "Session scoped access for drivers" on public.drivers;
+drop policy if exists "Drivers admin full access" on public.drivers;
+drop policy if exists "Drivers marshal access" on public.drivers;
+drop policy if exists "Drivers marshal updates" on public.drivers;
+
+create policy "Admin full access to drivers"
+on public.drivers
+for all
+using (public.is_admin())
+with check (public.is_admin());
+
+create policy "Session scoped access for drivers"
 on public.drivers
 for all
 using (public.session_has_access(public.drivers.session_id))
 with check (public.session_has_access(public.drivers.session_id));
 
-create policy if not exists "Session scoped access for laps"
+drop policy if exists "Session scoped access for laps" on public.laps;
+drop policy if exists "Laps admin full access" on public.laps;
+drop policy if exists "Laps marshal access" on public.laps;
+
+create policy "Admin full access to laps"
+on public.laps
+for all
+using (public.is_admin())
+with check (public.is_admin());
+
+create policy "Session scoped access for laps"
 on public.laps
 for all
 using (public.session_has_access(public.laps.session_id))
 with check (public.session_has_access(public.laps.session_id));
 
-create policy if not exists "Session scoped access for session state"
+drop policy if exists "Session scoped access for session state" on public.session_state;
+drop policy if exists "Session state readable" on public.session_state;
+drop policy if exists "Session state admin updates" on public.session_state;
+
+create policy "Admin full access to session state"
+on public.session_state
+for all
+using (public.is_admin())
+with check (public.is_admin());
+
+create policy "Session scoped access for session state"
 on public.session_state
 for all
 using (public.session_has_access(public.session_state.session_id))
 with check (public.session_has_access(public.session_state.session_id));
 
-create policy if not exists "Session scoped access for race events"
+drop policy if exists "Session scoped access for race events" on public.race_events;
+drop policy if exists "Race events readable" on public.race_events;
+drop policy if exists "Race events writeable" on public.race_events;
+
+create policy "Admin full access to race events"
+on public.race_events
+for all
+using (public.is_admin())
+with check (public.is_admin());
+
+create policy "Session scoped access for race events"
 on public.race_events
 for all
 using (public.session_has_access(public.race_events.session_id))
@@ -488,7 +597,10 @@ insert into storage.buckets (id, name, public)
 values ('session-logs', 'session-logs', false)
 on conflict (id) do nothing;
 
-create policy if not exists "Admins manage session log bucket"
+drop policy if exists "Admins manage session log bucket" on storage.objects;
+drop policy if exists "Session members manage session log bucket" on storage.objects;
+
+create policy "Admin session log bucket access"
 on storage.objects
 for all
 using (
@@ -498,7 +610,7 @@ with check (
   bucket_id = 'session-logs' and public.is_admin()
 );
 
-create policy if not exists "Session members manage session log bucket"
+create policy "Session members manage session log bucket"
 on storage.objects
 for all
 using (
@@ -541,135 +653,4 @@ create policy "Profiles are manageable by owner or admins" on public.profiles
   with check (
     auth.uid() = id
     or public.is_admin()
-  );
-
-create policy "Drivers admin full access" on public.drivers
-  for all
-  using (public.is_admin())
-  with check (public.is_admin());
-
-create policy "Drivers marshal access" on public.drivers
-  for select
-  using (
-    auth.uid() = marshal_user_id
-    or id = any(
-      coalesce(
-        (
-          select assigned_driver_ids
-          from public.profiles as p
-          where p.id = auth.uid()
-        ),
-        '{}'
-      )
-    )
-  );
-
-create policy "Drivers marshal updates" on public.drivers
-  for update
-  using (
-    auth.uid() = marshal_user_id
-    or id = any(
-      coalesce(
-        (
-          select assigned_driver_ids
-          from public.profiles as p
-          where p.id = auth.uid()
-        ),
-        '{}'
-      )
-    )
-  )
-  with check (
-    auth.uid() = marshal_user_id
-    or id = any(
-      coalesce(
-        (
-          select assigned_driver_ids
-          from public.profiles as p
-          where p.id = auth.uid()
-        ),
-        '{}'
-      )
-    )
-  );
-
-create policy "Laps admin full access" on public.laps
-  for all
-  using (
-    exists (
-      select 1 from public.profiles as p where p.id = auth.uid() and p.role = 'admin'
-    )
-  )
-  with check (
-    exists (
-      select 1 from public.profiles as p where p.id = auth.uid() and p.role = 'admin'
-    )
-  );
-
-create policy "Laps marshal access" on public.laps
-  for all
-  using (
-    exists (
-      select 1
-      from public.drivers as d
-      where d.id = public.laps.driver_id
-        and (
-          d.marshal_user_id = auth.uid()
-          or d.id = any(
-            coalesce(
-              (
-                select assigned_driver_ids
-                from public.profiles as p
-                where p.id = auth.uid()
-              ),
-              '{}'
-            )
-          )
-        )
-    )
-  )
-  with check (
-    exists (
-      select 1
-      from public.drivers as d
-      where d.id = public.laps.driver_id
-        and (
-          d.marshal_user_id = auth.uid()
-          or d.id = any(
-            coalesce(
-              (
-                select assigned_driver_ids
-                from public.profiles as p
-                where p.id = auth.uid()
-              ),
-              '{}'
-            )
-          )
-        )
-    )
-  );
-
-create policy "Race events readable" on public.race_events
-  for select
-  using (auth.uid() is not null);
-
-create policy "Race events writeable" on public.race_events
-  for insert
-  with check (auth.uid() is not null);
-
-create policy "Session state readable" on public.session_state
-  for select
-  using (auth.uid() is not null);
-
-create policy "Session state admin updates" on public.session_state
-  for all
-  using (
-    exists (
-      select 1 from public.profiles as p where p.id = auth.uid() and p.role = 'admin'
-    )
-  )
-  with check (
-    exists (
-      select 1 from public.profiles as p where p.id = auth.uid() and p.role = 'admin'
-    )
   );

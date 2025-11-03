@@ -8,7 +8,7 @@ import {
   useState,
 } from 'react';
 import { isSupabaseConfigured, supabase } from '../lib/supabaseClient.js';
-import { saveProfile } from '../lib/profile.js';
+import { resolveProfileRole, saveProfile } from '../lib/profile.js';
 
 const AuthContext = createContext({
   status: isSupabaseConfigured ? 'loading' : 'disabled',
@@ -25,6 +25,28 @@ const DEFAULT_PROFILE = {
   display_name: null,
   assigned_driver_ids: [],
   team_id: null,
+};
+
+const collectRoleClaims = (user) => {
+  if (!user) return [];
+  const claims = [];
+  const appMeta = user.app_metadata ?? {};
+  const userMeta = user.user_metadata ?? {};
+
+  if (Array.isArray(appMeta.roles)) {
+    claims.push(...appMeta.roles);
+  }
+  if (typeof appMeta.role === 'string') {
+    claims.push(appMeta.role);
+  }
+  if (Array.isArray(userMeta.roles)) {
+    claims.push(...userMeta.roles);
+  }
+  if (typeof userMeta.role === 'string') {
+    claims.push(userMeta.role);
+  }
+
+  return claims;
 };
 
 const isNoRowError = (error) => error?.code === 'PGRST116';
@@ -44,6 +66,7 @@ export const AuthProvider = ({ children }) => {
     if (fetchingProfileRef.current) return;
     fetchingProfileRef.current = true;
     try {
+      const roleClaims = collectRoleClaims(nextUser);
       const { data, error } = await supabase
         .from('profiles')
         .select('*')
@@ -58,11 +81,12 @@ export const AuthProvider = ({ children }) => {
           nextUser.user_metadata?.name ||
           nextUser.email ||
           'Marshal';
+        const roleToInsert = resolveProfileRole({ role: 'marshal' }, { claims: roleClaims });
         const { data: created, error: insertError } = await supabase
           .from('profiles')
           .insert({
             id: nextUser.id,
-            role: 'marshal',
+            role: roleToInsert,
             display_name: displayName,
           })
           .select()
@@ -70,9 +94,13 @@ export const AuthProvider = ({ children }) => {
         if (insertError) {
           throw insertError;
         }
-        setProfile(created ?? { ...DEFAULT_PROFILE, id: nextUser.id, display_name: displayName });
+        const fallbackProfile = { ...DEFAULT_PROFILE, id: nextUser.id, display_name: displayName };
+        const baseProfile = created ?? fallbackProfile;
+        const role = resolveProfileRole(baseProfile, { claims: roleClaims });
+        setProfile({ ...DEFAULT_PROFILE, ...baseProfile, role });
       } else {
-        setProfile({ ...DEFAULT_PROFILE, ...data });
+        const role = resolveProfileRole(data, { claims: roleClaims });
+        setProfile({ ...DEFAULT_PROFILE, ...data, role });
       }
       setProfileError(null);
     } catch (error) {
@@ -158,7 +186,9 @@ export const AuthProvider = ({ children }) => {
       try {
         const updated = await saveProfile(patch, { supabase, userId: user?.id });
         if (updated) {
-          setProfile({ ...DEFAULT_PROFILE, ...updated });
+          const roleClaims = collectRoleClaims(user);
+          const role = resolveProfileRole(updated, { claims: roleClaims });
+          setProfile({ ...DEFAULT_PROFILE, ...updated, role });
           setProfileError(null);
         }
         return updated;

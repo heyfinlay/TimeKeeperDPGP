@@ -3,12 +3,20 @@ import { supabase } from './supabaseClient.js';
 export const PROFILE_COLUMN_SELECTION =
   'id, role, handle, display_name, ic_phone_number, assigned_driver_ids, team_id, tier, experience_points';
 
+const DEFAULT_ROLE = 'marshal';
+const ADMIN_ROLE = 'admin';
+
 const normaliseString = (value) => {
   if (typeof value !== 'string') {
     return value ?? null;
   }
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : null;
+};
+
+const normaliseRole = (value) => {
+  const role = normaliseString(value);
+  return typeof role === 'string' ? role.toLowerCase() : null;
 };
 
 const normaliseArray = (value) => {
@@ -21,6 +29,28 @@ const normaliseArray = (value) => {
   return Array.isArray(value) ? value : null;
 };
 
+export const resolveProfileRole = (profile = {}, { claims = [], defaultRole = DEFAULT_ROLE } = {}) => {
+  const normalisedClaims = Array.isArray(claims)
+    ? claims.map(normaliseRole).filter((role) => typeof role === 'string' && role.length > 0)
+    : [];
+
+  if (normalisedClaims.includes(ADMIN_ROLE)) {
+    return ADMIN_ROLE;
+  }
+
+  const storedRole = normaliseRole(profile.role);
+  if (storedRole === ADMIN_ROLE) {
+    return ADMIN_ROLE;
+  }
+
+  if (storedRole) {
+    return storedRole;
+  }
+
+  const firstClaim = normalisedClaims.find((role) => role);
+  return firstClaim ?? defaultRole;
+};
+
 export const buildProfilePayload = (patch = {}) => {
   const payload = {};
 
@@ -31,7 +61,8 @@ export const buildProfilePayload = (patch = {}) => {
     payload.handle = normaliseString(patch.handle);
   }
   if (Object.prototype.hasOwnProperty.call(patch, 'role')) {
-    payload.role = normaliseString(patch.role);
+    const resolvedRole = normaliseRole(patch.role);
+    payload.role = resolvedRole ?? DEFAULT_ROLE;
   }
   if (Object.prototype.hasOwnProperty.call(patch, 'team_id')) {
     payload.team_id = patch.team_id ?? null;
