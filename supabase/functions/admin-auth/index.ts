@@ -112,12 +112,15 @@ const createAccessToken = async (record: CredentialRecord, username: string) => 
 
   const payload = {
     sub: record.userId,
-    role: record.role,
+    role: 'authenticated',
     iss: 'admin-auth',
     aud: 'authenticated',
     exp: getNumericDate(expiresIn),
     iat: issuedAt,
-    admin_username: username,
+    app_metadata: {
+      admin_role: record.role,
+      admin_username: username,
+    },
   };
 
   const accessToken = await create({ alg: 'HS256', typ: 'JWT' }, payload, key);
