@@ -170,11 +170,17 @@ export async function deleteSessionDeep(sessionId, { deleteStorage = true } = {}
     throw new Error(NO_SUPABASE_ERROR);
   }
 
-  const ignoreMissing = (promise) =>
-    promise.catch((err) => {
-      // Best-effort cleanup; ignore missing table or column errors
+  const ignoreMissing = async (queryPromise) => {
+    try {
+      const res = await queryPromise;
+      // Some Supabase calls resolve to { data, error } instead of throwing
+      if (res && res.error) throw res.error;
+      return res ?? null;
+    } catch (err) {
+      // Best-effort cleanup; ignore missing table/column/relation errors
       const msg = String(err?.message ?? err?.details ?? '').toLowerCase();
       if (
+        msg.includes('does not exist') ||
         msg.includes('not exist') ||
         msg.includes('relation') ||
         msg.includes('column') ||
@@ -183,7 +189,8 @@ export async function deleteSessionDeep(sessionId, { deleteStorage = true } = {}
         return null;
       }
       throw err;
-    });
+    }
+  };
 
   // Optional: remove session-logs storage objects first
   if (deleteStorage) {
