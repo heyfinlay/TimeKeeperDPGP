@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import DriverTimingPanel from '@/components/DriverTimingPanel.jsx';
 import { useSessionContext, useSessionId } from '@/state/SessionContext.jsx';
 import { useSessionDrivers } from '@/hooks/useSessionDrivers.js';
@@ -95,12 +95,21 @@ export default function ControlPanel() {
           throw membershipError;
         }
         if (!isMounted) return;
-        setRole(membership?.role ?? 'spectator');
+        const membershipRole = typeof membership?.role === 'string' ? membership.role.toLowerCase() : null;
+        setRole(membershipRole ?? 'spectator');
         setIsRoleLoading(false);
       } catch (error) {
         console.error('Failed to resolve session role', error);
         if (!isMounted) return;
-        setRoleError(error?.message ?? 'Unable to determine session role.');
+        const rawMessage = error?.message ?? error?.supabaseMessage ?? '';
+        const normalizedMessage = typeof rawMessage === 'string' ? rawMessage.toLowerCase() : '';
+        if (normalizedMessage.includes('infinite recursion')) {
+          setRoleError(
+            'Session access is temporarily unavailable due to a Supabase policy issue. Please contact an administrator to restore marshal permissions.',
+          );
+        } else {
+          setRoleError(rawMessage || 'Unable to determine session role.');
+        }
         setRole('spectator');
         setIsRoleLoading(false);
       }
@@ -141,6 +150,23 @@ export default function ControlPanel() {
   const canWrite = !isSupabaseConfigured || hasAdminAccess || role === 'admin' || role === 'marshal';
   const resolvedRole = !isSupabaseConfigured || hasAdminAccess ? 'admin' : role ?? 'spectator';
   const roleLabel = roleLabels[resolvedRole] ?? 'Spectator';
+
+  const lastRoleRef = useRef(resolvedRole);
+
+  useEffect(() => {
+    const hasRoleChanged = lastRoleRef.current !== resolvedRole;
+    lastRoleRef.current = resolvedRole;
+    if (
+      !isSupabaseConfigured ||
+      isRoleLoading ||
+      !refresh ||
+      !hasRoleChanged ||
+      (resolvedRole !== 'marshal' && resolvedRole !== 'admin')
+    ) {
+      return;
+    }
+    void refresh();
+  }, [isRoleLoading, refresh, resolvedRole]);
 
   return (
     <div className="mx-auto flex w-full max-w-6xl flex-col gap-6">

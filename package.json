@@ -18,7 +18,10 @@
   "devDependencies": {
     "@types/react": "^18.2.66",
     "@types/react-dom": "^18.2.22",
+    "@testing-library/jest-dom": "^6.6.3",
+    "@testing-library/react": "^16.0.1",
     "@vitejs/plugin-react": "^4.7.0",
+    "jsdom": "^25.0.1",
     "autoprefixer": "^10.4.19",
     "postcss": "^8.4.38",
     "supabase": "^2.53.6",

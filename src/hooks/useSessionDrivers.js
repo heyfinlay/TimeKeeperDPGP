@@ -67,6 +67,8 @@ export function useSessionDrivers({ onlyMine = false, userId } = {}) {
     [sessionId, onlyMine, userId, isAdmin],
   );
 
+  const lastFiltersRef = useRef({ onlyMine, userId, isAdmin });
+
   useEffect(() => {
     mountedRef.current = true;
     if (!sessionId) {
@@ -110,6 +112,23 @@ export function useSessionDrivers({ onlyMine = false, userId } = {}) {
       stopLaps?.();
     };
   }, [sessionId, refresh]);
+
+  useEffect(() => {
+    const previous = lastFiltersRef.current;
+    lastFiltersRef.current = { onlyMine, userId, isAdmin };
+    const filtersChanged =
+      previous.onlyMine !== onlyMine || previous.userId !== userId || previous.isAdmin !== isAdmin;
+    if (!filtersChanged) {
+      return;
+    }
+    if (!sessionId || !isSupabaseConfigured || !supabase) {
+      return;
+    }
+    if (onlyMine && !userId && !isAdmin) {
+      return;
+    }
+    void refresh();
+  }, [onlyMine, userId, isAdmin, sessionId, refresh]);
 
   return {
     drivers,
