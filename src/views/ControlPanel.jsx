@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import DriverTimingPanel from '@/components/DriverTimingPanel.jsx';
-import { useSessionId } from '@/state/SessionContext.jsx';
+import { useSessionContext, useSessionId } from '@/state/SessionContext.jsx';
 import { useSessionDrivers } from '@/hooks/useSessionDrivers.js';
 import { isSupabaseConfigured, supabase } from '@/lib/supabaseClient.js';
+import { useAuth } from '@/context/AuthContext.jsx';
 
 const roleLabels = {
   admin: 'Admin',
@@ -39,6 +40,8 @@ const toPanelDriver = (driver) => ({
 
 export default function ControlPanel() {
   const sessionId = useSessionId();
+  const { isAdmin: hasAdminAccess } = useSessionContext();
+  const { status, user } = useAuth();
   const [userId, setUserId] = useState(null);
   const [role, setRole] = useState(null);
   const [roleError, setRoleError] = useState(null);
@@ -47,6 +50,29 @@ export default function ControlPanel() {
   useEffect(() => {
     let isMounted = true;
     if (!isSupabaseConfigured || !supabase) {
+      setUserId(user?.id ?? null);
+      setRole('admin');
+      setRoleError(null);
+      setIsRoleLoading(false);
+      return () => {
+        isMounted = false;
+      };
+    }
+
+    if (hasAdminAccess) {
+      setUserId(user?.id ?? null);
+      setRole('admin');
+      setRoleError(null);
+      setIsRoleLoading(false);
+      return () => {
+        isMounted = false;
+      };
+    }
+
+    if (status !== 'authenticated' || !user) {
+      setUserId(null);
+      setRole('spectator');
+      setRoleError(null);
       setIsRoleLoading(false);
       return () => {
         isMounted = false;
@@ -55,25 +81,10 @@ export default function ControlPanel() {
 
     setIsRoleLoading(true);
     setRoleError(null);
+    setUserId(user.id);
 
     const loadRole = async () => {
       try {
-        const {
-          data: { user },
-          error: userError,
-        } = await supabase.auth.getUser();
-        if (userError) throw userError;
-        if (!user) {
-          if (!isMounted) return;
-          setUserId(null);
-          setRole(null);
-          setIsRoleLoading(false);
-          return;
-        }
-
-        if (!isMounted) return;
-        setUserId(user.id);
-
         const { data: membership, error: membershipError } = await supabase
           .from('session_members')
           .select('role')
@@ -90,7 +101,7 @@ export default function ControlPanel() {
         console.error('Failed to resolve session role', error);
         if (!isMounted) return;
         setRoleError(error?.message ?? 'Unable to determine session role.');
-        setRole(null);
+        setRole('spectator');
         setIsRoleLoading(false);
       }
     };
@@ -100,10 +111,10 @@ export default function ControlPanel() {
     return () => {
       isMounted = false;
     };
-  }, [sessionId]);
+  }, [sessionId, hasAdminAccess, user?.id, status]);
 
   const driverScope = useMemo(() => {
-    const isAdmin = role === 'admin';
+    const isAdmin = hasAdminAccess || role === 'admin';
     const restrictToMarshal = role === 'marshal';
     if (!isSupabaseConfigured) {
       return { onlyMine: false, userId: null, isAdmin: true };
@@ -127,8 +138,8 @@ export default function ControlPanel() {
     userId: driverScope.onlyMine ? driverScope.userId ?? undefined : undefined,
   });
 
-  const canWrite = !isSupabaseConfigured || role === 'admin' || role === 'marshal';
-  const resolvedRole = !isSupabaseConfigured ? 'admin' : role ?? 'spectator';
+  const canWrite = !isSupabaseConfigured || hasAdminAccess || role === 'admin' || role === 'marshal';
+  const resolvedRole = !isSupabaseConfigured || hasAdminAccess ? 'admin' : role ?? 'spectator';
   const roleLabel = roleLabels[resolvedRole] ?? 'Spectator';
 
   return (
