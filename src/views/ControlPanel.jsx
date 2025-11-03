@@ -7,6 +7,7 @@ import { useAuth } from '@/context/AuthContext.jsx';
 import { TRACK_STATUS_OPTIONS, TRACK_STATUS_MAP } from '@/constants/trackStatus.js';
 import { DEFAULT_SESSION_STATE, sessionRowToState } from '@/utils/raceData.js';
 import { formatRaceClock } from '@/utils/time.js';
+import { logLapAtomic, invalidateLastLap } from '@/services/laps.js';
 
 const roleLabels = {
   admin: 'Admin',
@@ -332,6 +333,177 @@ export default function ControlPanel() {
     }
   }, [announcementDraft, canWrite, persistSessionPatch]);
 
+  // ---------------- Keyboard Hotkeys -----------------
+  const HOTKEYS_STORAGE_KEY = `timekeeper.hotkeys.v1`;
+  const defaultHotkeys = useMemo(
+    () => ({
+      keys: ['1','2','3','4','5','6','7','8','9','0'],
+      pitModifier: 'Shift',
+      invalidateModifier: 'Alt',
+    }),
+    [],
+  );
+  const [hotkeys, setHotkeys] = useState(defaultHotkeys);
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem(HOTKEYS_STORAGE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed?.keys) && parsed.keys.length === 10) {
+          setHotkeys({
+            keys: parsed.keys.map((k) => String(k || '').trim() || ''),
+            pitModifier: parsed.pitModifier || 'Shift',
+            invalidateModifier: parsed.invalidateModifier || 'Alt',
+          });
+        }
+      }
+    } catch {
+      // ignore storage read errors
+    }
+  }, []);
+  const saveHotkeys = useCallback((next) => {
+    setHotkeys(next);
+    try {
+      window.localStorage.setItem(HOTKEYS_STORAGE_KEY, JSON.stringify(next));
+    } catch {
+      // ignore storage write errors
+    }
+  }, []);
+
+  const hotkeyArmsKey = (driverId) => `timekeeper.currentLapStart.${sessionId}.${driverId}`;
+  const getArmedStart = (driverId) => {
+    try {
+      const raw = window.localStorage.getItem(hotkeyArmsKey(driverId));
+      const n = raw ? Number.parseInt(raw, 10) : NaN;
+      return Number.isNaN(n) ? null : n;
+    } catch {
+      return null;
+    }
+  };
+  const setArmedStart = (driverId, when) => {
+    try {
+      if (when === null) {
+        window.localStorage.removeItem(hotkeyArmsKey(driverId));
+      } else {
+        window.localStorage.setItem(hotkeyArmsKey(driverId), String(when));
+      }
+    } catch {
+      // ignore storage errors
+    }
+  };
+
+  const togglePitComplete = useCallback(
+    async (driver) => {
+      if (!canWrite || !isSupabaseConfigured || !supabase || !driver?.id) return;
+      try {
+        const { data: current, error: selectError } = await supabase
+          .from('drivers')
+          .select('pit_complete')
+          .eq('session_id', sessionId)
+          .eq('id', driver.id)
+          .maybeSingle();
+        if (selectError) throw selectError;
+        const next = !(current?.pit_complete ?? false);
+        const { error } = await supabase
+          .from('drivers')
+          .update({ pit_complete: next })
+          .eq('session_id', sessionId)
+          .eq('id', driver.id);
+        if (error) throw error;
+      } catch (err) {
+        console.error('Failed to toggle pit_complete', err);
+        setSessionError('Unable to toggle pit status.');
+      }
+    },
+    [canWrite, sessionId],
+  );
+
+  const normalizeKey = (k) => (typeof k === 'string' ? k.toLowerCase() : '');
+
+  const checkModifier = (event, required) => {
+    switch ((required || '').toLowerCase()) {
+      case 'alt':
+        return event.altKey;
+      case 'shift':
+        return event.shiftKey;
+      case 'control':
+      case 'ctrl':
+        return event.ctrlKey;
+      case 'none':
+        return !event.altKey && !event.shiftKey && !event.ctrlKey;
+      default:
+        return false;
+    }
+  };
+
+  const handleHotkey = useCallback(
+    async (event) => {
+      if (!canWrite) return;
+      // ignore typing in inputs
+      const tag = (event.target?.tagName || '').toLowerCase();
+      if (tag === 'input' || tag === 'textarea' || event.isComposing) return;
+      const key = normalizeKey(event.key);
+      const index = hotkeys.keys.findIndex((k) => normalizeKey(k) === key);
+      const driver = drivers[index];
+      if (!driver) return;
+
+      event.preventDefault();
+      try {
+        if (checkModifier(event, hotkeys.invalidateModifier)) {
+          // Invalidate last lap (time only)
+          await invalidateLastLap({ sessionId, driverId: driver.id, mode: 'time_only' });
+          return;
+        }
+        if (checkModifier(event, hotkeys.pitModifier)) {
+          await togglePitComplete(driver);
+          return;
+        }
+        // Log a lap using armed start time per driver. First press arms, second press logs.
+        const armed = getArmedStart(driver.id);
+        const now = Date.now();
+        if (!armed) {
+          setArmedStart(driver.id, now);
+          return;
+        }
+        const lapTime = Math.max(1, now - armed);
+        await logLapAtomic({ sessionId, driverId: driver.id, lapTimeMs: lapTime });
+        setArmedStart(driver.id, now);
+      } catch (err) {
+        console.error('Hotkey action failed', err);
+        setSessionError('Hotkey action failed.');
+      }
+    },
+    [canWrite, drivers, sessionId, togglePitComplete, hotkeys],
+  );
+
+  useEffect(() => {
+    window.addEventListener('keydown', handleHotkey);
+    return () => window.removeEventListener('keydown', handleHotkey);
+  }, [handleHotkey]);
+
+  // ------- Hotkey settings UI -------
+  const [isEditingHotkeys, setIsEditingHotkeys] = useState(false);
+  const [hotkeyDraft, setHotkeyDraft] = useState(hotkeys);
+  useEffect(() => setHotkeyDraft(hotkeys), [hotkeys]);
+  const updateKeyDraft = (idx, value) => {
+    setHotkeyDraft((prev) => {
+      const next = { ...prev, keys: [...prev.keys] };
+      next.keys[idx] = value.slice(0, 10);
+      return next;
+    });
+  };
+  const saveHotkeyDraft = () => {
+    const sanitized = {
+      keys: Array.isArray(hotkeyDraft.keys) && hotkeyDraft.keys.length === 10
+        ? hotkeyDraft.keys.map((k) => String(k || '').trim())
+        : defaultHotkeys.keys,
+      pitModifier: hotkeyDraft.pitModifier || 'Shift',
+      invalidateModifier: hotkeyDraft.invalidateModifier || 'Alt',
+    };
+    saveHotkeys(sanitized);
+    setIsEditingHotkeys(false);
+  };
+
   return (
     <div className="mx-auto flex w-full max-w-6xl flex-col gap-6">
       <header className="flex flex-col gap-3 text-center">
@@ -486,8 +658,80 @@ export default function ControlPanel() {
               {opt.shortLabel}
             </button>
           ))}
+
+          <div className="h-6 w-px bg-white/10" />
+          <button
+            type="button"
+            onClick={() => setIsEditingHotkeys((v) => !v)}
+            className="rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm font-semibold text-white/80 hover:bg-white/10"
+          >
+            {isEditingHotkeys ? 'Close Hotkeys' : 'Hotkey Settings'}
+          </button>
         </div>
         <p className="mt-3 text-[10px] uppercase tracking-[0.35em] text-neutral-500">Keyboard hotkeys 1-0 log laps, shift toggles pit, and Alt invalidates the last lap.</p>
+
+        {isEditingHotkeys ? (
+          <div className="mt-4 rounded-2xl border border-white/10 bg-black/30 p-4">
+            <p className="text-xs uppercase tracking-[0.35em] text-neutral-400">Configure Hotkeys</p>
+            <div className="mt-3 grid grid-cols-2 gap-2 md:grid-cols-5">
+              {hotkeyDraft.keys.map((val, idx) => (
+                <label key={idx} className="flex items-center gap-2 text-xs text-neutral-300">
+                  <span className="w-16 text-neutral-500">Slot {idx + 1}</span>
+                  <input
+                    value={val}
+                    onChange={(e) => updateKeyDraft(idx, e.target.value)}
+                    placeholder={String(idx + 1)}
+                    className="flex-1 rounded-md border border-white/10 bg-black/40 px-2 py-1 text-sm text-white placeholder:text-neutral-600 focus:outline-none focus:ring-2 focus:ring-white/20"
+                  />
+                </label>
+              ))}
+            </div>
+            <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2">
+              <label className="flex items-center gap-2 text-xs text-neutral-300">
+                <span className="w-40 text-neutral-500">Pit modifier</span>
+                <select
+                  value={hotkeyDraft.pitModifier}
+                  onChange={(e) => setHotkeyDraft((prev) => ({ ...prev, pitModifier: e.target.value }))}
+                  className="flex-1 rounded-md border border-white/10 bg-black/40 px-2 py-1 text-sm text-white focus:outline-none focus:ring-2 focus:ring-white/20"
+                >
+                  <option>Shift</option>
+                  <option>Alt</option>
+                  <option>Control</option>
+                  <option>None</option>
+                </select>
+              </label>
+              <label className="flex items-center gap-2 text-xs text-neutral-300">
+                <span className="w-40 text-neutral-500">Invalidate modifier</span>
+                <select
+                  value={hotkeyDraft.invalidateModifier}
+                  onChange={(e) => setHotkeyDraft((prev) => ({ ...prev, invalidateModifier: e.target.value }))}
+                  className="flex-1 rounded-md border border-white/10 bg-black/40 px-2 py-1 text-sm text-white focus:outline-none focus:ring-2 focus:ring-white/20"
+                >
+                  <option>Alt</option>
+                  <option>Shift</option>
+                  <option>Control</option>
+                  <option>None</option>
+                </select>
+              </label>
+            </div>
+            <div className="mt-4 flex gap-2">
+              <button
+                type="button"
+                onClick={() => setHotkeyDraft(defaultHotkeys)}
+                className="rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white/80 hover:bg-white/10"
+              >
+                Reset Defaults
+              </button>
+              <button
+                type="button"
+                onClick={saveHotkeyDraft}
+                className="rounded-lg bg-emerald-700 px-3 py-2 text-sm font-semibold text-white hover:bg-emerald-600"
+              >
+                Save Hotkeys
+              </button>
+            </div>
+          </div>
+        ) : null}
       </section>
 
       <section className="rounded-3xl border border-white/5 bg-[#05070F]/80 p-6">
@@ -506,4 +750,3 @@ export default function ControlPanel() {
     </div>
   );
 }
-
