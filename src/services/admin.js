@@ -161,3 +161,63 @@ export async function assignMarshalToDriver({ sessionId, driverId, marshalUserId
 
   return updatedDriver ?? null;
 }
+
+export async function deleteSessionDeep(sessionId, { deleteStorage = true } = {}) {
+  if (!sessionId) {
+    throw new Error('A session ID is required to delete a session.');
+  }
+  if (!isSupabaseConfigured || !supabase) {
+    throw new Error(NO_SUPABASE_ERROR);
+  }
+
+  const ignoreMissing = (promise) =>
+    promise.catch((err) => {
+      // Best-effort cleanup; ignore missing table or column errors
+      const msg = String(err?.message ?? err?.details ?? '').toLowerCase();
+      if (
+        msg.includes('not exist') ||
+        msg.includes('relation') ||
+        msg.includes('column') ||
+        msg.includes('no such')
+      ) {
+        return null;
+      }
+      throw err;
+    });
+
+  // Optional: remove session-logs storage objects first
+  if (deleteStorage) {
+    const { data: logRows, error: logError } = await supabase
+      .from('session_logs')
+      .select('object_path')
+      .eq('session_id', sessionId);
+    if (!logError && Array.isArray(logRows) && logRows.length) {
+      const paths = logRows.map((r) => r.object_path).filter(Boolean);
+      if (paths.length) {
+        try {
+          await supabase.storage.from('session-logs').remove(paths);
+        } catch (e) {
+          // ignore storage removal failures
+        }
+      }
+    }
+    await ignoreMissing(
+      supabase.from('session_logs').delete().eq('session_id', sessionId),
+    );
+  }
+
+  // Delete dependents (order matters when FKs have no cascade)
+  await ignoreMissing(supabase.from('laps').delete().eq('session_id', sessionId));
+  await ignoreMissing(supabase.from('race_events').delete().eq('session_id', sessionId));
+  await ignoreMissing(supabase.from('session_entries').delete().eq('session_id', sessionId));
+  await ignoreMissing(supabase.from('session_members').delete().eq('session_id', sessionId));
+  await ignoreMissing(supabase.from('drivers').delete().eq('session_id', sessionId));
+  await ignoreMissing(supabase.from('session_state').delete().eq('session_id', sessionId));
+
+  // Finally delete the session row
+  const { error: deleteError } = await supabase.from('sessions').delete().eq('id', sessionId);
+  if (deleteError) {
+    throw deleteError;
+  }
+  return true;
+}

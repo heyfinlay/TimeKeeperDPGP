@@ -419,6 +419,33 @@ export default function ControlPanel() {
   );
 
   const normalizeKey = (k) => (typeof k === 'string' ? k.toLowerCase() : '');
+  const normalizeCode = (c) => (typeof c === 'string' ? c.toLowerCase() : '');
+
+  const symbolToDigit = {
+    '!': '1', '@': '2', '#': '3', '$': '4', '%': '5', '^': '6', '&': '7', '*': '8', '(': '9', ')': '0',
+    '¡': '1', // common Alt+1 on some layouts
+  };
+
+  const resolveIndexFromEvent = (event) => {
+    const code = normalizeCode(event.code);
+    const m = /^(digit|numpad)([0-9])$/.exec(code);
+    if (m) {
+      const d = m[2];
+      const idx = d === '0' ? 9 : Number.parseInt(d, 10) - 1;
+      return idx;
+    }
+
+    // Fallback to key matching (with symbol → digit normalization)
+    const rawKey = event.key;
+    const baseKey = symbolToDigit[rawKey] ?? rawKey;
+    const key = normalizeKey(baseKey);
+
+    // Also allow matching by configured code names (e.g., 'KeyA')
+    const byCode = hotkeys.keys.findIndex((k) => normalizeCode(k) === code);
+    if (byCode !== -1) return byCode;
+
+    return hotkeys.keys.findIndex((k) => normalizeKey(k) === key);
+  };
 
   const checkModifier = (event, required) => {
     switch ((required || '').toLowerCase()) {
@@ -442,8 +469,7 @@ export default function ControlPanel() {
       // ignore typing in inputs
       const tag = (event.target?.tagName || '').toLowerCase();
       if (tag === 'input' || tag === 'textarea' || event.isComposing) return;
-      const key = normalizeKey(event.key);
-      const index = hotkeys.keys.findIndex((k) => normalizeKey(k) === key);
+      const index = resolveIndexFromEvent(event);
       const driver = drivers[index];
       if (!driver) return;
 
