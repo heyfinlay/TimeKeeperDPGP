@@ -1,4 +1,4 @@
-import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
+import { BrowserRouter } from 'react-router-dom';
 import { EventSessionProvider } from '@/context/SessionContext.jsx';
 import AuthGuard from '@/components/auth/AuthGuard.jsx';
 import ProtectedRoute from '@/components/auth/ProtectedRoute.jsx';
