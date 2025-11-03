@@ -1,6 +1,7 @@
 import { NavLink, Outlet } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext.jsx';
 import { useEventSession } from '@/context/SessionContext.jsx';
+import { useAdminAccess } from '@/components/auth/AuthGuard.jsx';
 
 const NAV_ITEMS = [
   {
@@ -27,12 +28,22 @@ const NAV_ITEMS = [
     hoverClass: 'hover:border-[#9FF7D3]/50 hover:text-[#9FF7D3]',
     requiresAuth: true,
   },
+  {
+    id: 'admin',
+    label: 'Admin',
+    buildPath: () => '/dashboard/admin',
+    activeClass: 'bg-[#F7768E]/20 text-[#F7768E]',
+    hoverClass: 'hover:border-[#F7768E]/50 hover:text-[#F7768E]',
+    requiresAuth: true,
+    requiresAdmin: true,
+  },
 ];
 
 export default function AppLayout() {
   const { status, isSupabaseConfigured } = useAuth();
   const isAuthenticated = status === 'authenticated';
   const { activeSessionId } = useEventSession();
+  const { isAdmin } = useAdminAccess();
 
   const navItems = NAV_ITEMS.map((item) => ({
     ...item,
@@ -40,6 +51,9 @@ export default function AppLayout() {
   }));
 
   const visibleNavItems = navItems.filter((item) => {
+    if (item.requiresAdmin && !isAdmin) {
+      return false;
+    }
     if (!item.requiresAuth) return true;
     if (!isSupabaseConfigured) return true;
     return isAuthenticated;
