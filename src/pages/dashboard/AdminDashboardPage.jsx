@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Loader2, RefreshCcw } from 'lucide-react';
+import { Loader2, RefreshCcw, Trash2 } from 'lucide-react';
 import SessionMarshalAssignments from '@/components/admin/SessionMarshalAssignments.jsx';
 import {
   assignMarshalToDriver,
   fetchAdminSessions,
   fetchMarshalDirectory,
   updateSessionState,
+  deleteSessionDeep,
 } from '@/services/admin.js';
 import { isSupabaseConfigured } from '@/lib/supabaseClient.js';
 
@@ -41,6 +42,7 @@ export default function AdminDashboardPage() {
   const [isLoading, setIsLoading] = useState(isSupabaseConfigured);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [pendingAssignments, setPendingAssignments] = useState({});
+  const [pendingDelete, setPendingDelete] = useState({});
 
   const sessionLookup = useMemo(() => {
     const map = new Map();
@@ -133,6 +135,32 @@ export default function AdminDashboardPage() {
         setPendingAssignments((prev) => {
           const next = { ...prev };
           delete next[driverId];
+          return next;
+        });
+      }
+    },
+    [sessionLookup],
+  );
+
+  const handleDeleteSession = useCallback(
+    async (sessionId) => {
+      if (!sessionId) return;
+      const session = sessionLookup.get(sessionId);
+      const name = session?.name || sessionId.slice(0, 8);
+      const ok = window.confirm(`Delete session "${name}" and all related data (laps, drivers, logs)? This cannot be undone.`);
+      if (!ok) return;
+      setPendingDelete((prev) => ({ ...prev, [sessionId]: true }));
+      try {
+        await deleteSessionDeep(sessionId, { deleteStorage: true });
+        setSessions((prev) => prev.filter((s) => s.id !== sessionId));
+        setError(null);
+      } catch (err) {
+        console.error('Failed to delete session', err);
+        setError(err?.message ?? 'Unable to delete session.');
+      } finally {
+        setPendingDelete((prev) => {
+          const next = { ...prev };
+          delete next[sessionId];
           return next;
         });
       }
@@ -268,6 +296,15 @@ export default function AdminDashboardPage() {
                     className="inline-flex items-center gap-2 rounded-full border border-white/10 px-4 py-2 text-xs font-semibold uppercase tracking-[0.35em] text-white/70 transition hover:border-white/40 hover:text-white"
                   >
                     Mark active
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleDeleteSession(session.id)}
+                    disabled={Boolean(pendingDelete[session.id])}
+                    className="inline-flex items-center gap-2 rounded-full border border-rose-500/40 px-4 py-2 text-xs font-semibold uppercase tracking-[0.35em] text-rose-200 transition hover:border-rose-500/70 hover:text-white disabled:opacity-60"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                    {pendingDelete[session.id] ? 'Deleting…' : 'Delete'}
                   </button>
                 </div>
               </header>
