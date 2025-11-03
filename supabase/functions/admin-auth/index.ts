@@ -1,5 +1,5 @@
 import { serve } from 'https://deno.land/std@0.224.0/http/server.ts';
-import { Status } from 'https://deno.land/std@0.224.0/http/http_status.ts';
+import { Status } from 'https://deno.land/std@0.224.0/http/status.ts';
 import { create, getNumericDate } from 'https://deno.land/x/djwt@v3.0.2/mod.ts';
 
 const corsHeaders: Record<string, string> = {
