@@ -1,9 +1,13 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import DriverTimingPanel from '@/components/DriverTimingPanel.jsx';
 import { useSessionContext, useSessionId } from '@/state/SessionContext.jsx';
 import { useSessionDrivers } from '@/hooks/useSessionDrivers.js';
 import { isSupabaseConfigured, supabase } from '@/lib/supabaseClient.js';
 import { useAuth } from '@/context/AuthContext.jsx';
+import { TRACK_STATUS_OPTIONS, TRACK_STATUS_MAP } from '@/constants/trackStatus.js';
+import { DEFAULT_SESSION_STATE, sessionRowToState } from '@/utils/raceData.js';
+import { formatRaceClock } from '@/utils/time.js';
+import { logLapAtomic, invalidateLastLap } from '@/services/laps.js';
 
 const roleLabels = {
   admin: 'Admin',
@@ -47,6 +51,7 @@ export default function ControlPanel() {
   const [roleError, setRoleError] = useState(null);
   const [isRoleLoading, setIsRoleLoading] = useState(isSupabaseConfigured);
 
+  // Resolve role for this session
   useEffect(() => {
     let isMounted = true;
     if (!isSupabaseConfigured || !supabase) {
@@ -168,6 +173,337 @@ export default function ControlPanel() {
     void refresh();
   }, [isRoleLoading, refresh, resolvedRole]);
 
+  // -------- Session state (track status, announcements, race timer) ---------
+  const [sessionState, setSessionState] = useState(DEFAULT_SESSION_STATE);
+  const [announcementDraft, setAnnouncementDraft] = useState('');
+  const [sessionError, setSessionError] = useState(null);
+
+  const tickingRef = useRef(false);
+  const startEpochRef = useRef(null);
+  const baseTimeRef = useRef(0);
+  const tickTimerRef = useRef(null);
+  const persistTimerRef = useRef(null);
+  const computeDisplayTime = useCallback(() => {
+    if (!sessionState.isTiming || sessionState.isPaused || !tickingRef.current || !startEpochRef.current) {
+      return sessionState.raceTime;
+    }
+    const now = Date.now();
+    return baseTimeRef.current + (now - startEpochRef.current);
+  }, [sessionState.isPaused, sessionState.isTiming, sessionState.raceTime]);
+
+  const applySessionStateRow = useCallback((row) => {
+    const next = sessionRowToState(row);
+    setSessionState(next);
+    setAnnouncementDraft(next.announcement ?? '');
+    baseTimeRef.current = next.raceTime ?? 0;
+    if (next.isTiming && !next.isPaused) {
+      startEpochRef.current = Date.now();
+      tickingRef.current = true;
+    } else {
+      startEpochRef.current = null;
+      tickingRef.current = false;
+    }
+  }, []);
+
+  const loadSessionState = useCallback(async () => {
+    if (!isSupabaseConfigured || !supabase) {
+      setSessionState(DEFAULT_SESSION_STATE);
+      setAnnouncementDraft('');
+      setSessionError(null);
+      return;
+    }
+    try {
+      const { data, error } = await supabase
+        .from('session_state')
+        .select('*')
+        .eq('session_id', sessionId)
+        .maybeSingle();
+      if (error) throw error;
+      if (data) applySessionStateRow(data);
+    } catch (err) {
+      console.error('Failed to load session state', err);
+      setSessionError('Unable to load session state.');
+    }
+  }, [applySessionStateRow, sessionId]);
+
+  useEffect(() => {
+    void loadSessionState();
+  }, [loadSessionState]);
+
+  useEffect(() => {
+    if (!isSupabaseConfigured || !supabase) return () => {};
+    const channel = supabase
+      .channel(`control-panel-session-${sessionId}`)
+      .on('postgres_changes', {
+        event: '*', schema: 'public', table: 'session_state', filter: `session_id=eq.${sessionId}`,
+      }, (payload) => {
+        if (payload?.new) applySessionStateRow(payload.new);
+      })
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, [applySessionStateRow, sessionId]);
+
+  const persistSessionPatch = useCallback(async (patch) => {
+    if (!isSupabaseConfigured || !supabase) return;
+    const rows = [{ id: sessionId, session_id: sessionId, updated_at: new Date().toISOString(), ...patch }];
+    const { data, error } = await supabase
+      .from('session_state')
+      .upsert(rows, { onConflict: 'id' })
+      .select('*')
+      .maybeSingle();
+    if (error) throw error;
+    if (data) applySessionStateRow(data);
+  }, [applySessionStateRow, sessionId]);
+
+  const startTimer = useCallback(async () => {
+    if (!canWrite) return;
+    baseTimeRef.current = sessionState.raceTime ?? 0;
+    startEpochRef.current = Date.now();
+    tickingRef.current = true;
+    await persistSessionPatch({ is_timing: true, is_paused: false });
+  }, [canWrite, persistSessionPatch, sessionState.raceTime]);
+
+  const pauseTimer = useCallback(async () => {
+    if (!canWrite) return;
+    const current = computeDisplayTime();
+    tickingRef.current = false;
+    startEpochRef.current = null;
+    baseTimeRef.current = current;
+    await persistSessionPatch({ is_timing: true, is_paused: true, race_time_ms: current });
+  }, [canWrite, computeDisplayTime, persistSessionPatch]);
+
+  const resumeTimer = useCallback(async () => {
+    if (!canWrite) return;
+    baseTimeRef.current = sessionState.raceTime ?? 0;
+    startEpochRef.current = Date.now();
+    tickingRef.current = true;
+    await persistSessionPatch({ is_paused: false, is_timing: true });
+  }, [canWrite, persistSessionPatch, sessionState.raceTime]);
+
+  const resetTimer = useCallback(async () => {
+    if (!canWrite) return;
+    tickingRef.current = false;
+    startEpochRef.current = null;
+    baseTimeRef.current = 0;
+    await persistSessionPatch({ is_timing: false, is_paused: false, race_time_ms: 0 });
+  }, [canWrite, persistSessionPatch]);
+
+  const [displayTime, setDisplayTime] = useState(0);
+  useEffect(() => {
+    if (tickTimerRef.current) clearInterval(tickTimerRef.current);
+    tickTimerRef.current = setInterval(() => {
+      setDisplayTime((prev) => {
+        const next = computeDisplayTime();
+        return next !== prev ? next : prev;
+      });
+    }, 250);
+    return () => clearInterval(tickTimerRef.current);
+  }, [computeDisplayTime]);
+
+  useEffect(() => {
+    if (persistTimerRef.current) clearInterval(persistTimerRef.current);
+    if (sessionState.isTiming && !sessionState.isPaused) {
+      persistTimerRef.current = setInterval(() => {
+        const current = computeDisplayTime();
+        void persistSessionPatch({ race_time_ms: current });
+      }, 5000);
+    }
+    return () => { if (persistTimerRef.current) clearInterval(persistTimerRef.current); };
+  }, [computeDisplayTime, persistSessionPatch, sessionState.isPaused, sessionState.isTiming]);
+
+  const setTrackStatus = useCallback(async (statusId) => {
+    if (!canWrite) return;
+    const normalized = TRACK_STATUS_MAP[statusId] ? statusId : 'green';
+    try {
+      await persistSessionPatch({ track_status: normalized, flag_status: normalized });
+    } catch (error) {
+      console.error('Failed to update track status', error);
+      setSessionError('Unable to update track status.');
+    }
+  }, [canWrite, persistSessionPatch]);
+
+  const updateAnnouncement = useCallback(async () => {
+    if (!canWrite) return;
+    try {
+      const text = (announcementDraft ?? '').slice(0, 500);
+      await persistSessionPatch({ announcement: text });
+    } catch (error) {
+      console.error('Failed to update announcement', error);
+      setSessionError('Unable to update announcement.');
+    }
+  }, [announcementDraft, canWrite, persistSessionPatch]);
+
+  // ---------------- Keyboard Hotkeys -----------------
+  const HOTKEYS_STORAGE_KEY = `timekeeper.hotkeys.v1`;
+  const defaultHotkeys = useMemo(
+    () => ({
+      keys: ['1','2','3','4','5','6','7','8','9','0'],
+      pitModifier: 'Shift',
+      invalidateModifier: 'Alt',
+    }),
+    [],
+  );
+  const [hotkeys, setHotkeys] = useState(defaultHotkeys);
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem(HOTKEYS_STORAGE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed?.keys) && parsed.keys.length === 10) {
+          setHotkeys({
+            keys: parsed.keys.map((k) => String(k || '').trim() || ''),
+            pitModifier: parsed.pitModifier || 'Shift',
+            invalidateModifier: parsed.invalidateModifier || 'Alt',
+          });
+        }
+      }
+    } catch {
+      // ignore storage read errors
+    }
+  }, []);
+  const saveHotkeys = useCallback((next) => {
+    setHotkeys(next);
+    try {
+      window.localStorage.setItem(HOTKEYS_STORAGE_KEY, JSON.stringify(next));
+    } catch {
+      // ignore storage write errors
+    }
+  }, []);
+
+  const hotkeyArmsKey = (driverId) => `timekeeper.currentLapStart.${sessionId}.${driverId}`;
+  const getArmedStart = (driverId) => {
+    try {
+      const raw = window.localStorage.getItem(hotkeyArmsKey(driverId));
+      const n = raw ? Number.parseInt(raw, 10) : NaN;
+      return Number.isNaN(n) ? null : n;
+    } catch {
+      return null;
+    }
+  };
+  const setArmedStart = (driverId, when) => {
+    try {
+      if (when === null) {
+        window.localStorage.removeItem(hotkeyArmsKey(driverId));
+      } else {
+        window.localStorage.setItem(hotkeyArmsKey(driverId), String(when));
+      }
+    } catch {
+      // ignore storage errors
+    }
+  };
+
+  const togglePitComplete = useCallback(
+    async (driver) => {
+      if (!canWrite || !isSupabaseConfigured || !supabase || !driver?.id) return;
+      try {
+        const { data: current, error: selectError } = await supabase
+          .from('drivers')
+          .select('pit_complete')
+          .eq('session_id', sessionId)
+          .eq('id', driver.id)
+          .maybeSingle();
+        if (selectError) throw selectError;
+        const next = !(current?.pit_complete ?? false);
+        const { error } = await supabase
+          .from('drivers')
+          .update({ pit_complete: next })
+          .eq('session_id', sessionId)
+          .eq('id', driver.id);
+        if (error) throw error;
+      } catch (err) {
+        console.error('Failed to toggle pit_complete', err);
+        setSessionError('Unable to toggle pit status.');
+      }
+    },
+    [canWrite, sessionId],
+  );
+
+  const normalizeKey = (k) => (typeof k === 'string' ? k.toLowerCase() : '');
+
+  const checkModifier = (event, required) => {
+    switch ((required || '').toLowerCase()) {
+      case 'alt':
+        return event.altKey;
+      case 'shift':
+        return event.shiftKey;
+      case 'control':
+      case 'ctrl':
+        return event.ctrlKey;
+      case 'none':
+        return !event.altKey && !event.shiftKey && !event.ctrlKey;
+      default:
+        return false;
+    }
+  };
+
+  const handleHotkey = useCallback(
+    async (event) => {
+      if (!canWrite) return;
+      // ignore typing in inputs
+      const tag = (event.target?.tagName || '').toLowerCase();
+      if (tag === 'input' || tag === 'textarea' || event.isComposing) return;
+      const key = normalizeKey(event.key);
+      const index = hotkeys.keys.findIndex((k) => normalizeKey(k) === key);
+      const driver = drivers[index];
+      if (!driver) return;
+
+      event.preventDefault();
+      try {
+        if (checkModifier(event, hotkeys.invalidateModifier)) {
+          // Invalidate last lap (time only)
+          await invalidateLastLap({ sessionId, driverId: driver.id, mode: 'time_only' });
+          return;
+        }
+        if (checkModifier(event, hotkeys.pitModifier)) {
+          await togglePitComplete(driver);
+          return;
+        }
+        // Log a lap using armed start time per driver. First press arms, second press logs.
+        const armed = getArmedStart(driver.id);
+        const now = Date.now();
+        if (!armed) {
+          setArmedStart(driver.id, now);
+          return;
+        }
+        const lapTime = Math.max(1, now - armed);
+        await logLapAtomic({ sessionId, driverId: driver.id, lapTimeMs: lapTime });
+        setArmedStart(driver.id, now);
+      } catch (err) {
+        console.error('Hotkey action failed', err);
+        setSessionError('Hotkey action failed.');
+      }
+    },
+    [canWrite, drivers, sessionId, togglePitComplete, hotkeys],
+  );
+
+  useEffect(() => {
+    window.addEventListener('keydown', handleHotkey);
+    return () => window.removeEventListener('keydown', handleHotkey);
+  }, [handleHotkey]);
+
+  // ------- Hotkey settings UI -------
+  const [isEditingHotkeys, setIsEditingHotkeys] = useState(false);
+  const [hotkeyDraft, setHotkeyDraft] = useState(hotkeys);
+  useEffect(() => setHotkeyDraft(hotkeys), [hotkeys]);
+  const updateKeyDraft = (idx, value) => {
+    setHotkeyDraft((prev) => {
+      const next = { ...prev, keys: [...prev.keys] };
+      next.keys[idx] = value.slice(0, 10);
+      return next;
+    });
+  };
+  const saveHotkeyDraft = () => {
+    const sanitized = {
+      keys: Array.isArray(hotkeyDraft.keys) && hotkeyDraft.keys.length === 10
+        ? hotkeyDraft.keys.map((k) => String(k || '').trim())
+        : defaultHotkeys.keys,
+      pitModifier: hotkeyDraft.pitModifier || 'Shift',
+      invalidateModifier: hotkeyDraft.invalidateModifier || 'Alt',
+    };
+    saveHotkeys(sanitized);
+    setIsEditingHotkeys(false);
+  };
+
   return (
     <div className="mx-auto flex w-full max-w-6xl flex-col gap-6">
       <header className="flex flex-col gap-3 text-center">
@@ -186,6 +522,7 @@ export default function ControlPanel() {
           </button>
         </div>
       </header>
+
       {roleError ? (
         <div className="rounded-2xl border border-rose-500/40 bg-rose-500/10 px-6 py-4 text-sm text-rose-200">{roleError}</div>
       ) : null}
@@ -194,6 +531,10 @@ export default function ControlPanel() {
           {driversError}
         </div>
       ) : null}
+      {sessionError ? (
+        <div className="rounded-2xl border border-rose-500/40 bg-rose-500/10 px-6 py-4 text-sm text-rose-200">{sessionError}</div>
+      ) : null}
+
       {isRoleLoading ? (
         <div className="flex min-h-[20vh] items-center justify-center text-sm text-neutral-400">Resolving access…</div>
       ) : null}
@@ -205,6 +546,194 @@ export default function ControlPanel() {
           </p>
         </div>
       ) : null}
+
+      {/* Track status + announcements */}
+      <section className="grid gap-6 md:grid-cols-2">
+        <div className="rounded-3xl border border-white/5 bg-[#060910]/80 p-6">
+          <div>
+            <p className="text-xs uppercase tracking-widest text-neutral-400">Track Status</p>
+            <p className="mt-1 text-xl font-semibold text-white">{TRACK_STATUS_MAP[sessionState.trackStatus]?.label ?? 'Green Flag'}</p>
+            <p className="mt-1 text-sm text-neutral-400">{TRACK_STATUS_MAP[sessionState.trackStatus]?.description ?? 'Track clear. Full racing speed permitted.'}</p>
+          </div>
+          <div className="mt-4 flex flex-wrap gap-3">
+            {TRACK_STATUS_OPTIONS.map((opt) => (
+              <button
+                key={opt.id}
+                type="button"
+                disabled={!canWrite}
+                onClick={() => setTrackStatus(opt.id)}
+                className={`rounded-xl px-3 py-2 text-sm font-semibold text-white/90 focus:outline-none focus-visible:ring-2 ${opt.controlClass} disabled:cursor-not-allowed disabled:opacity-60`}
+              >
+                {opt.shortLabel}
+              </button>
+            ))}
+          </div>
+          <p className="mt-4 text-[10px] uppercase tracking-[0.35em] text-neutral-500">Track status is controlled from the race control panel below.</p>
+        </div>
+        <div className="rounded-3xl border border-white/5 bg-[#060910]/80 p-6">
+          <p className="text-xs uppercase tracking-widest text-neutral-400">Live Announcements</p>
+          <p className="mt-1 text-sm text-neutral-300">{sessionState.announcement?.trim() ? sessionState.announcement : 'No active announcements.'}</p>
+          <div className="mt-4 flex gap-3">
+            <input
+              type="text"
+              value={announcementDraft}
+              onChange={(e) => setAnnouncementDraft(e.target.value)}
+              placeholder="Enter live message..."
+              disabled={!canWrite}
+              className="flex-1 rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-sm text-white placeholder:text-neutral-500 focus:outline-none focus:ring-2 focus:ring-white/20 disabled:cursor-not-allowed disabled:opacity-60"
+            />
+            <button
+              type="button"
+              onClick={updateAnnouncement}
+              disabled={!canWrite}
+              className="rounded-xl bg-emerald-700 px-4 py-2 text-sm font-semibold text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              Update
+            </button>
+          </div>
+        </div>
+      </section>
+
+      {/* Session control bar */}
+      <section className="rounded-3xl border border-white/5 bg-[#05070F]/80 p-6">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <p className="text-white">
+              <span className="font-semibold">{sessionState.eventType}</span>
+              <span className="mx-2 text-neutral-500">•</span>
+              <span className="text-neutral-300">{sessionState.totalLaps} laps target</span>
+              <span className="mx-2 text-neutral-500">•</span>
+              <span className="text-neutral-300">{sessionState.totalDuration} min duration</span>
+            </p>
+          </div>
+          <div className="rounded-xl border border-white/10 bg-black/30 px-3 py-1 text-sm text-white/90">
+            {formatRaceClock(displayTime)}
+          </div>
+        </div>
+
+        <div className="mt-4 flex flex-wrap items-center gap-3">
+          <button
+            type="button"
+            disabled={!canWrite || sessionState.isTiming}
+            onClick={startTimer}
+            className="rounded-xl border border-emerald-500/40 bg-emerald-600/20 px-3 py-2 text-sm font-semibold text-emerald-200 hover:bg-emerald-600/30 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            Start Timer
+          </button>
+          <button
+            type="button"
+            disabled={!canWrite || !sessionState.isTiming || sessionState.isPaused}
+            onClick={pauseTimer}
+            className="rounded-xl border border-amber-400/40 bg-amber-500/20 px-3 py-2 text-sm font-semibold text-amber-100 hover:bg-amber-500/30 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            Pause Timer
+          </button>
+          <button
+            type="button"
+            disabled={!canWrite || !sessionState.isTiming || !sessionState.isPaused}
+            onClick={resumeTimer}
+            className="rounded-xl border border-cyan-400/40 bg-cyan-500/20 px-3 py-2 text-sm font-semibold text-cyan-100 hover:bg-cyan-500/30 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            Resume Timer
+          </button>
+          <button
+            type="button"
+            disabled={!canWrite}
+            onClick={resetTimer}
+            className="rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm font-semibold text-white/80 hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            Reset Timer
+          </button>
+
+          <div className="h-6 w-px bg-white/10" />
+
+          {TRACK_STATUS_OPTIONS.map((opt) => (
+            <button
+              key={`control-${opt.id}`}
+              type="button"
+              disabled={!canWrite}
+              onClick={() => setTrackStatus(opt.id)}
+              className={`rounded-xl px-3 py-2 text-sm font-semibold text-white/90 focus:outline-none focus-visible:ring-2 ${opt.controlClass} disabled:cursor-not-allowed disabled:opacity-60`}
+            >
+              {opt.shortLabel}
+            </button>
+          ))}
+
+          <div className="h-6 w-px bg-white/10" />
+          <button
+            type="button"
+            onClick={() => setIsEditingHotkeys((v) => !v)}
+            className="rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm font-semibold text-white/80 hover:bg-white/10"
+          >
+            {isEditingHotkeys ? 'Close Hotkeys' : 'Hotkey Settings'}
+          </button>
+        </div>
+        <p className="mt-3 text-[10px] uppercase tracking-[0.35em] text-neutral-500">Keyboard hotkeys 1-0 log laps, shift toggles pit, and Alt invalidates the last lap.</p>
+
+        {isEditingHotkeys ? (
+          <div className="mt-4 rounded-2xl border border-white/10 bg-black/30 p-4">
+            <p className="text-xs uppercase tracking-[0.35em] text-neutral-400">Configure Hotkeys</p>
+            <div className="mt-3 grid grid-cols-2 gap-2 md:grid-cols-5">
+              {hotkeyDraft.keys.map((val, idx) => (
+                <label key={idx} className="flex items-center gap-2 text-xs text-neutral-300">
+                  <span className="w-16 text-neutral-500">Slot {idx + 1}</span>
+                  <input
+                    value={val}
+                    onChange={(e) => updateKeyDraft(idx, e.target.value)}
+                    placeholder={String(idx + 1)}
+                    className="flex-1 rounded-md border border-white/10 bg-black/40 px-2 py-1 text-sm text-white placeholder:text-neutral-600 focus:outline-none focus:ring-2 focus:ring-white/20"
+                  />
+                </label>
+              ))}
+            </div>
+            <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2">
+              <label className="flex items-center gap-2 text-xs text-neutral-300">
+                <span className="w-40 text-neutral-500">Pit modifier</span>
+                <select
+                  value={hotkeyDraft.pitModifier}
+                  onChange={(e) => setHotkeyDraft((prev) => ({ ...prev, pitModifier: e.target.value }))}
+                  className="flex-1 rounded-md border border-white/10 bg-black/40 px-2 py-1 text-sm text-white focus:outline-none focus:ring-2 focus:ring-white/20"
+                >
+                  <option>Shift</option>
+                  <option>Alt</option>
+                  <option>Control</option>
+                  <option>None</option>
+                </select>
+              </label>
+              <label className="flex items-center gap-2 text-xs text-neutral-300">
+                <span className="w-40 text-neutral-500">Invalidate modifier</span>
+                <select
+                  value={hotkeyDraft.invalidateModifier}
+                  onChange={(e) => setHotkeyDraft((prev) => ({ ...prev, invalidateModifier: e.target.value }))}
+                  className="flex-1 rounded-md border border-white/10 bg-black/40 px-2 py-1 text-sm text-white focus:outline-none focus:ring-2 focus:ring-white/20"
+                >
+                  <option>Alt</option>
+                  <option>Shift</option>
+                  <option>Control</option>
+                  <option>None</option>
+                </select>
+              </label>
+            </div>
+            <div className="mt-4 flex gap-2">
+              <button
+                type="button"
+                onClick={() => setHotkeyDraft(defaultHotkeys)}
+                className="rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white/80 hover:bg-white/10"
+              >
+                Reset Defaults
+              </button>
+              <button
+                type="button"
+                onClick={saveHotkeyDraft}
+                className="rounded-lg bg-emerald-700 px-3 py-2 text-sm font-semibold text-white hover:bg-emerald-600"
+              >
+                Save Hotkeys
+              </button>
+            </div>
+          </div>
+        ) : null}
+      </section>
+
       <section className="rounded-3xl border border-white/5 bg-[#05070F]/80 p-6">
         {isDriversLoading && !drivers.length ? (
           <p className="text-sm text-neutral-400">Loading drivers…</p>

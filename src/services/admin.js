@@ -9,15 +9,47 @@ export async function fetchAdminSessions() {
   const query = supabase
     .from('sessions')
     .select(
-      'id, name, status, starts_at, ends_at, updated_at, created_at, drivers(id, name, number, marshal_user_id, team), session_members(user_id, role)',
+      'id, name, status, starts_at, ends_at, updated_at, created_at, drivers!drivers_session_id_fkey(id, name, number, marshal_user_id, team), session_members!session_members_session_id_fkey(user_id, role)',
     )
     .order('updated_at', { ascending: false, nullsFirst: false });
 
   const { data, error } = await query;
-  if (error) {
+  if (!error) {
+    return Array.isArray(data) ? data : [];
+  }
+  const message = String(error?.message ?? error?.details ?? '').toLowerCase();
+  const ambiguous = message.includes('more than one relationship was found') || message.includes('could not embed');
+  if (!ambiguous) {
     throw error;
   }
-  return Array.isArray(data) ? data : [];
+  // Fallback: fetch in separate calls to avoid embed ambiguity
+  const { data: sessions, error: sessionsError } = await supabase
+    .from('sessions')
+    .select('id, name, status, starts_at, ends_at, updated_at, created_at')
+    .order('updated_at', { ascending: false, nullsFirst: false });
+  if (sessionsError) throw sessionsError;
+  const rows = Array.isArray(sessions) ? sessions : [];
+  const results = [];
+  for (const session of rows) {
+    const [driversRes, membersRes] = await Promise.all([
+      supabase
+        .from('drivers')
+        .select('id, name, number, marshal_user_id, team')
+        .eq('session_id', session.id),
+      supabase
+        .from('session_members')
+        .select('user_id, role')
+        .eq('session_id', session.id),
+    ]);
+    if (driversRes.error) throw driversRes.error;
+    if (membersRes.error) throw membersRes.error;
+    results.push({
+      ...session,
+      drivers: Array.isArray(driversRes.data) ? driversRes.data : [],
+      session_members: Array.isArray(membersRes.data) ? membersRes.data : [],
+    });
+  }
+  return results;
 }
 
 export async function fetchMarshalDirectory() {
