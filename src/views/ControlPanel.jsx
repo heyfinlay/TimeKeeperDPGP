@@ -392,6 +392,24 @@ export default function ControlPanel() {
     }
   };
 
+  const handleDriverPanelLogLap = async (driverId) => {
+    if (!canWrite || !driverId) return;
+    const now = Date.now();
+    const armed = getArmedStart(driverId);
+    if (!armed) {
+      setArmedStart(driverId, now);
+      return;
+    }
+    try {
+      const lapTime = Math.max(1, now - armed);
+      await logLapAtomic({ sessionId, driverId, lapTimeMs: lapTime });
+      setArmedStart(driverId, now);
+    } catch (err) {
+      console.error('Panel log lap failed', err);
+      setSessionError('Lap logging failed.');
+    }
+  };
+
   const togglePitComplete = useCallback(
     async (driver) => {
       if (!canWrite || !isSupabaseConfigured || !supabase || !driver?.id) return;
@@ -769,7 +787,12 @@ export default function ControlPanel() {
         ) : null}
         <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
           {drivers.map((driver) => (
-            <DriverTimingPanel key={driver.id} driver={toPanelDriver(driver)} canWrite={canWrite} />
+            <DriverTimingPanel
+              key={driver.id}
+              driver={toPanelDriver(driver)}
+              canWrite={canWrite}
+              onLogLap={handleDriverPanelLogLap}
+            />
           ))}
         </div>
       </section>
