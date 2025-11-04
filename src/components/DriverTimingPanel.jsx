@@ -117,14 +117,6 @@ export default function DriverTimingPanel({ driver, canWrite = false, onLogLap =
 
   const isLogInteractive = Boolean(canWrite && onLogLap);
 
-  const handlePanelKeyDown = (event) => {
-    if (!isLogInteractive) return;
-    if (event.key === 'Enter' || event.key === ' ') {
-      event.preventDefault();
-      handlePanelLogLap();
-    }
-  };
-
   return (
     <article className="flex flex-col gap-4 rounded-2xl border border-white/5 bg-[#060910]/80 p-5 text-white">
       <div
@@ -133,7 +125,6 @@ export default function DriverTimingPanel({ driver, canWrite = false, onLogLap =
         aria-disabled={!isLogInteractive}
         aria-label={`Log lap for ${driver.name}`}
         onClick={handlePanelLogLap}
-        onKeyDown={handlePanelKeyDown}
         className="flex w-full cursor-pointer flex-col gap-4 rounded-xl bg-transparent text-left transition hover:bg-white/5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#9FF7D3] aria-disabled:cursor-default aria-disabled:bg-transparent aria-disabled:pointer-events-none"
       >
         <header className="flex items-center justify-between gap-3">

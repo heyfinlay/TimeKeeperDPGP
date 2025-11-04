@@ -487,6 +487,7 @@ export default function ControlPanel() {
       // ignore typing in inputs
       const tag = (event.target?.tagName || '').toLowerCase();
       if (tag === 'input' || tag === 'textarea' || event.isComposing) return;
+      if (event.type !== 'keyup') return;
       const index = resolveIndexFromEvent(event);
       const driver = drivers[index];
       if (!driver) return;
@@ -521,8 +522,8 @@ export default function ControlPanel() {
   );
 
   useEffect(() => {
-    window.addEventListener('keydown', handleHotkey);
-    return () => window.removeEventListener('keydown', handleHotkey);
+    window.addEventListener('keyup', handleHotkey);
+    return () => window.removeEventListener('keyup', handleHotkey);
   }, [handleHotkey]);
 
   // ------- Hotkey settings UI -------
