@@ -15,6 +15,13 @@ const roleLabels = {
   spectator: 'Spectator',
 };
 
+const PROCEDURE_PHASE_LABELS = {
+  setup: 'Pre-Session',
+  warmup: 'Warm-Up',
+  grid: 'Grid',
+  race: 'Race',
+};
+
 const toPanelDriver = (driver) => ({
   id: driver.id,
   number: driver.number ?? null,
@@ -177,6 +184,8 @@ export default function ControlPanel() {
   const [sessionState, setSessionState] = useState(DEFAULT_SESSION_STATE);
   const [announcementDraft, setAnnouncementDraft] = useState('');
   const [sessionError, setSessionError] = useState(null);
+  const [gridReadyConfirmed, setGridReadyConfirmed] = useState(false);
+  const [isPhaseMutating, setIsPhaseMutating] = useState(false);
 
   const tickingRef = useRef(false);
   const startEpochRef = useRef(null);
@@ -191,6 +200,11 @@ export default function ControlPanel() {
     return baseTimeRef.current + (now - startEpochRef.current);
   }, [sessionState.isPaused, sessionState.isTiming, sessionState.raceTime]);
 
+  const procedurePhase = sessionState.procedurePhase ?? 'setup';
+  const procedurePhaseLabel = PROCEDURE_PHASE_LABELS[procedurePhase] ?? PROCEDURE_PHASE_LABELS.setup;
+  const isGridPhase = procedurePhase === 'grid';
+  const isRacePhase = procedurePhase === 'race';
+
   const applySessionStateRow = useCallback((row) => {
     const next = sessionRowToState(row);
     setSessionState(next);
@@ -204,6 +218,12 @@ export default function ControlPanel() {
       tickingRef.current = false;
     }
   }, []);
+
+  useEffect(() => {
+    if (sessionState.procedurePhase !== 'grid') {
+      setGridReadyConfirmed(false);
+    }
+  }, [sessionState.procedurePhase]);
 
   const loadSessionState = useCallback(async () => {
     if (!isSupabaseConfigured || !supabase) {
@@ -255,13 +275,40 @@ export default function ControlPanel() {
     if (data) applySessionStateRow(data);
   }, [applySessionStateRow, sessionId]);
 
+  const setProcedurePhase = useCallback(
+    async (phase) => {
+      if (!canWrite) return;
+      if (sessionState.procedurePhase === phase) return;
+      setIsPhaseMutating(true);
+      try {
+        await persistSessionPatch({ procedure_phase: phase });
+      } catch (error) {
+        console.error('Failed to update procedure phase', error);
+        setSessionError('Unable to update procedure phase.');
+      } finally {
+        setIsPhaseMutating(false);
+      }
+    },
+    [canWrite, persistSessionPatch, sessionState.procedurePhase],
+  );
+
   const startTimer = useCallback(async () => {
     if (!canWrite) return;
+    if (sessionState.procedurePhase !== 'grid' || !gridReadyConfirmed) {
+      return;
+    }
     baseTimeRef.current = sessionState.raceTime ?? 0;
     startEpochRef.current = Date.now();
     tickingRef.current = true;
-    await persistSessionPatch({ is_timing: true, is_paused: false });
-  }, [canWrite, persistSessionPatch, sessionState.raceTime]);
+    try {
+      await persistSessionPatch({ is_timing: true, is_paused: false, procedure_phase: 'race' });
+    } catch (error) {
+      console.error('Failed to start race timer', error);
+      tickingRef.current = false;
+      startEpochRef.current = null;
+      setSessionError('Unable to start race timer.');
+    }
+  }, [canWrite, gridReadyConfirmed, persistSessionPatch, sessionState.procedurePhase, sessionState.raceTime]);
 
   const pauseTimer = useCallback(async () => {
     if (!canWrite) return;
@@ -285,7 +332,7 @@ export default function ControlPanel() {
     tickingRef.current = false;
     startEpochRef.current = null;
     baseTimeRef.current = 0;
-    await persistSessionPatch({ is_timing: false, is_paused: false, race_time_ms: 0 });
+    await persistSessionPatch({ is_timing: false, is_paused: false, race_time_ms: 0, procedure_phase: 'setup' });
   }, [canWrite, persistSessionPatch]);
 
   useEffect(() => {
@@ -725,9 +772,54 @@ export default function ControlPanel() {
         </div>
 
         <div className="mt-4 flex flex-wrap items-center gap-3">
+          <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-white/10 bg-white/5 px-3 py-2">
+            <div className="flex items-center gap-2 text-xs text-neutral-400">
+              <span className="text-[10px] uppercase tracking-[0.35em]">Procedure</span>
+              <span className="text-sm font-semibold text-white">{procedurePhaseLabel}</span>
+            </div>
+            <div className="h-6 w-px bg-white/10" />
+            <button
+              type="button"
+              disabled={!canWrite || isPhaseMutating || isRacePhase || procedurePhase === 'warmup'}
+              onClick={() => setProcedurePhase('warmup')}
+              className={`rounded-xl border px-3 py-2 text-xs font-semibold focus:outline-none focus-visible:ring-2 focus-visible:ring-white/30 disabled:cursor-not-allowed disabled:opacity-60 ${
+                procedurePhase === 'warmup'
+                  ? 'border-amber-400/40 bg-amber-500/20 text-amber-100'
+                  : 'border-white/10 bg-black/30 text-white/80 hover:bg-white/10'
+              }`}
+            >
+              Begin Warm-Up
+            </button>
+            <button
+              type="button"
+              disabled={!canWrite || isPhaseMutating || isRacePhase || procedurePhase === 'grid'}
+              onClick={() => setProcedurePhase('grid')}
+              className={`rounded-xl border px-3 py-2 text-xs font-semibold focus:outline-none focus-visible:ring-2 focus-visible:ring-white/30 disabled:cursor-not-allowed disabled:opacity-60 ${
+                procedurePhase === 'grid'
+                  ? 'border-cyan-400/40 bg-cyan-500/20 text-cyan-100'
+                  : 'border-white/10 bg-black/30 text-white/80 hover:bg-white/10'
+              }`}
+            >
+              Move to Grid
+            </button>
+          </div>
+          <label className="flex items-center gap-2 rounded-2xl border border-white/10 bg-white/5 px-3 py-2 text-xs text-neutral-300">
+            <input
+              type="checkbox"
+              checked={gridReadyConfirmed}
+              onChange={(event) => {
+                if (!isGridPhase) return;
+                setGridReadyConfirmed(event.target.checked);
+              }}
+              disabled={!canWrite || !isGridPhase || isPhaseMutating || isRacePhase}
+              className="h-4 w-4 rounded border border-white/20 bg-black/40 text-emerald-400 focus:ring-emerald-400"
+            />
+            <span className="text-[11px] font-semibold text-neutral-100">Grid ready for race start</span>
+          </label>
+
           <button
             type="button"
-            disabled={!canWrite || sessionState.isTiming}
+            disabled={!canWrite || sessionState.isTiming || !isGridPhase || !gridReadyConfirmed}
             onClick={startTimer}
             className="rounded-xl border border-emerald-500/40 bg-emerald-600/20 px-3 py-2 text-sm font-semibold text-emerald-200 hover:bg-emerald-600/30 disabled:cursor-not-allowed disabled:opacity-60"
           >
