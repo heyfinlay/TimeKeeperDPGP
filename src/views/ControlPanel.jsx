@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import DriverTimingPanel from '@/components/DriverTimingPanel.jsx';
 import { useSessionContext, useSessionId } from '@/state/SessionContext.jsx';
+import { SessionActionsProvider } from '@/context/SessionActionsContext.jsx';
 import { useSessionDrivers } from '@/hooks/useSessionDrivers.js';
 import { isSupabaseConfigured, supabase } from '@/lib/supabaseClient.js';
 import { useAuth } from '@/context/AuthContext.jsx';
@@ -507,23 +508,41 @@ export default function ControlPanel() {
     wasPausedRef.current = sessionState.isPaused;
   }, [sessionState.isPaused, drivers, getArmedStart, setArmedStart]);
 
-  const handleDriverPanelLogLap = async (driverId) => {
-    if (!canWrite || !driverId) return;
-    const now = Date.now();
-    const armed = getArmedStart(driverId);
-    if (!armed) {
-      setArmedStart(driverId, now);
-      return;
-    }
-    try {
-      const lapTime = Math.max(1, now - armed);
-      await logLapAtomic({ sessionId, driverId, lapTimeMs: lapTime });
-      setArmedStart(driverId, now);
-    } catch (err) {
-      console.error('Panel log lap failed', err);
-      setSessionError('Lap logging failed.');
-    }
-  };
+  const handleDriverPanelLogLap = useCallback(
+    async (driverId) => {
+      if (!canWrite || !driverId) return;
+      const now = Date.now();
+      const armed = getArmedStart(driverId);
+      if (!armed) {
+        setArmedStart(driverId, now);
+        return;
+      }
+      try {
+        const lapTime = Math.max(1, now - armed);
+        await logLapAtomic({ sessionId, driverId, lapTimeMs: lapTime });
+        setArmedStart(driverId, now);
+      } catch (err) {
+        console.error('Panel log lap failed', err);
+        setSessionError('Lap logging failed.');
+      }
+    },
+    [canWrite, getArmedStart, setArmedStart, sessionId, setSessionError],
+  );
+
+  const handleInvalidateLap = useCallback(
+    async ({ driverId, mode = 'time_only' }) => {
+      if (!canWrite || !driverId) return false;
+      try {
+        await invalidateLastLap({ sessionId, driverId, mode });
+        return true;
+      } catch (err) {
+        console.error('Lap invalidation failed', err);
+        setSessionError('Lap invalidation failed.');
+        return false;
+      }
+    },
+    [canWrite, sessionId, setSessionError],
+  );
 
   const togglePitComplete = useCallback(
     async (driver) => {
@@ -610,9 +629,8 @@ export default function ControlPanel() {
       event.preventDefault();
       try {
         if (checkModifier(event, hotkeys.invalidateModifier)) {
-          // Invalidate last lap (time only)
-          await invalidateLastLap({ sessionId, driverId: driver.id, mode: 'time_only' });
-          return;
+          const invalidated = await handleInvalidateLap({ driverId: driver.id, mode: 'time_only' });
+          if (invalidated) return;
         }
         if (checkModifier(event, hotkeys.pitModifier)) {
           await togglePitComplete(driver);
@@ -633,7 +651,7 @@ export default function ControlPanel() {
         setSessionError('Hotkey action failed.');
       }
     },
-    [canWrite, drivers, sessionId, togglePitComplete, hotkeys, getArmedStart, setArmedStart],
+    [canWrite, drivers, handleInvalidateLap, togglePitComplete, hotkeys, getArmedStart, setArmedStart],
   );
 
   useEffect(() => {
@@ -664,8 +682,18 @@ export default function ControlPanel() {
     setIsEditingHotkeys(false);
   };
 
+  const sessionActionsValue = useMemo(
+    () => ({
+      onLogLap: handleDriverPanelLogLap,
+      invalidateLastLap: handleInvalidateLap,
+      canWrite,
+    }),
+    [handleDriverPanelLogLap, handleInvalidateLap, canWrite],
+  );
+
   return (
-    <div className="mx-auto flex w-full max-w-6xl flex-col gap-6">
+    <SessionActionsProvider value={sessionActionsValue}>
+      <div className="mx-auto flex w-full max-w-6xl flex-col gap-6">
       <header className="flex flex-col gap-3 text-center">
         <h1 className="text-3xl font-semibold text-white">Race control</h1>
         <p className="text-sm text-neutral-400">Manage lap timing and marshal operations for the active session.</p>
@@ -957,6 +985,9 @@ export default function ControlPanel() {
           ))}
         </div>
       </section>
-    </div>
+      </div>
+    </SessionActionsProvider>
   );
 }
+
+

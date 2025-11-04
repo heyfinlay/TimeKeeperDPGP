@@ -1,4 +1,4 @@
--- Schema snapshot additions for session_entries cache exposure
+-- Ensure session_entries.created_at exists and is exposed to PostgREST
 alter table if exists public.session_entries
   add column if not exists created_at timestamptz not null default now();
 

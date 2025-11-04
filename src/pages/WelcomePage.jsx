@@ -10,20 +10,20 @@ const FALLBACK_DISCORD_AUTH_URL =
 const statHighlights = [
   {
     icon: Clock,
-    title: 'Live race telemetry',
-    description: 'Instant signal propagation keeps every marshal in sync with the grid.',
+    title: 'Live tote telemetry',
+    description: 'Watch pools swell in real time as wagers pour in across Los Santos.',
     accent: 'from-[#7C6BFF]/60 via-[#7C6BFF]/10 to-transparent',
   },
   {
     icon: ShieldCheck,
-    title: 'Protected control surface',
-    description: 'Discord-authenticated roles ensure only accredited officials can take action.',
+    title: 'Diamonds-only stakes',
+    description: 'Parody compliance keeps every bet locked to in-universe currency only.',
     accent: 'from-[#9FF7D3]/60 via-[#9FF7D3]/10 to-transparent',
   },
   {
     icon: Flag,
-    title: 'Procedure-perfect tooling',
-    description: 'Modelled workflows for full-course yellows, race restarts, and post-session audits.',
+    title: 'Race control parity',
+    description: 'Marshal telemetry feeds odds engines so every market mirrors the session.',
     accent: 'from-[#F5A97F]/60 via-[#F5A97F]/10 to-transparent',
   },
 ];
@@ -35,10 +35,12 @@ const WelcomePage = () => {
   const isCheckingAuth = status === 'loading';
 
   const primaryCtaLabel = useMemo(() => {
-    if (isCheckingAuth) return 'Checking access…';
-    if (isAuthenticated) return 'Open dashboard';
-    return 'Sign in with Discord';
-  }, [isAuthenticated, isCheckingAuth]);
+    if (isCheckingAuth) return 'Checking access...';
+    return 'Enter the Sports Book';
+  }, [isCheckingAuth]);
+
+  const legalDisclaimer =
+    'All wagers settled in Diamonds (in-game currency). Parody product; no real-world stakes.';
 
   const handleSignIn = () => {
     if (isAuthenticated) {
@@ -64,18 +66,17 @@ const WelcomePage = () => {
       <div className="relative mx-auto flex max-w-5xl flex-col gap-12 text-gray-200">
         <header className="flex flex-col gap-6 text-center md:gap-8">
           <span className="mx-auto inline-flex items-center gap-2 rounded-full border border-[#7C6BFF]/50 bg-[#7C6BFF]/10 px-4 py-1 text-xs uppercase tracking-[0.35em] text-[#dcd7ff]">
-            <Sparkles className="h-4 w-4" /> Official race control suite
+            <Sparkles className="h-4 w-4" /> Los Santos tote operations
           </span>
           <h1 className="text-4xl font-light leading-tight text-white sm:text-5xl md:text-6xl">
-            Precision control for the <span className="font-semibold text-transparent bg-gradient-to-r from-[#9FF7D3] via-[#7C6BFF] to-[#dcd7ff] bg-clip-text">DayBreak Grand Prix</span>
+            Diamond Sports Book
           </h1>
-          <p className="mx-auto max-w-2xl text-base text-gray-400 sm:text-lg">
-            TimeKeeper orchestrates every marshal, commentator, and race engineer from a single, deeply instrumented command
-            center. Authenticate with Discord to unlock stewarding tools, broadcast dashboards, and resilient telemetry feeds.
+          <p className="mx-auto max-w-2xl text-base text-gray-300 sm:text-lg">
+            Gamble on everything - from podiums to power plays. Los Santos' premier tote for races, rumbles, and vendor wars.
           </p>
         </header>
 
-        <div className="flex flex-col items-center justify-center gap-4 sm:flex-row">
+        <div className="flex flex-col items-center justify-center gap-4 text-center sm:flex-row sm:text-left">
           {isAuthenticated ? (
             <Link
               to="/dashboard"
@@ -97,12 +98,16 @@ const WelcomePage = () => {
           )}
 
           <Link
-            to="/live"
+            to="/markets"
             className="inline-flex items-center gap-3 rounded-full border border-[#7C6BFF]/40 bg-transparent px-6 py-3 text-sm uppercase tracking-[0.3em] text-[#bdb3ff] transition hover:border-[#7C6BFF]/80 hover:text-white"
           >
-            View live timing
+            View Live Markets
           </Link>
         </div>
+
+        <p className="mx-auto max-w-xl text-center text-[0.7rem] uppercase tracking-[0.3em] text-gray-500">
+          {legalDisclaimer}
+        </p>
 
         <div className="grid gap-6 md:grid-cols-3">
           {statHighlights.map(({ icon: Icon, title, description, accent }) => (
@@ -123,10 +128,10 @@ const WelcomePage = () => {
         </div>
 
         <footer className="flex flex-col items-center justify-between gap-4 rounded-2xl border border-white/5 bg-[#060910]/80 px-6 py-5 text-xs uppercase tracking-[0.35em] text-gray-500 sm:flex-row">
-          <span>Built for endurance operations • Synced to race control</span>
+          <span>Odds driven by live timing - settlements verified by race control</span>
           <div className="flex gap-4 text-[#9FF7D3]">
-            <Link to="/live" className="transition hover:text-white">
-              Live timing
+            <Link to="/markets" className="transition hover:text-white">
+              Markets
             </Link>
             <Link to="/sessions" className="transition hover:text-white">
               Control tools

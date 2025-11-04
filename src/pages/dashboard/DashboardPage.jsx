@@ -10,6 +10,7 @@ import {
   RefreshCcw,
   TrendingUp,
   Users,
+  Sparkles,
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext.jsx';
 import { useEventSession } from '../../context/SessionContext.jsx';
@@ -260,6 +261,40 @@ const DashboardPage = () => {
 
   return (
     <div className="flex flex-col gap-10">
+      <section className="flex flex-col gap-5 rounded-3xl border border-white/5 bg-[#060910]/80 p-8 shadow-[0_0_50px_rgba(15,23,42,0.45)]">
+        <div className="flex flex-col gap-3 text-left sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex flex-col gap-2">
+            <span className="inline-flex items-center gap-2 text-xs uppercase tracking-[0.35em] text-[#9FF7D3]">
+              <Sparkles className="h-4 w-4" />
+              Diamond Sports Book
+            </span>
+            <h1 className="text-3xl font-semibold text-white sm:text-4xl">Los Santos tote operations hub</h1>
+          </div>
+          <div className="flex flex-col items-start gap-2 text-sm text-neutral-400 sm:items-end sm:text-right">
+            <span>Gamble on everything - from podiums to power plays.</span>
+            <span>Live markets mirror marshal telemetry in real time.</span>
+          </div>
+        </div>
+        <div className="flex flex-wrap gap-3">
+          <Link
+            to="/markets"
+            className="inline-flex items-center gap-2 rounded-full border border-[#9FF7D3]/40 bg-[#9FF7D3]/10 px-4 py-2 text-xs uppercase tracking-[0.35em] text-[#9FF7D3] transition hover:border-[#9FF7D3]/70 hover:text-white"
+          >
+            View live markets
+            <ArrowRight className="h-4 w-4" />
+          </Link>
+          <Link
+            to={controlPath}
+            className="inline-flex items-center gap-2 rounded-full border border-[#7C6BFF]/40 bg-[#7C6BFF]/10 px-4 py-2 text-xs uppercase tracking-[0.35em] text-[#dcd7ff] transition hover:border-[#7C6BFF]/70 hover:text-white"
+          >
+            Manage sessions
+            <ArrowRight className="h-4 w-4" />
+          </Link>
+        </div>
+        <p className="text-[0.7rem] uppercase tracking-[0.3em] text-neutral-500">
+          All wagers settled in Diamonds (in-game currency). Parody product; no real-world stakes.
+        </p>
+      </section>
       <section className="grid gap-6 lg:grid-cols-[1.5fr_1fr]">
         <div className="flex flex-col gap-6 rounded-3xl border border-white/5 bg-gradient-to-br from-[#0B1120] via-[#060910] to-[#05070F] p-8 shadow-[0_0_50px_rgba(15,23,42,0.6)]">
           <div className="flex items-center justify-between gap-4">

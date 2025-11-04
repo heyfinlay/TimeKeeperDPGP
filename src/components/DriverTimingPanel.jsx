@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useSessionId } from '@/state/SessionContext.jsx';
+import { useSessionActions } from '@/context/SessionActionsContext.jsx';
 import { formatLapTime } from '@/utils/time.js';
 import { invalidateLastLap, logLapAtomic } from '@/services/laps.js';
 
@@ -47,6 +48,7 @@ const parseLapInput = (input) => {
 
 export default function DriverTimingPanel({ driver, canWrite = false, currentLapMs = null }) {
   const sessionId = useSessionId();
+  const { onLogLap: contextOnLogLap } = useSessionActions();
   const [manualTime, setManualTime] = useState('');
   const [isSaving, setIsSaving] = useState(false);
   const [pendingInvalidation, setPendingInvalidation] = useState(null);
@@ -115,11 +117,11 @@ export default function DriverTimingPanel({ driver, canWrite = false, currentLap
   };
 
   const handlePanelLogLap = () => {
-    if (!canWrite || !onLogLap) return;
-    onLogLap(driver.id);
+    if (!canWrite || typeof contextOnLogLap !== 'function') return;
+    contextOnLogLap(driver.id);
   };
 
-  const isLogInteractive = Boolean(canWrite && onLogLap);
+  const isLogInteractive = Boolean(canWrite && typeof contextOnLogLap === 'function');
 
   return (
     <article className="flex flex-col gap-4 rounded-2xl border border-white/5 bg-[#060910]/80 p-5 text-white">

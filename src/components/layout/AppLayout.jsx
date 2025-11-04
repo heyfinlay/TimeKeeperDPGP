@@ -1,7 +1,9 @@
+import { useMemo } from 'react';
 import { NavLink, Outlet } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext.jsx';
 import { useEventSession } from '@/context/SessionContext.jsx';
 import { useAdminAccess } from '@/components/auth/AuthGuard.jsx';
+import { useWallet } from '@/context/WalletContext.jsx';
 
 const NAV_ITEMS = [
   {
@@ -44,6 +46,10 @@ export default function AppLayout() {
   const isAuthenticated = status === 'authenticated';
   const { activeSessionId } = useEventSession();
   const { isAdmin } = useAdminAccess();
+  const { balance, isLoading: isWalletLoading } = useWallet();
+  const showWallet = isAuthenticated || !isSupabaseConfigured;
+  const balanceFormatter = useMemo(() => new Intl.NumberFormat('en-US'), []);
+  const formattedBalance = balanceFormatter.format(Number.isFinite(balance) ? balance : 0);
 
   const navItems = NAV_ITEMS.map((item) => ({
     ...item,
@@ -63,12 +69,22 @@ export default function AppLayout() {
     <div className="min-h-screen bg-[#05070F] text-gray-100">
       <nav className="fixed inset-x-0 top-0 z-50 border-b border-white/5 bg-[#05070F]/90 backdrop-blur">
         <div className="mx-auto flex max-w-6xl items-center justify-between gap-6 px-5 py-4">
-          <NavLink
-            to="/"
-            className="text-sm font-semibold uppercase tracking-[0.4em] text-[#9FF7D3] transition hover:text-[#7de6c0]"
-          >
-            TimeKeeper
-          </NavLink>
+          <div className="flex items-center gap-4">
+            <NavLink
+              to="/"
+              className="text-sm font-semibold uppercase tracking-[0.4em] text-[#9FF7D3] transition hover:text-[#7de6c0]"
+            >
+              TimeKeeper
+            </NavLink>
+            {showWallet ? (
+              <span className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs font-semibold uppercase tracking-[0.35em] text-[#9FF7D3]">
+                <span role="img" aria-label="Diamonds">
+                  💎
+                </span>
+                {isWalletLoading ? 'Loading' : formattedBalance}
+              </span>
+            ) : null}
+          </div>
           <div className="flex flex-wrap items-center justify-center gap-2 text-xs uppercase tracking-[0.3em] text-neutral-400">
             {visibleNavItems.map(({ id, to, label, activeClass, hoverClass }) => (
               <NavLink
