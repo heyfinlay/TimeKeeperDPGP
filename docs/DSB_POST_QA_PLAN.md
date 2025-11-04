@@ -17,23 +17,23 @@
 ## Milestone A - Unblock Sessions/Admin (Day 1-2)
 
 ### A0. Brand & Landing Refresh (Immediate)
-- [ ] Update `src/pages/WelcomePage.jsx` hero copy:
+- [x] Update `src/pages/WelcomePage.jsx` hero copy:
   - Headline `Diamond Sports Book`.
-  - Sub-copy `Gamble on everything- from podiums to power plays. Los Santos’ premier tote for races, rumbles, and vendor wars.`
-  - Primary CTA `Enter the Sports Book` ? `/dashboard` (auto-route authenticated users).
-  - Secondary CTA `View Live Markets` ? `/markets`.
+  - Sub-copy `Gamble on everything- from podiums to power plays. Los Santosï¿½ premier tote for races, rumbles, and vendor wars.`
+  - Primary CTA `Enter the Sports Book` -> `/dashboard` (auto-route authenticated users).
+  - Secondary CTA `View Live Markets` -> `/markets`.
   - Add legal microcopy beneath CTAs: `All wagers settled in Diamonds (in-game currency). Parody product; no real-world stakes.`
-- [ ] Mirror brand voice on authenticated landing surfaces:
+- [x] Mirror brand voice on authenticated landing surfaces:
   - `src/pages/dashboard/DashboardPage.jsx` hero banner.
   - New `/markets` route intro (see Milestone B3).
-- [ ] Persist wallet indicator top-right in `src/components/layout/AppLayout.jsx` once balances are wired:
+- [x] Persist wallet indicator top-right in `src/components/layout/AppLayout.jsx` once balances are wired:
   - Display `?? <formatted balance>` for authenticated users; fall back to `?? 0` placeholder until wallet hydrates.
   - Hook into new WalletContext (Milestone B3) so balance live-updates on realtime events.
 
 Acceptance: Copy matches across `/`, `/dashboard`, `/markets`; wallet pill is visible on all authenticated views and updates without refresh.
 
 ### A1. Restore Session Seeding (PGRST204)
-- [ ] Create migration `supabase/migrations/<timestamp>_ensure_session_entries_created_at.sql`:
+- [x] Create migration `supabase/migrations/<timestamp>_ensure_session_entries_created_at.sql`:
   ```sql
   alter table public.session_entries
     add column if not exists created_at timestamptz not null default now();
@@ -49,19 +49,19 @@ Acceptance: Copy matches across `/`, `/dashboard`, `/markets`; wallet pill is vi
 Acceptance: Creating a session via `/sessions/new` succeeds; entry appears immediately in `/sessions`.
 
 ### A2. Harden Session Actions (onLogLap)
-- [ ] Introduce `SessionActionsContext` under `src/context/SessionActionsContext.jsx` to expose `onLogLap`, `invalidateLastLap`, `setFlagState`, etc.
-- [ ] Wrap `<ControlPanel />` in the provider inside `src/routes/Control.jsx`.
-- [ ] Refactor `src/views/ControlPanel.jsx` to consume the context instead of prop drilling. Ensure `handleDriverPanelLogLap` is registered as the context handler.
-- [ ] Update `src/components/DriverTimingPanel.jsx` to rely on `useSessionActions()` and remove undefined prop access. Keep prop fallback so component stays testable.
-- [ ] Add Vitest coverage in `tests/control/DriverTimingPanel.test.jsx` mounting with a mocked context to prevent regressions.
+- [x] Introduce `SessionActionsContext` under `src/context/SessionActionsContext.jsx` to expose `onLogLap`, `invalidateLastLap`, `setFlagState`, etc.
+- [x] Wrap `<ControlPanel />` in the provider inside `src/routes/Control.jsx`.
+- [x] Refactor `src/views/ControlPanel.jsx` to consume the context instead of prop drilling. Ensure `handleDriverPanelLogLap` is registered as the context handler.
+- [x] Update `src/components/DriverTimingPanel.jsx` to rely on `useSessionActions()` and remove undefined prop access. Keep prop fallback so component stays testable.
+- [x] Add Vitest coverage in `tests/control/DriverTimingPanel.test.jsx` mounting with a mocked context to prevent regressions.
 
 Acceptance: Admin or marshal opens `/control/:sessionId` without console errors and can log laps via panel + hotkeys; Live Timing view updates accordingly.
 
 ### A3. Realtime Bootstrap Guard
-- [ ] Audit `.env.local.example` (add if missing) with `VITE_SUPABASE_URL` + `VITE_SUPABASE_ANON_KEY`. Mirror values in Vercel environment groups.
-- [ ] Ensure single Supabase client initialisation in `src/lib/supabaseClient.js`; delay realtime subscription setup until auth/session contexts resolve.
-- [ ] Add logging hooks around `supabaseClient.channel(...).subscribe` to trace channel status (`open/error/closed`). Surface a toast on websocket failure in UI.
-- [ ] Implement retry/backoff (e.g., exponential with jitter) inside `subscribeToTable` helper.
+- [x] Audit `.env.local.example` (add if missing) with `VITE_SUPABASE_URL` + `VITE_SUPABASE_ANON_KEY`. Mirror values in Vercel environment groups.
+- [x] Ensure single Supabase client initialisation in `src/lib/supabaseClient.js`; delay realtime subscription setup until auth/session contexts resolve.
+- [x] Add logging hooks around `supabaseClient.channel(...).subscribe` to trace channel status (`open/error/closed`). Surface a toast on websocket failure in UI.
+- [x] Implement retry/backoff (e.g., exponential with jitter) inside `subscribeToTable` helper.
 
 Acceptance: Realtime websocket connects within ~1s on `/dashboard` and `/control`; console shows channel lifecycle logs with no premature closes.
 
@@ -267,3 +267,4 @@ Acceptance: Bot responds in staging guild; `/balance` and `/market` reflect live
 | 8-10 | Milestone D (opt) | Discord bot MVP, OAuth linking, command coverage |
 
 Keep this plan updated as work completes or scope shifts. Include links to Supabase migration IDs and PRs for traceability.
+

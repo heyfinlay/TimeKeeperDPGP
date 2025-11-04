@@ -17,8 +17,7 @@ const NAV_ITEMS = [
   {
     id: 'live',
     label: 'Live Timing',
-    buildPath: (activeSessionId) =>
-      activeSessionId ? `/live/${activeSessionId}` : '/sessions',
+    buildPath: (activeSessionId) => (activeSessionId ? `/live/${activeSessionId}` : '/sessions'),
     activeClass: 'bg-[#7C6BFF]/20 text-[#dcd7ff]',
     hoverClass: 'hover:border-[#7C6BFF]/50 hover:text-[#7C6BFF]',
   },
@@ -46,10 +45,12 @@ export default function AppLayout() {
   const isAuthenticated = status === 'authenticated';
   const { activeSessionId } = useEventSession();
   const { isAdmin } = useAdminAccess();
-  const { balance, isLoading: isWalletLoading } = useWallet();
+  const { balance, isLoading: isWalletLoading, supportsWallets } = useWallet();
+
   const showWallet = isAuthenticated || !isSupabaseConfigured;
   const balanceFormatter = useMemo(() => new Intl.NumberFormat('en-US'), []);
   const formattedBalance = balanceFormatter.format(Number.isFinite(balance) ? balance : 0);
+  const walletLabel = isWalletLoading ? 'Loading' : supportsWallets ? formattedBalance : 'Unavailable';
 
   const navItems = NAV_ITEMS.map((item) => ({
     ...item,
@@ -79,9 +80,9 @@ export default function AppLayout() {
             {showWallet ? (
               <span className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs font-semibold uppercase tracking-[0.35em] text-[#9FF7D3]">
                 <span role="img" aria-label="Diamonds">
-                  💎
+                  ??
                 </span>
-                {isWalletLoading ? 'Loading' : formattedBalance}
+                {walletLabel}
               </span>
             ) : null}
           </div>
