@@ -275,6 +275,7 @@ export const isColumnMissingError = (error, column) => {
 export const subscribeToTable = (
   { schema = 'public', table, event = '*', filter },
   callback,
+  options = {},
 ) => {
   if (!isSupabaseConfigured || !supabaseClient) {
     console.warn('Supabase realtime subscription skipped. Supabase is not configured.');
@@ -289,33 +290,96 @@ export const subscribeToTable = (
     .filter(Boolean)
     .join('-');
 
-  const channel = supabaseClient
-    .channel(channelName)
-    .on(
-      'postgres_changes',
-      {
-        event,
-        schema,
-        table,
-        ...(filter ? { filter } : {}),
-      },
-      (payload) => {
-        try {
-          callback(payload);
-        } catch (error) {
-          console.error('Supabase realtime callback failed', error);
-        }
-      },
-    );
+  const { maxRetries = 5, retryDelayBaseMs = 500 } = options ?? {};
 
-  channel.subscribe((status) => {
-    if (status === 'CHANNEL_ERROR') {
-      console.error(`Supabase realtime subscription error for ${channelName}`);
+  let currentChannel = null;
+  let disposed = false;
+  let retries = 0;
+  let retryTimer = null;
+
+  const teardownChannel = () => {
+    if (currentChannel) {
+      try {
+        supabaseClient.removeChannel(currentChannel);
+      } catch (removeError) {
+        console.warn(`Supabase realtime teardown issue for ${channelName}`, removeError);
+      }
+      currentChannel = null;
     }
-  });
+  };
+
+  const scheduleRetry = (reason) => {
+    if (disposed) return;
+    teardownChannel();
+    if (retries >= maxRetries) {
+      console.error(
+        `[Supabase realtime] ${channelName} retry limit reached after ${reason}. Manual reload required.`,
+      );
+      return;
+    }
+    const delay = Math.min(30000, retryDelayBaseMs * 2 ** retries);
+    retries += 1;
+    console.warn(
+      `[Supabase realtime] ${channelName} retrying in ${delay}ms (attempt ${retries} of ${maxRetries}) after ${reason}.`,
+    );
+    retryTimer = setTimeout(() => {
+      retryTimer = null;
+      subscribe();
+    }, delay);
+  };
+
+  const subscribe = () => {
+    if (disposed) return;
+    teardownChannel();
+    const channel = supabaseClient
+      .channel(channelName)
+      .on(
+        'postgres_changes',
+        {
+          event,
+          schema,
+          table,
+          ...(filter ? { filter } : {}),
+        },
+        (payload) => {
+          try {
+            callback(payload);
+          } catch (error) {
+            console.error('Supabase realtime callback failed', error);
+          }
+        },
+      );
+
+    currentChannel = channel;
+
+    channel.subscribe((status) => {
+      console.info(`[Supabase realtime] ${channelName} status: ${status}`);
+      if (disposed || channel !== currentChannel) {
+        return;
+      }
+      if (status === 'SUBSCRIBED') {
+        retries = 0;
+        return;
+      }
+      if (status === 'CHANNEL_ERROR') {
+        scheduleRetry('channel error');
+      } else if (status === 'TIMED_OUT') {
+        scheduleRetry('timeout');
+      } else if (status === 'CLOSED') {
+        scheduleRetry('closed');
+      }
+    });
+  };
+
+  subscribe();
 
   return () => {
-    supabaseClient.removeChannel(channel);
+    disposed = true;
+    if (retryTimer) {
+      clearTimeout(retryTimer);
+      retryTimer = null;
+    }
+    teardownChannel();
   };
 };
 
