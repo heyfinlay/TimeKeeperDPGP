@@ -288,18 +288,6 @@ export default function ControlPanel() {
     await persistSessionPatch({ is_timing: false, is_paused: false, race_time_ms: 0 });
   }, [canWrite, persistSessionPatch]);
 
-  const [displayTime, setDisplayTime] = useState(0);
-  useEffect(() => {
-    if (tickTimerRef.current) clearInterval(tickTimerRef.current);
-    tickTimerRef.current = setInterval(() => {
-      setDisplayTime((prev) => {
-        const next = computeDisplayTime();
-        return next !== prev ? next : prev;
-      });
-    }, 250);
-    return () => clearInterval(tickTimerRef.current);
-  }, [computeDisplayTime]);
-
   useEffect(() => {
     if (persistTimerRef.current) clearInterval(persistTimerRef.current);
     if (sessionState.isTiming && !sessionState.isPaused) {
@@ -370,27 +358,82 @@ export default function ControlPanel() {
     }
   }, []);
 
-  const hotkeyArmsKey = (driverId) => `timekeeper.currentLapStart.${sessionId}.${driverId}`;
-  const getArmedStart = (driverId) => {
-    try {
-      const raw = window.localStorage.getItem(hotkeyArmsKey(driverId));
-      const n = raw ? Number.parseInt(raw, 10) : NaN;
-      return Number.isNaN(n) ? null : n;
-    } catch {
-      return null;
-    }
-  };
-  const setArmedStart = (driverId, when) => {
-    try {
-      if (when === null) {
-        window.localStorage.removeItem(hotkeyArmsKey(driverId));
-      } else {
-        window.localStorage.setItem(hotkeyArmsKey(driverId), String(when));
+  const hotkeyArmsKey = useCallback((driverId) => `timekeeper.currentLapStart.${sessionId}.${driverId}`, [sessionId]);
+  const getArmedStart = useCallback(
+    (driverId) => {
+      try {
+        const raw = window.localStorage.getItem(hotkeyArmsKey(driverId));
+        const n = raw ? Number.parseInt(raw, 10) : NaN;
+        return Number.isNaN(n) ? null : n;
+      } catch {
+        return null;
       }
-    } catch {
-      // ignore storage errors
-    }
-  };
+    },
+    [hotkeyArmsKey],
+  );
+  const setArmedStart = useCallback(
+    (driverId, when) => {
+      try {
+        if (when === null) {
+          window.localStorage.removeItem(hotkeyArmsKey(driverId));
+        } else {
+          window.localStorage.setItem(hotkeyArmsKey(driverId), String(when));
+        }
+      } catch {
+        // ignore storage errors
+      }
+    },
+    [hotkeyArmsKey],
+  );
+
+  const [displayTime, setDisplayTime] = useState(0);
+  const [currentLapTimes, setCurrentLapTimes] = useState({});
+
+  const computeCurrentLapMap = useCallback(() => {
+    const now = Date.now();
+    const map = {};
+    let hasActive = false;
+    drivers.forEach((driver) => {
+      const start = getArmedStart(driver.id);
+      if (typeof start === 'number' && Number.isFinite(start)) {
+        map[driver.id] = Math.max(0, now - start);
+        hasActive = true;
+      } else {
+        map[driver.id] = null;
+      }
+    });
+    return { map, hasActive };
+  }, [drivers, getArmedStart]);
+
+  useEffect(() => {
+    const { map } = computeCurrentLapMap();
+    setCurrentLapTimes(map);
+  }, [computeCurrentLapMap]);
+
+  useEffect(() => {
+    if (tickTimerRef.current) clearInterval(tickTimerRef.current);
+    tickTimerRef.current = setInterval(() => {
+      setDisplayTime((prev) => {
+        const next = computeDisplayTime();
+        return next !== prev ? next : prev;
+      });
+      setCurrentLapTimes((prev) => {
+        const { map: nextMap, hasActive } = computeCurrentLapMap();
+        if (!hasActive) {
+          const prevKeys = Object.keys(prev);
+          const nextKeys = Object.keys(nextMap);
+          if (
+            prevKeys.length === nextKeys.length &&
+            nextKeys.every((key) => (prev[key] ?? null) === (nextMap[key] ?? null))
+          ) {
+            return prev;
+          }
+        }
+        return nextMap;
+      });
+    }, 250);
+    return () => clearInterval(tickTimerRef.current);
+  }, [computeDisplayTime, computeCurrentLapMap]);
 
   const togglePitComplete = useCallback(
     async (driver) => {
@@ -499,7 +542,7 @@ export default function ControlPanel() {
         setSessionError('Hotkey action failed.');
       }
     },
-    [canWrite, drivers, sessionId, togglePitComplete, hotkeys],
+    [canWrite, drivers, sessionId, togglePitComplete, hotkeys, getArmedStart, setArmedStart],
   );
 
   useEffect(() => {
@@ -769,7 +812,12 @@ export default function ControlPanel() {
         ) : null}
         <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
           {drivers.map((driver) => (
-            <DriverTimingPanel key={driver.id} driver={toPanelDriver(driver)} canWrite={canWrite} />
+            <DriverTimingPanel
+              key={driver.id}
+              driver={toPanelDriver(driver)}
+              canWrite={canWrite}
+              currentLapMs={currentLapTimes[driver.id] ?? null}
+            />
           ))}
         </div>
       </section>

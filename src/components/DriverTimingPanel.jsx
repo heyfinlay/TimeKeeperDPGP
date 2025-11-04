@@ -45,7 +45,7 @@ const parseLapInput = (input) => {
   return minutes * 60000 + seconds * 1000 + milliseconds;
 };
 
-export default function DriverTimingPanel({ driver, canWrite = false }) {
+export default function DriverTimingPanel({ driver, canWrite = false, currentLapMs = null }) {
   const sessionId = useSessionId();
   const [manualTime, setManualTime] = useState('');
   const [isSaving, setIsSaving] = useState(false);
@@ -56,6 +56,10 @@ export default function DriverTimingPanel({ driver, canWrite = false }) {
   const metrics = useMemo(
     () => [
       { label: 'Last lap', value: formatLapTime(driver.last_lap_ms) },
+      {
+        label: 'Current lap',
+        value: currentLapMs === null || currentLapMs === undefined ? '—' : formatLapTime(currentLapMs),
+      },
       { label: 'Best lap', value: formatLapTime(driver.best_lap_ms) },
       { label: 'Laps', value: driver.laps ?? 0 },
       { label: 'Pits', value: driver.pits ?? 0 },
@@ -67,7 +71,7 @@ export default function DriverTimingPanel({ driver, canWrite = false }) {
             : formatLapTime(driver.total_time_ms),
       },
     ],
-    [driver],
+    [currentLapMs, driver],
   );
 
   const handleLogLap = async (event) => {
