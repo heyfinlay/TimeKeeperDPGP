@@ -1,0 +1,8 @@
+./TimeKeeperDPGP/supabase/migrations/20251104_session_access_policies.sql
+./TimeKeeperDPGP/supabase/migrations/20251104_markets_functions.sql
+./TimeKeeperDPGP/src/components/betting/Betslip.jsx
+./TimeKeeperDPGP/src/pages/markets/MarketsLanding.jsx
+./TimeKeeperDPGP/src/pages/dashboard/DashboardPage.jsx
+./TimeKeeperDPGP/src/routes/AdminMarkets.jsx
+./TimeKeeperDPGP/src/routes/index.jsx
+./TimeKeeperDPGP/src/routes/AdminFunds.jsx
