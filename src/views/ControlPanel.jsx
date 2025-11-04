@@ -460,6 +460,24 @@ export default function ControlPanel() {
     wasPausedRef.current = sessionState.isPaused;
   }, [sessionState.isPaused, drivers, getArmedStart, setArmedStart]);
 
+  const handleDriverPanelLogLap = async (driverId) => {
+    if (!canWrite || !driverId) return;
+    const now = Date.now();
+    const armed = getArmedStart(driverId);
+    if (!armed) {
+      setArmedStart(driverId, now);
+      return;
+    }
+    try {
+      const lapTime = Math.max(1, now - armed);
+      await logLapAtomic({ sessionId, driverId, lapTimeMs: lapTime });
+      setArmedStart(driverId, now);
+    } catch (err) {
+      console.error('Panel log lap failed', err);
+      setSessionError('Lap logging failed.');
+    }
+  };
+
   const togglePitComplete = useCallback(
     async (driver) => {
       if (!canWrite || !isSupabaseConfigured || !supabase || !driver?.id) return;
@@ -537,6 +555,7 @@ export default function ControlPanel() {
       // ignore typing in inputs
       const tag = (event.target?.tagName || '').toLowerCase();
       if (tag === 'input' || tag === 'textarea' || event.isComposing) return;
+      if (event.type !== 'keyup') return;
       const index = resolveIndexFromEvent(event);
       const driver = drivers[index];
       if (!driver) return;
@@ -571,8 +590,8 @@ export default function ControlPanel() {
   );
 
   useEffect(() => {
-    window.addEventListener('keydown', handleHotkey);
-    return () => window.removeEventListener('keydown', handleHotkey);
+    window.addEventListener('keyup', handleHotkey);
+    return () => window.removeEventListener('keyup', handleHotkey);
   }, [handleHotkey]);
 
   // ------- Hotkey settings UI -------
