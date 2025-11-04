@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useSessionId } from '@/state/SessionContext.jsx';
+import { useSessionActions } from '@/context/SessionActionsContext.jsx';
 import { formatLapTime } from '@/utils/time.js';
 import { invalidateLastLap, logLapAtomic } from '@/services/laps.js';
 
@@ -45,8 +46,9 @@ const parseLapInput = (input) => {
   return minutes * 60000 + seconds * 1000 + milliseconds;
 };
 
-export default function DriverTimingPanel({ driver, canWrite = false }) {
+export default function DriverTimingPanel({ driver, canWrite = false, currentLapMs = null }) {
   const sessionId = useSessionId();
+  const { onLogLap: contextOnLogLap } = useSessionActions();
   const [manualTime, setManualTime] = useState('');
   const [isSaving, setIsSaving] = useState(false);
   const [pendingInvalidation, setPendingInvalidation] = useState(null);
@@ -56,6 +58,10 @@ export default function DriverTimingPanel({ driver, canWrite = false }) {
   const metrics = useMemo(
     () => [
       { label: 'Last lap', value: formatLapTime(driver.last_lap_ms) },
+      {
+        label: 'Current lap',
+        value: currentLapMs === null || currentLapMs === undefined ? '—' : formatLapTime(currentLapMs),
+      },
       { label: 'Best lap', value: formatLapTime(driver.best_lap_ms) },
       { label: 'Laps', value: driver.laps ?? 0 },
       { label: 'Pits', value: driver.pits ?? 0 },
@@ -67,7 +73,7 @@ export default function DriverTimingPanel({ driver, canWrite = false }) {
             : formatLapTime(driver.total_time_ms),
       },
     ],
-    [driver],
+    [currentLapMs, driver],
   );
 
   const handleLogLap = async (event) => {
@@ -110,26 +116,45 @@ export default function DriverTimingPanel({ driver, canWrite = false }) {
     }
   };
 
+  const handlePanelLogLap = () => {
+    if (!canWrite || typeof contextOnLogLap !== 'function') return;
+    contextOnLogLap(driver.id);
+  };
+
+  const isLogInteractive = Boolean(canWrite && typeof contextOnLogLap === 'function');
+
   return (
     <article className="flex flex-col gap-4 rounded-2xl border border-white/5 bg-[#060910]/80 p-5 text-white">
-      <header className="flex items-center justify-between gap-3">
-        <div className="flex flex-col">
-          <span className="text-sm uppercase tracking-[0.35em] text-neutral-500">Driver #{driver.number ?? '—'}</span>
-          <span className="text-lg font-semibold text-white">{driver.name}</span>
-          {driver.team ? <span className="text-xs text-neutral-400">{driver.team}</span> : null}
-        </div>
-        <div className="flex h-12 w-12 items-center justify-center rounded-full border border-white/10 bg-[#0B1120]/70 text-lg font-bold">
-          {driver.laps ?? 0}
-        </div>
-      </header>
-      <dl className="grid grid-cols-2 gap-3 text-sm">
-        {metrics.map((metric) => (
-          <div key={metric.label} className="flex flex-col gap-1 rounded-xl border border-white/5 bg-[#0B1120]/50 px-3 py-2">
-            <dt className="text-[0.65rem] uppercase tracking-[0.35em] text-neutral-500">{metric.label}</dt>
-            <dd className="text-base font-semibold text-white">{metric.value}</dd>
+      <div
+        role="button"
+        tabIndex={isLogInteractive ? 0 : -1}
+        aria-disabled={!isLogInteractive}
+        aria-label={`Log lap for ${driver.name}`}
+        onClick={handlePanelLogLap}
+        className="flex w-full cursor-pointer flex-col gap-4 rounded-xl bg-transparent text-left transition hover:bg-white/5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#9FF7D3] aria-disabled:cursor-default aria-disabled:bg-transparent aria-disabled:pointer-events-none"
+      >
+        <header className="flex items-center justify-between gap-3">
+          <div className="flex flex-col">
+            <span className="text-sm uppercase tracking-[0.35em] text-neutral-500">Driver #{driver.number ?? '—'}</span>
+            <span className="text-lg font-semibold text-white">{driver.name}</span>
+            {driver.team ? <span className="text-xs text-neutral-400">{driver.team}</span> : null}
           </div>
-        ))}
-      </dl>
+          <div className="flex h-12 w-12 items-center justify-center rounded-full border border-white/10 bg-[#0B1120]/70 text-lg font-bold">
+            {driver.laps ?? 0}
+          </div>
+        </header>
+        <dl className="grid grid-cols-2 gap-3 text-sm">
+          {metrics.map((metric) => (
+            <div
+              key={metric.label}
+              className="flex flex-col gap-1 rounded-xl border border-white/5 bg-[#0B1120]/50 px-3 py-2"
+            >
+              <dt className="text-[0.65rem] uppercase tracking-[0.35em] text-neutral-500">{metric.label}</dt>
+              <dd className="text-base font-semibold text-white">{metric.value}</dd>
+            </div>
+          ))}
+        </dl>
+      </div>
       <form className="flex flex-col gap-3" onSubmit={handleLogLap}>
         <label className="flex flex-col gap-2 text-sm">
           <span className="text-xs font-semibold uppercase tracking-[0.35em] text-neutral-400">Manual lap entry</span>

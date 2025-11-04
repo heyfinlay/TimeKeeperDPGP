@@ -47,7 +47,7 @@ describe('admin integrations', () => {
 
     expect(supabase.from).toHaveBeenCalledWith('sessions');
     expect(select).toHaveBeenCalledWith(
-      'id, name, status, starts_at, ends_at, updated_at, created_at, drivers(id, name, number, marshal_user_id, team), session_members(user_id, role)',
+      'id, name, status, starts_at, ends_at, updated_at, created_at, drivers!drivers_session_id_fkey(id, name, number, marshal_user_id, team), session_members!session_members_session_id_fkey(user_id, role)',
     );
     expect(order).toHaveBeenCalledWith('updated_at', { ascending: false, nullsFirst: false });
     expect(sessions).toEqual([

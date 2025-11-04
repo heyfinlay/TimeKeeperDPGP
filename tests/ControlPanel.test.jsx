@@ -3,7 +3,7 @@
 import '@testing-library/jest-dom/vitest';
 import React from 'react';
 import { render, screen, waitFor } from '@testing-library/react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../src/state/SessionContext.jsx', () => ({
   useSessionContext: vi.fn(),
@@ -18,18 +18,35 @@ vi.mock('../src/hooks/useSessionDrivers.js', () => ({
   useSessionDrivers: vi.fn(),
 }));
 
-vi.mock('../src/lib/supabaseClient.js', () => ({
-  isSupabaseConfigured: true,
-  supabase: { from: vi.fn() },
-}));
+function buildChannelMock() {
+  const subscribe = vi.fn(() => ({ id: 'channel-1' }));
+  const on = vi.fn(() => ({ subscribe }));
+  return { channel: vi.fn(() => ({ on })), subscribe };
+}
+
+vi.mock('../src/lib/supabaseClient.js', () => {
+  const { channel, subscribe } = buildChannelMock();
+  return {
+    isSupabaseConfigured: true,
+    supabase: {
+      from: vi.fn(),
+      channel,
+      removeChannel: vi.fn(),
+    },
+    __channelSubscribe: subscribe,
+  };
+});
 
 import ControlPanel from '../src/views/ControlPanel.jsx';
 import { useSessionContext, useSessionId } from '../src/state/SessionContext.jsx';
 import { useAuth } from '../src/context/AuthContext.jsx';
 import { useSessionDrivers } from '../src/hooks/useSessionDrivers.js';
-import { supabase } from '../src/lib/supabaseClient.js';
+import { supabase, __channelSubscribe } from '../src/lib/supabaseClient.js';
 
 describe('ControlPanel role resolution', () => {
+  let setIntervalSpy;
+  let clearIntervalSpy;
+
   beforeEach(() => {
     vi.clearAllMocks();
     useSessionId.mockReturnValue('session-abcdef123456');
@@ -39,6 +56,31 @@ describe('ControlPanel role resolution', () => {
       error: null,
       refresh: vi.fn(),
     });
+    setIntervalSpy = vi.spyOn(window, 'setInterval').mockImplementation(() => 1);
+    clearIntervalSpy = vi.spyOn(window, 'clearInterval').mockImplementation(() => {});
+    supabase.from.mockImplementation((table) => {
+      if (table === 'session_state') {
+        return {
+          select: () => ({
+            eq: () => ({
+              maybeSingle: () => Promise.resolve({ data: null, error: null }),
+            }),
+          }),
+        };
+      }
+      return {
+        select: () => ({
+          eq: () => ({
+            maybeSingle: () => Promise.resolve({ data: null, error: null }),
+          }),
+        }),
+      };
+    });
+  });
+
+  afterEach(() => {
+    setIntervalSpy?.mockRestore();
+    clearIntervalSpy?.mockRestore();
   });
 
   it('renders admin controls when session context grants admin access', async () => {
@@ -60,10 +102,12 @@ describe('ControlPanel role resolution', () => {
 
     render(<ControlPanel />);
 
-    expect(await screen.findByText(/Race control/i)).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: /Race control/i })).toBeInTheDocument();
     expect(screen.getByText('Admin', { selector: 'span' })).toBeInTheDocument();
     expect(screen.getByText(/Night Fury/)).toBeInTheDocument();
-    expect(supabase.from).not.toHaveBeenCalled();
+    const membershipCalls = supabase.from.mock.calls.filter(([table]) => table === 'session_members');
+    expect(membershipCalls).toHaveLength(0);
+    expect(__channelSubscribe).toHaveBeenCalled();
   });
 
   it('resolves marshal role via Supabase and refreshes drivers once available', async () => {

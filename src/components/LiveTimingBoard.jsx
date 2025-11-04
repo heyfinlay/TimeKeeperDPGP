@@ -21,6 +21,25 @@ import {
 import { isColumnMissingError, isSupabaseConfigured, supabase } from '../lib/supabaseClient.js';
 import { useEventSession } from '../context/SessionContext.jsx';
 
+const PROCEDURE_PHASE_DETAILS = {
+  setup: {
+    label: 'Pre-Session',
+    badgeClass: 'border-white/10 bg-white/5 text-white/80',
+  },
+  warmup: {
+    label: 'Warm-Up',
+    badgeClass: 'border-amber-400/40 bg-amber-500/20 text-amber-100',
+  },
+  grid: {
+    label: 'Grid',
+    badgeClass: 'border-sky-400/40 bg-sky-500/20 text-sky-100',
+  },
+  race: {
+    label: 'Race',
+    badgeClass: 'border-emerald-400/40 bg-emerald-500/20 text-emerald-100',
+  },
+};
+
 const STATUS_ICON_MAP = {
   flag: Flag,
   alert: AlertTriangle,
@@ -63,6 +82,9 @@ const LiveTimingBoard = ({ sessionId: sessionIdProp = null }) => {
     TRACK_STATUS_MAP[sessionState.trackStatus] ?? TRACK_STATUS_OPTIONS[0];
   const TrackStatusIcon =
     STATUS_ICON_MAP[trackStatusDetails?.icon ?? 'flag'] ?? STATUS_ICON_MAP.flag;
+  const procedurePhase = sessionState.procedurePhase ?? 'setup';
+  const procedurePhaseDetails =
+    PROCEDURE_PHASE_DETAILS[procedurePhase] ?? PROCEDURE_PHASE_DETAILS.setup;
 
   const applySessionFilter = useCallback(
     (query, sessionOverride = sessionId) =>
@@ -352,6 +374,12 @@ const LiveTimingBoard = ({ sessionId: sessionIdProp = null }) => {
                 <p className="text-xs uppercase tracking-[0.3em] text-neutral-500">
                   {sessionState.eventType} • {sessionState.totalLaps} laps • {sessionState.totalDuration} min
                 </p>
+                <div
+                  className={`mt-2 inline-flex items-center gap-2 rounded-full border px-3 py-1 text-[11px] font-semibold ${procedurePhaseDetails.badgeClass}`}
+                >
+                  <span className="text-[10px] uppercase tracking-[0.35em] text-neutral-300">Phase</span>
+                  <span>{procedurePhaseDetails.label}</span>
+                </div>
               </div>
               <div className="flex items-center gap-3 text-[#9FF7D3]">
                 <Clock className="h-6 w-6" />

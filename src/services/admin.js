@@ -9,15 +9,47 @@ export async function fetchAdminSessions() {
   const query = supabase
     .from('sessions')
     .select(
-      'id, name, status, starts_at, ends_at, updated_at, created_at, drivers(id, name, number, marshal_user_id, team), session_members(user_id, role)',
+      'id, name, status, starts_at, ends_at, updated_at, created_at, drivers!drivers_session_id_fkey(id, name, number, marshal_user_id, team), session_members!session_members_session_id_fkey(user_id, role)',
     )
     .order('updated_at', { ascending: false, nullsFirst: false });
 
   const { data, error } = await query;
-  if (error) {
+  if (!error) {
+    return Array.isArray(data) ? data : [];
+  }
+  const message = String(error?.message ?? error?.details ?? '').toLowerCase();
+  const ambiguous = message.includes('more than one relationship was found') || message.includes('could not embed');
+  if (!ambiguous) {
     throw error;
   }
-  return Array.isArray(data) ? data : [];
+  // Fallback: fetch in separate calls to avoid embed ambiguity
+  const { data: sessions, error: sessionsError } = await supabase
+    .from('sessions')
+    .select('id, name, status, starts_at, ends_at, updated_at, created_at')
+    .order('updated_at', { ascending: false, nullsFirst: false });
+  if (sessionsError) throw sessionsError;
+  const rows = Array.isArray(sessions) ? sessions : [];
+  const results = [];
+  for (const session of rows) {
+    const [driversRes, membersRes] = await Promise.all([
+      supabase
+        .from('drivers')
+        .select('id, name, number, marshal_user_id, team')
+        .eq('session_id', session.id),
+      supabase
+        .from('session_members')
+        .select('user_id, role')
+        .eq('session_id', session.id),
+    ]);
+    if (driversRes.error) throw driversRes.error;
+    if (membersRes.error) throw membersRes.error;
+    results.push({
+      ...session,
+      drivers: Array.isArray(driversRes.data) ? driversRes.data : [],
+      session_members: Array.isArray(membersRes.data) ? membersRes.data : [],
+    });
+  }
+  return results;
 }
 
 export async function fetchMarshalDirectory() {
@@ -128,4 +160,71 @@ export async function assignMarshalToDriver({ sessionId, driverId, marshalUserId
   }
 
   return updatedDriver ?? null;
+}
+
+export async function deleteSessionDeep(sessionId, { deleteStorage = true } = {}) {
+  if (!sessionId) {
+    throw new Error('A session ID is required to delete a session.');
+  }
+  if (!isSupabaseConfigured || !supabase) {
+    throw new Error(NO_SUPABASE_ERROR);
+  }
+
+  const ignoreMissing = async (queryPromise) => {
+    try {
+      const res = await queryPromise;
+      // Some Supabase calls resolve to { data, error } instead of throwing
+      if (res && res.error) throw res.error;
+      return res ?? null;
+    } catch (err) {
+      // Best-effort cleanup; ignore missing table/column/relation errors
+      const msg = String(err?.message ?? err?.details ?? '').toLowerCase();
+      if (
+        msg.includes('does not exist') ||
+        msg.includes('not exist') ||
+        msg.includes('relation') ||
+        msg.includes('column') ||
+        msg.includes('no such')
+      ) {
+        return null;
+      }
+      throw err;
+    }
+  };
+
+  // Optional: remove session-logs storage objects first
+  if (deleteStorage) {
+    const { data: logRows, error: logError } = await supabase
+      .from('session_logs')
+      .select('object_path')
+      .eq('session_id', sessionId);
+    if (!logError && Array.isArray(logRows) && logRows.length) {
+      const paths = logRows.map((r) => r.object_path).filter(Boolean);
+      if (paths.length) {
+        try {
+          await supabase.storage.from('session-logs').remove(paths);
+        } catch (e) {
+          // ignore storage removal failures
+        }
+      }
+    }
+    await ignoreMissing(
+      supabase.from('session_logs').delete().eq('session_id', sessionId),
+    );
+  }
+
+  // Delete dependents (order matters when FKs have no cascade)
+  await ignoreMissing(supabase.from('laps').delete().eq('session_id', sessionId));
+  await ignoreMissing(supabase.from('race_events').delete().eq('session_id', sessionId));
+  await ignoreMissing(supabase.from('session_entries').delete().eq('session_id', sessionId));
+  await ignoreMissing(supabase.from('session_members').delete().eq('session_id', sessionId));
+  await ignoreMissing(supabase.from('drivers').delete().eq('session_id', sessionId));
+  await ignoreMissing(supabase.from('session_state').delete().eq('session_id', sessionId));
+
+  // Finally delete the session row
+  const { error: deleteError } = await supabase.from('sessions').delete().eq('id', sessionId);
+  if (deleteError) {
+    throw deleteError;
+  }
+  return true;
 }
