@@ -54,8 +54,9 @@ Acceptance: Creating a session via `/sessions/new` succeeds; entry appears immed
 - [x] Refactor `src/views/ControlPanel.jsx` to consume the context instead of prop drilling. Ensure `handleDriverPanelLogLap` is registered as the context handler.
 - [x] Update `src/components/DriverTimingPanel.jsx` to rely on `useSessionActions()` and remove undefined prop access. Keep prop fallback so component stays testable.
 - [x] Add Vitest coverage in `tests/control/DriverTimingPanel.test.jsx` mounting with a mocked context to prevent regressions.
+- [x] **CRITICAL FIX**: Race start timing synchronization - auto-arm all driver lap timers when race starts so lap clocks stay synchronized with session clock (src/views/ControlPanel.jsx:296).
 
-Acceptance: Admin or marshal opens `/control/:sessionId` without console errors and can log laps via panel + hotkeys; Live Timing view updates accordingly.
+Acceptance: Admin or marshal opens `/control/:sessionId` without console errors and can log laps via panel + hotkeys; Live Timing view updates accordingly. **Driver lap clocks start automatically with race clock and display accurate current lap times.**
 
 ### A3. Realtime Bootstrap Guard
 - [x] Audit `.env.local.example` (add if missing) with `VITE_SUPABASE_URL` + `VITE_SUPABASE_ANON_KEY`. Mirror values in Vercel environment groups.

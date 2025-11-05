@@ -1,3 +1,28 @@
+/**
+ * ControlPanel.jsx
+ *
+ * TIMING ARCHITECTURE:
+ * - Session Clock: Global race time tracked in sessionState.raceTime (persisted to DB)
+ * - Driver Lap Clocks: Per-driver current lap time stored in localStorage as "armed" timestamps
+ *
+ * RACE START SYNCHRONIZATION:
+ * When procedure_phase transitions from 'grid' → 'race', ALL driver lap timers are auto-armed
+ * at the exact race start moment. This ensures:
+ *   1. Session clock and all driver lap clocks start simultaneously
+ *   2. Live timing displays accurate 1-second precision from race start
+ *   3. First lap times are calculated from race start, not first manual log
+ *
+ * LAP LOGGING BEHAVIOR:
+ * - First hotkey/click press: Arms the timer (records start timestamp)
+ * - Second hotkey/click press: Logs the lap (calculates time from armed start, re-arms)
+ * - For RACE sessions: All drivers auto-armed on race start
+ * - For QUALIFYING sessions: Manual arm/log cycle per driver
+ *
+ * TIMING PERSISTENCE:
+ * - Armed start times stored in localStorage (survives page refresh)
+ * - Pause/resume logic adjusts armed times to maintain accuracy
+ * - Reset clears all armed timers and returns to setup phase
+ */
 import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import DriverTimingPanel from '@/components/DriverTimingPanel.jsx';
 import { useSessionContext, useSessionId } from '@/state/SessionContext.jsx';
@@ -299,8 +324,17 @@ export default function ControlPanel() {
       return;
     }
     baseTimeRef.current = sessionState.raceTime ?? 0;
-    startEpochRef.current = Date.now();
+    const raceStartTime = Date.now();
+    startEpochRef.current = raceStartTime;
     tickingRef.current = true;
+
+    // CRITICAL FIX: Auto-arm ALL driver lap timers when race starts
+    // This synchronizes all driver lap clocks with the race clock start
+    // Without this, drivers have no current lap until first manual lap log
+    drivers.forEach((driver) => {
+      setArmedStart(driver.id, raceStartTime);
+    });
+
     try {
       await persistSessionPatch({ is_timing: true, is_paused: false, procedure_phase: 'race' });
     } catch (error) {
@@ -309,7 +343,7 @@ export default function ControlPanel() {
       startEpochRef.current = null;
       setSessionError('Unable to start race timer.');
     }
-  }, [canWrite, gridReadyConfirmed, persistSessionPatch, sessionState.procedurePhase, sessionState.raceTime]);
+  }, [canWrite, gridReadyConfirmed, persistSessionPatch, sessionState.procedurePhase, sessionState.raceTime, drivers, setArmedStart]);
 
   const pauseTimer = useCallback(async () => {
     if (!canWrite) return;
@@ -333,8 +367,14 @@ export default function ControlPanel() {
     tickingRef.current = false;
     startEpochRef.current = null;
     baseTimeRef.current = 0;
+
+    // Clear all driver lap timers when resetting session
+    drivers.forEach((driver) => {
+      setArmedStart(driver.id, null);
+    });
+
     await persistSessionPatch({ is_timing: false, is_paused: false, race_time_ms: 0, procedure_phase: 'setup' });
-  }, [canWrite, persistSessionPatch]);
+  }, [canWrite, persistSessionPatch, drivers, setArmedStart]);
 
   useEffect(() => {
     if (persistTimerRef.current) clearInterval(persistTimerRef.current);
