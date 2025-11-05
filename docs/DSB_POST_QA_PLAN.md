@@ -199,7 +199,7 @@ Acceptance: User can see events/markets, place a wager while open, and view pend
 - [ ] Surface activity indicators per market (green=open, red=closed, blue=settling).
 
 ### C2. Funds Administration
-- [ ] Allow admins to top-up/deduct wallets manually (writes `wallet_transactions` with `adjust` kind + optional memo).
+- [x] Allow admins to top-up/deduct wallets manually via `adjust_wallet_balance()` RPC (writes `wallet_transactions` with `adjust`/`deposit`/`bonus` kind + optional memo).
 - [ ] Implement deposit/withdraw approval flows:
   - Approving deposit credits wallet via RPC or direct SQL function.
   - Approving withdrawal marks row as `approved` and optionally integrates with off-chain payout queue.
@@ -249,6 +249,13 @@ Acceptance: Bot responds in staging guild; `/balance` and `/market` reflect live
 ---
 
 ## Implementation Notes & Gotchas
+
+### Security Critical ⚠️
+- **WALLET INSERT VULNERABILITY (FIXED)**: Initial B1 implementation allowed authenticated users to insert wallet rows with arbitrary balances. An attacker could `POST /wallet_accounts` with `balance=999999999` and mint unlimited Diamonds. **FIX**: Removed `grant insert` for authenticated users and set RLS policy to `with check (false)` to block all user inserts. Wallets now created ONLY via SECURITY DEFINER RPCs (`place_wager`, `adjust_wallet_balance`) which enforce zero or controlled starting balances.
+- **RLS + GRANTS DEFENSE IN DEPTH**: Always pair restrictive RLS policies with minimal grants. Even if grant allows operation, RLS blocks at runtime. But removing unnecessary grants (e.g., INSERT on wallet_accounts) provides extra protection against misconfigured policies.
+- **SECURITY DEFINER PRIVILEGE**: RPCs marked `SECURITY DEFINER` run with function owner's privileges (typically postgres superuser), bypassing RLS and grants for authenticated role. This allows `place_wager` to insert wallets even though users can't.
+
+### General
 - PostgREST only exposes columns with explicit grants. Always pair `alter table` with `grant select(column)` before relying on API.
 - Avoid RLS recursion: policies should call immutable SECURITY DEFINER helpers rather than selecting from guarded tables directly.
 - Settlement math must run in a single transaction (`perform ... for update`) to lock wagers and prevent race conditions.

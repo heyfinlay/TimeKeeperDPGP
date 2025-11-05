@@ -392,3 +392,93 @@ end;
 $$;
 
 grant execute on function public.log_admin_action(text, uuid, jsonb) to authenticated;
+
+-- adjust_wallet_balance: Admin-only function for legitimate balance adjustments
+-- Use cases: deposits, bonuses, refunds, corrections
+create or replace function public.adjust_wallet_balance(
+  p_user_id uuid,
+  p_amount bigint,
+  p_kind text default 'adjust',
+  p_memo text default null
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_old_balance bigint;
+  v_new_balance bigint;
+begin
+  -- Check admin
+  if not public.is_admin() then
+    raise exception 'Admin access required';
+  end if;
+
+  -- Validate amount is non-zero
+  if p_amount = 0 then
+    raise exception 'Adjustment amount cannot be zero';
+  end if;
+
+  -- Validate kind
+  if p_kind not in ('adjust', 'deposit', 'bonus', 'correction', 'refund') then
+    raise exception 'Invalid adjustment kind: %', p_kind;
+  end if;
+
+  -- Lock wallet and get current balance
+  select balance into v_old_balance
+  from public.wallet_accounts
+  where user_id = p_user_id
+  for update;
+
+  -- Create wallet if it doesn't exist
+  if v_old_balance is null then
+    insert into public.wallet_accounts (user_id, balance)
+    values (p_user_id, greatest(0, p_amount))
+    returning balance into v_new_balance;
+    v_old_balance := 0;
+  else
+    -- Update balance (prevent negative balances)
+    v_new_balance := greatest(0, v_old_balance + p_amount);
+
+    update public.wallet_accounts
+    set balance = v_new_balance
+    where user_id = p_user_id;
+  end if;
+
+  -- Record transaction
+  insert into public.wallet_transactions (user_id, kind, amount, meta)
+  values (
+    p_user_id,
+    p_kind,
+    p_amount,
+    jsonb_build_object(
+      'memo', p_memo,
+      'admin_id', auth.uid(),
+      'old_balance', v_old_balance,
+      'new_balance', v_new_balance
+    )
+  );
+
+  -- Log admin action
+  perform public.log_admin_action(
+    'adjust_wallet',
+    null,
+    jsonb_build_object(
+      'user_id', p_user_id,
+      'amount', p_amount,
+      'kind', p_kind,
+      'memo', p_memo
+    )
+  );
+
+  return jsonb_build_object(
+    'success', true,
+    'old_balance', v_old_balance,
+    'new_balance', v_new_balance,
+    'adjustment', p_amount
+  );
+end;
+$$;
+
+grant execute on function public.adjust_wallet_balance(uuid, bigint, text, text) to authenticated;

@@ -23,13 +23,14 @@ grant insert, update, delete on table public.markets to authenticated;
 grant select on table public.outcomes to anon, authenticated;
 grant insert, update, delete on table public.outcomes to authenticated;
 
--- Wallet accounts: users can select/update their row
-grant select, update on table public.wallet_accounts to authenticated;
-grant insert on table public.wallet_accounts to authenticated;
+-- Wallet accounts: users can select ONLY (no insert/update - RPC-only)
+-- Inserts handled by SECURITY DEFINER functions (place_wager, admin RPCs)
+-- Updates blocked to prevent balance manipulation
+grant select on table public.wallet_accounts to authenticated;
 
--- Wallet transactions: user selects own
+-- Wallet transactions: user selects own ONLY (no insert - RPC-only)
+-- All transactions created by SECURITY DEFINER functions to maintain audit integrity
 grant select on table public.wallet_transactions to authenticated;
-grant insert on table public.wallet_transactions to authenticated;
 
 -- Wagers: user inserts/selects own
 grant select, insert on table public.wagers to authenticated;
@@ -75,20 +76,25 @@ create policy "outcomes_admin_all"
   using (public.is_admin())
   with check (public.is_admin());
 
--- Wallet accounts: users can only see and update their own wallet
+-- Wallet accounts: users can only see their own wallet
 create policy "wallet_accounts_own_select"
   on public.wallet_accounts
   for select
   using (auth.uid() = user_id);
 
-create policy "wallet_accounts_own_insert"
+-- CRITICAL SECURITY: Block all direct inserts by users
+-- Wallets must be created ONLY via SECURITY DEFINER RPCs (e.g., place_wager)
+-- or service role to prevent users from minting arbitrary starting balances.
+-- Without this, a user could POST /wallet_accounts with balance=999999999999
+-- and bypass all financial controls.
+create policy "wallet_accounts_no_user_insert"
   on public.wallet_accounts
   for insert
-  with check (auth.uid() = user_id);
+  with check (false);
 
 -- Users cannot directly update balance (only via RPCs/service role)
 -- This prevents manual balance manipulation
-create policy "wallet_accounts_no_direct_update"
+create policy "wallet_accounts_no_user_update"
   on public.wallet_accounts
   for update
   using (false);
