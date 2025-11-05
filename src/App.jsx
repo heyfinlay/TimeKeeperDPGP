@@ -8,6 +8,7 @@ import AppLayout from '@/components/layout/AppLayout.jsx';
 import Welcome from '@/routes/Welcome.jsx';
 import Dashboard from '@/routes/Dashboard.jsx';
 import AdminDashboardPage from '@/pages/dashboard/AdminDashboardPage.jsx';
+import AdminMarketsPage from '@/pages/admin/AdminMarketsPage.jsx';
 import Markets from '@/routes/Markets.jsx';
 import AccountSetup from '@/routes/AccountSetup.jsx';
 import AuthCallback from '@/routes/AuthCallback.jsx';
@@ -83,6 +84,14 @@ export default function App() {
                 <ProtectedRoute>
                   <AdminSessions />
                 </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/admin/markets"
+              element={
+                <AuthGuard requireAdmin>
+                  <AdminMarketsPage />
+                </AuthGuard>
               }
             />
           </Route>
