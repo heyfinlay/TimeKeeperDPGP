@@ -337,20 +337,28 @@ export default function ControlPanel() {
   }, [canWrite, gridReadyConfirmed, persistSessionPatch, sessionState.procedurePhase, sessionState.raceTime]);
 
   // CRITICAL FIX: Auto-arm all driver lap timers when race starts
-  // Separated into useEffect to avoid circular dependency with startTimer
+  // Inlined localStorage logic to avoid circular dependency with callbacks
   useEffect(() => {
-    // Only auto-arm when transitioning TO race phase (not already in race)
+    // Only auto-arm when transitioning TO race phase
     if (sessionState.procedurePhase === 'race' && sessionState.isTiming && !sessionState.isPaused) {
       const raceStartTime = Date.now();
       drivers.forEach((driver) => {
-        // Only arm if not already armed (prevents re-arming on re-render)
-        const currentArmed = getArmedStart(driver.id);
-        if (!currentArmed) {
-          setArmedStart(driver.id, raceStartTime);
+        try {
+          // Check if already armed (inline getArmedStart logic)
+          const key = `timekeeper.currentLapStart.${sessionId}.${driver.id}`;
+          const raw = window.localStorage.getItem(key);
+          const currentArmed = raw ? Number.parseInt(raw, 10) : NaN;
+
+          // Only arm if not already armed (prevents re-arming on re-render)
+          if (Number.isNaN(currentArmed)) {
+            window.localStorage.setItem(key, String(raceStartTime));
+          }
+        } catch {
+          // ignore localStorage errors
         }
       });
     }
-  }, [sessionState.procedurePhase, sessionState.isTiming, sessionState.isPaused, drivers, getArmedStart, setArmedStart]);
+  }, [sessionState.procedurePhase, sessionState.isTiming, sessionState.isPaused, drivers, sessionId]);
 
   const pauseTimer = useCallback(async () => {
     if (!canWrite) return;
@@ -378,13 +386,19 @@ export default function ControlPanel() {
   }, [canWrite, persistSessionPatch]);
 
   // Clear all driver lap timers when resetting to setup phase
+  // Inlined localStorage logic to avoid circular dependency with callbacks
   useEffect(() => {
     if (sessionState.procedurePhase === 'setup' && !sessionState.isTiming) {
       drivers.forEach((driver) => {
-        setArmedStart(driver.id, null);
+        try {
+          const key = `timekeeper.currentLapStart.${sessionId}.${driver.id}`;
+          window.localStorage.removeItem(key);
+        } catch {
+          // ignore localStorage errors
+        }
       });
     }
-  }, [sessionState.procedurePhase, sessionState.isTiming, drivers, setArmedStart]);
+  }, [sessionState.procedurePhase, sessionState.isTiming, drivers, sessionId]);
 
   useEffect(() => {
     if (persistTimerRef.current) clearInterval(persistTimerRef.current);
