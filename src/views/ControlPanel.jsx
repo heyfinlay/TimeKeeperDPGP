@@ -324,8 +324,23 @@ export default function ControlPanel() {
       return;
     }
     baseTimeRef.current = sessionState.raceTime ?? 0;
-    startEpochRef.current = Date.now();
+    const raceStartTime = Date.now();
+    startEpochRef.current = raceStartTime;
     tickingRef.current = true;
+
+    // CRITICAL: Arm all driver lap timers SYNCHRONOUSLY before network round-trip
+    // This ensures local operator's timers start immediately with race clock.
+    // The useEffect below serves as safety net for remote clients who see the
+    // state change come in via realtime after network latency.
+    drivers.forEach((driver) => {
+      try {
+        const key = `timekeeper.currentLapStart.${sessionId}.${driver.id}`;
+        window.localStorage.setItem(key, String(raceStartTime));
+      } catch {
+        // ignore localStorage errors
+      }
+    });
+
     try {
       await persistSessionPatch({ is_timing: true, is_paused: false, procedure_phase: 'race' });
     } catch (error) {
@@ -334,22 +349,22 @@ export default function ControlPanel() {
       startEpochRef.current = null;
       setSessionError('Unable to start race timer.');
     }
-  }, [canWrite, gridReadyConfirmed, persistSessionPatch, sessionState.procedurePhase, sessionState.raceTime]);
+  }, [canWrite, gridReadyConfirmed, persistSessionPatch, sessionState.procedurePhase, sessionState.raceTime, drivers, sessionId]);
 
-  // CRITICAL FIX: Auto-arm all driver lap timers when race starts
-  // Inlined localStorage logic to avoid circular dependency with callbacks
+  // SAFETY NET: Auto-arm driver lap timers for REMOTE clients/observers
+  // When remote clients see procedurePhase change to 'race' via realtime,
+  // they need their timers armed. Local operator already armed synchronously
+  // in startTimer callback above (before network round-trip).
   useEffect(() => {
-    // Only auto-arm when transitioning TO race phase
     if (sessionState.procedurePhase === 'race' && sessionState.isTiming && !sessionState.isPaused) {
       const raceStartTime = Date.now();
       drivers.forEach((driver) => {
         try {
-          // Check if already armed (inline getArmedStart logic)
           const key = `timekeeper.currentLapStart.${sessionId}.${driver.id}`;
           const raw = window.localStorage.getItem(key);
           const currentArmed = raw ? Number.parseInt(raw, 10) : NaN;
 
-          // Only arm if not already armed (prevents re-arming on re-render)
+          // Only arm if not already armed (prevents overwriting local operator's timestamp)
           if (Number.isNaN(currentArmed)) {
             window.localStorage.setItem(key, String(raceStartTime));
           }
@@ -382,11 +397,25 @@ export default function ControlPanel() {
     tickingRef.current = false;
     startEpochRef.current = null;
     baseTimeRef.current = 0;
-    await persistSessionPatch({ is_timing: false, is_paused: false, race_time_ms: 0, procedure_phase: 'setup' });
-  }, [canWrite, persistSessionPatch]);
 
-  // Clear all driver lap timers when resetting to setup phase
-  // Inlined localStorage logic to avoid circular dependency with callbacks
+    // Clear all driver lap timers SYNCHRONOUSLY before network round-trip
+    // Ensures local operator sees immediate reset
+    drivers.forEach((driver) => {
+      try {
+        const key = `timekeeper.currentLapStart.${sessionId}.${driver.id}`;
+        window.localStorage.removeItem(key);
+      } catch {
+        // ignore localStorage errors
+      }
+    });
+
+    await persistSessionPatch({ is_timing: false, is_paused: false, race_time_ms: 0, procedure_phase: 'setup' });
+  }, [canWrite, persistSessionPatch, drivers, sessionId]);
+
+  // SAFETY NET: Clear driver lap timers for REMOTE clients/observers
+  // When remote clients see procedurePhase change to 'setup' via realtime,
+  // they need their timers cleared. Local operator already cleared synchronously
+  // in resetTimer callback above.
   useEffect(() => {
     if (sessionState.procedurePhase === 'setup' && !sessionState.isTiming) {
       drivers.forEach((driver) => {
