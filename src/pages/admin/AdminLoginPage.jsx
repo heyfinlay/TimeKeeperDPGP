@@ -1,11 +1,9 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '@/lib/supabase';
-import { useAuth } from '@/context/AuthContext';
 
 export default function AdminLoginPage() {
   const navigate = useNavigate();
-  const { refreshUser } = useAuth();
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
@@ -35,6 +33,8 @@ export default function AdminLoginPage() {
       }
 
       // Step 2: Sign in using Supabase Auth with email and password
+      // This will automatically trigger AuthContext's onAuthStateChange listener
+      // which will hydrate the profile with admin role
       const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
         email: verifyResult.email,
         password: password,
@@ -48,10 +48,8 @@ export default function AdminLoginPage() {
         throw new Error('Sign in failed');
       }
 
-      // Step 3: Refresh user context to load admin role
-      await refreshUser();
-
-      // Step 4: Redirect to admin markets
+      // Step 3: Redirect to admin markets
+      // The AuthContext will automatically load the profile with admin role
       navigate('/admin/markets');
     } catch (err) {
       console.error('Admin login error:', err);
