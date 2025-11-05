@@ -235,7 +235,7 @@ export const EventSessionProvider = ({ children }) => {
   }, []);
 
   const seedSessionData = useCallback(
-    async (sessionId, { sessionState, drivers, entries, members } = {}) => {
+    async (sessionId, { sessionState, drivers, members } = {}) => {
       if (!sessionId) {
         throw new Error('Session ID is required to seed data.');
       }
@@ -275,10 +275,6 @@ export const EventSessionProvider = ({ children }) => {
 
         if (Array.isArray(drivers) && drivers.length) {
           await supabaseUpsert('drivers', normalizeRows(drivers));
-        }
-
-        if (Array.isArray(entries) && entries.length) {
-          await supabaseUpsert('session_entries', normalizeRows(entries));
         }
 
         if (Array.isArray(members) && members.length) {

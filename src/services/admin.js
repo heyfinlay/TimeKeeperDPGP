@@ -216,7 +216,6 @@ export async function deleteSessionDeep(sessionId, { deleteStorage = true } = {}
   // Delete dependents (order matters when FKs have no cascade)
   await ignoreMissing(supabase.from('laps').delete().eq('session_id', sessionId));
   await ignoreMissing(supabase.from('race_events').delete().eq('session_id', sessionId));
-  await ignoreMissing(supabase.from('session_entries').delete().eq('session_id', sessionId));
   await ignoreMissing(supabase.from('session_members').delete().eq('session_id', sessionId));
   await ignoreMissing(supabase.from('drivers').delete().eq('session_id', sessionId));
   await ignoreMissing(supabase.from('session_state').delete().eq('session_id', sessionId));
