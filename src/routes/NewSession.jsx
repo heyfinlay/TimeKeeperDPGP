@@ -357,7 +357,7 @@ export default function NewSession() {
           session_id: sessionId,
           driver_id: driver.id,
           driver_number: Number.isNaN(parsedNumber) ? null : parsedNumber,
-          driver_name: driver.name.trim() || 'Driver',
+          // driver_name removed - redundant with driver_id FK to drivers table
           team_name: driver.team.trim() || null,
           position: index + 1,
           marshal_user_id: isUuid(driver.marshalId) ? driver.marshalId : null,
