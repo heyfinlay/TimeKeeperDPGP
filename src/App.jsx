@@ -9,6 +9,7 @@ import Welcome from '@/routes/Welcome.jsx';
 import Dashboard from '@/routes/Dashboard.jsx';
 import AdminDashboardPage from '@/pages/dashboard/AdminDashboardPage.jsx';
 import AdminMarketsPage from '@/pages/admin/AdminMarketsPage.jsx';
+import AdminLoginPage from '@/pages/admin/AdminLoginPage.jsx';
 import Markets from '@/routes/Markets.jsx';
 import AccountSetup from '@/routes/AccountSetup.jsx';
 import AuthCallback from '@/routes/AuthCallback.jsx';
@@ -96,6 +97,7 @@ export default function App() {
             />
           </Route>
           <Route path="/auth/callback" element={<AuthCallback />} />
+          <Route path="/admin/login" element={<AdminLoginPage />} />
           <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </EventSessionProvider>
