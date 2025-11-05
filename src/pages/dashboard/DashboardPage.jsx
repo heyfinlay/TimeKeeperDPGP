@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext.jsx';
 import { useEventSession } from '../../context/SessionContext.jsx';
+import { useWagers } from '../../hooks/useWagers.js';
 import TopUpModal from '../../components/dashboard/TopUpModal.jsx';
 
 const MARKET_REFRESH_INTERVAL = 5000;
@@ -156,6 +157,7 @@ const DashboardPage = () => {
   const { status, user, profile, isSupabaseConfigured } = useAuth();
   const navigate = useNavigate();
   const { sessions, refreshSessions, activeSessionId } = useEventSession();
+  const { wagers, isLoading: isLoadingWagers, supportsWagers } = useWagers();
   const [markets, setMarkets] = useState(baseMarkets);
   const [isRefreshingSessions, setIsRefreshingSessions] = useState(false);
   const [now, setNow] = useState(() => new Date());
@@ -479,6 +481,139 @@ const DashboardPage = () => {
           })}
         </div>
       </section>
+
+      {/* Active Bets & Settled Bets */}
+      {supportsWagers && (
+        <section className="flex flex-col gap-6">
+          <div className="flex items-center justify-between">
+            <h2 className="text-2xl font-semibold text-white">Your Wagers</h2>
+            <Link
+              to="/markets"
+              className="inline-flex items-center gap-2 text-sm text-[#9FF7D3] transition hover:text-white"
+            >
+              Browse markets <ArrowRight className="h-4 w-4" />
+            </Link>
+          </div>
+
+          {isLoadingWagers ? (
+            <div className="flex items-center gap-2 text-sm text-neutral-400">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              Loading your wagers...
+            </div>
+          ) : wagers.length === 0 ? (
+            <div className="flex flex-col gap-3 rounded-3xl border border-dashed border-white/10 bg-[#05070F]/40 p-8 text-center">
+              <p className="text-sm font-semibold text-white">No wagers yet</p>
+              <p className="text-xs text-neutral-400">
+                Head to the markets page to place your first bet
+              </p>
+            </div>
+          ) : (
+            <div className="grid gap-6 lg:grid-cols-2">
+              {/* Active Bets */}
+              <div className="flex flex-col gap-4 rounded-3xl border border-white/5 bg-[#05070F]/80 p-6">
+                <div className="flex items-center gap-2">
+                  <Activity className="h-5 w-5 text-[#9FF7D3]" />
+                  <h3 className="text-lg font-semibold text-white">Active Bets</h3>
+                </div>
+                <div className="flex flex-col gap-3">
+                  {wagers
+                    .filter((w) => w.status === 'pending')
+                    .slice(0, 5)
+                    .map((wager) => (
+                      <div
+                        key={wager.id}
+                        className="flex flex-col gap-2 rounded-2xl border border-white/10 bg-[#060910]/80 p-4"
+                      >
+                        <div className="flex items-start justify-between">
+                          <div className="flex flex-col gap-1">
+                            <span className="text-xs uppercase tracking-[0.3em] text-neutral-500">
+                              {wager.eventTitle}
+                            </span>
+                            <span className="text-sm font-semibold text-white">
+                              {wager.marketName}
+                            </span>
+                            <span className="text-sm text-[#9FF7D3]">{wager.outcomeLabel}</span>
+                          </div>
+                          <span className="text-sm font-semibold text-white">
+                            💎 {(wager.stake / 1000).toFixed(1)}K
+                          </span>
+                        </div>
+                        <span className="text-xs text-neutral-400">
+                          Placed {new Date(wager.placedAt).toLocaleString()}
+                        </span>
+                      </div>
+                    ))}
+                  {wagers.filter((w) => w.status === 'pending').length === 0 && (
+                    <p className="text-sm text-neutral-500">No active bets</p>
+                  )}
+                </div>
+              </div>
+
+              {/* Settled Bets */}
+              <div className="flex flex-col gap-4 rounded-3xl border border-white/5 bg-[#05070F]/80 p-6">
+                <div className="flex items-center gap-2">
+                  <Crown className="h-5 w-5 text-[#7C6BFF]" />
+                  <h3 className="text-lg font-semibold text-white">Settled Bets</h3>
+                </div>
+                <div className="flex flex-col gap-3">
+                  {wagers
+                    .filter((w) => w.status !== 'pending')
+                    .slice(0, 5)
+                    .map((wager) => {
+                      const isWon = wager.status === 'won';
+                      const isRefunded = wager.status === 'refunded';
+                      return (
+                        <div
+                          key={wager.id}
+                          className={`flex flex-col gap-2 rounded-2xl border p-4 ${
+                            isWon
+                              ? 'border-green-500/20 bg-green-950/20'
+                              : isRefunded
+                                ? 'border-amber-500/20 bg-amber-950/20'
+                                : 'border-red-500/20 bg-red-950/20'
+                          }`}
+                        >
+                          <div className="flex items-start justify-between">
+                            <div className="flex flex-col gap-1">
+                              <span className="text-xs uppercase tracking-[0.3em] text-neutral-500">
+                                {wager.eventTitle}
+                              </span>
+                              <span className="text-sm font-semibold text-white">
+                                {wager.marketName}
+                              </span>
+                              <span
+                                className={`text-sm ${isWon ? 'text-green-300' : isRefunded ? 'text-amber-300' : 'text-red-300'}`}
+                              >
+                                {wager.outcomeLabel}
+                              </span>
+                            </div>
+                            <div className="flex flex-col items-end gap-1">
+                              <span
+                                className={`text-xs font-semibold uppercase ${isWon ? 'text-green-400' : isRefunded ? 'text-amber-400' : 'text-red-400'}`}
+                              >
+                                {isWon ? 'Won' : isRefunded ? 'Refunded' : 'Lost'}
+                              </span>
+                              <span className="text-sm font-semibold text-white">
+                                💎 {(wager.stake / 1000).toFixed(1)}K
+                              </span>
+                            </div>
+                          </div>
+                          <span className="text-xs text-neutral-400">
+                            Placed {new Date(wager.placedAt).toLocaleString()}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  {wagers.filter((w) => w.status !== 'pending').length === 0 && (
+                    <p className="text-sm text-neutral-500">No settled bets</p>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+        </section>
+      )}
+
       <TopUpModal isOpen={isTopUpOpen} onClose={() => setIsTopUpOpen(false)} />
     </div>
   );

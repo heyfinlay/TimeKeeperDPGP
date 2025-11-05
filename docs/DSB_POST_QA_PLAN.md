@@ -77,14 +77,14 @@ Acceptance: Marshals only view their drivers; Admin sees all; Live Timing remain
 ## Milestone B - Wallet + Markets Skeleton (Day 2-5)
 
 ### B1. Schema Foundations
-- [ ] Create migration `supabase/migrations/<timestamp>_wallet_and_markets.sql` containing tables:
+- [x] Create migration `supabase/migrations/<timestamp>_wallet_and_markets.sql` containing tables:
   - `events`, `markets`, `outcomes`, `wallet_accounts`, `wallet_transactions`, `wagers`, `withdrawals`.
-- [ ] Add idempotent creation SQL (see block below) and update `supabase/schema.sql`.
-- [ ] Extend `supabase/config.toml` publication to include realtime on `events, markets, outcomes, wagers, wallet_accounts`.
-- [ ] Define helper functions in the same migration:
-  - `is_admin()` (SECURITY DEFINER) returning boolean via profile/claim lookup.
-  - `session_has_access(session_id uuid)` for marshal gating (reuse).
-- [ ] Implement RLS policies:
+- [x] Add idempotent creation SQL (see block below) and update `supabase/schema.sql`.
+- [x] Extend `supabase/config.toml` publication to include realtime on `events, markets, outcomes, wagers, wallet_accounts`.
+- [x] Define helper functions in the same migration:
+  - `is_admin()` (SECURITY DEFINER) returning boolean via profile/claim lookup (existed in sync migration).
+  - `session_has_access(session_id uuid)` for marshal gating (reuse, existed in sync migration).
+- [x] Implement RLS policies (in migration `20250412_wallet_markets_rls_grants.sql`):
   - Wallet: users can select/update their row; service role handles adjustments.
   - Transactions: user selects own; only admin/service inserts `rake`/`adjust`.
   - Wagers: user inserts/selects own when market status = 'open'.
@@ -160,25 +160,25 @@ Acceptance: Marshals only view their drivers; Admin sees all; Live Timing remain
   ```
 
 ### B2. Server RPCs & Helpers
-- [ ] Add migration `supabase/migrations/<timestamp>_markets_functions.sql` defining:
+- [x] Add migration `supabase/migrations/20250412_markets_functions.sql` defining:
   - `place_wager(market_id uuid, outcome_id uuid, stake bigint)` with transactional wallet debit + inserts.
   - `close_market(market_id uuid)` to flip status.
   - `settle_market(market_id uuid, winning_outcome_id uuid, payout_policy text default 'refund_if_empty')`.
-- [ ] Handle rake math (flooring) and credit any dust to a `house_user_id` (configure via project setting or function parameter).
-- [ ] Emit `wallet_transactions` entries for every RPC mutation.
-- [ ] Add audit trigger `admin_actions_log` capturing `action`, `market_id`, `actor_id`, `meta` for admin RPC invocations.
-- [ ] Grant execute on RPCs to `authenticated`; admin-only paths gated via `is_admin()`.
+- [x] Handle rake math (flooring) and credit any dust to a `house_user_id` (configure via project setting or function parameter).
+- [x] Emit `wallet_transactions` entries for every RPC mutation.
+- [x] Add audit trigger `admin_actions_log` capturing `action`, `market_id`, `actor_id`, `meta` for admin RPC invocations.
+- [x] Grant execute on RPCs to `authenticated`; admin-only paths gated via `is_admin()`.
 - [ ] Create RPC unit tests (SQL `assert` or via Supabase test harness) to ensure payouts sum to net pool and refund path covers `winning_total = 0`.
 
 ### B3. Client Foundations
-- [ ] Build Wallet context/hook (`src/context/WalletContext.jsx`) sourcing balance + transactions from Supabase, subscribing to realtime.
-- [ ] Add `/markets` route and page:
+- [x] Build Wallet context/hook (`src/context/WalletContext.jsx`) sourcing balance + transactions from Supabase, subscribing to realtime.
+- [x] Add `/markets` route and page:
   - Group markets by event.
   - Live pool + odds updating every 5s (fallback to polling if realtime silent).
   - Outcome list showing estimated odds (`stake_on_outcome / total_pool`) with "Est." badge.
-- [ ] Implement `Betslip` component (in `src/components/betting/Betslip.jsx`) with quick stake buttons (1k/10k/100k/1m Diamonds) and submit via `rpc.place_wager`.
-- [ ] Hook wallet debits + toast notifications; show confetti animation on success.
-- [ ] Update Dashboard to include Active Bets, Settled Bets, Payouts, Withdrawals sections consuming wagers + transactions.
+- [x] Implement `Betslip` component (in `src/components/betting/Betslip.jsx`) with quick stake buttons (1k/10k/100k/1m Diamonds) and submit via `rpc.place_wager`.
+- [x] Hook wallet debits + toast notifications; show confetti animation on success.
+- [x] Update Dashboard to include Active Bets, Settled Bets sections consuming wagers + transactions (added `useWagers` hook in `src/hooks/useWagers.js`).
 - [ ] Wire wallet CTA from dashboard to top-up modal (existing `TopUpModal` can be repurposed for deposits vs off-chain instructions).
 
 Acceptance: User can see events/markets, place a wager while open, and view pending entry on dashboard. Wallet balance decrements instantly.
