@@ -2,25 +2,55 @@
 
 This guide will help you create your first admin account for the Diamond Sports Book.
 
-## Quick Start (Recommended)
+## Quick Start (Recommended - 2 Steps)
 
-### Option 1: Using Supabase SQL Editor (Easiest)
+### Step 1: Create Auth User via Node Script
+
+This uses Supabase's official Admin API (the supported way).
+
+1. **Install Dependencies**
+   ```bash
+   npm install @supabase/supabase-js
+   ```
+
+2. **Get Your Service Role Key**
+   - Go to: https://supabase.com/dashboard/project/kcutwtjpsupmdixynyoh/settings/api
+   - Copy your `service_role` key (⚠️ Keep this secret!)
+
+3. **Edit Credentials**
+   - Open `create_admin_user.mjs` in your code editor
+   - **Line 18**: Change email to your admin email
+   - **Line 19**: Set a **strong password** (save this in your password manager!)
+
+4. **Run the Script**
+   ```bash
+   SUPABASE_URL="https://kcutwtjpsupmdixynyoh.supabase.co" \
+   SUPABASE_SERVICE_ROLE="your-service-role-key-here" \
+   node create_admin_user.mjs
+   ```
+
+5. **Success!**
+   - You should see: "✅ Admin auth user created successfully!"
+   - Copy the User ID - you'll need it for verification
+
+### Step 2: Promote to Admin via SQL
+
+This creates the admin profile and credentials.
 
 1. **Open SQL Editor**
    - Go to: https://supabase.com/dashboard/project/kcutwtjpsupmdixynyoh/sql
-   - Or: Supabase Dashboard → Your Project → SQL Editor
 
 2. **Edit Credentials**
-   - Open `CREATE_FIRST_ADMIN.sql` in your code editor
-   - **Line 20**: Change email to your admin email
-   - **Line 21**: Set a **strong password** (save this in your password manager!)
-   - **Line 22**: Optionally change the admin username
+   - Open `PROMOTE_TO_ADMIN.sql` in your code editor
+   - **Line 20**: MUST match the email from Step 1
+   - **Line 21**: MUST match the password from Step 1
+   - **Line 22**: Choose an admin username (for /admin/login)
 
 3. **Run the Script**
-   - Copy the entire contents of `CREATE_FIRST_ADMIN.sql`
+   - Copy the entire contents of `PROMOTE_TO_ADMIN.sql`
    - Paste into Supabase SQL Editor
    - Click "Run" button
-   - Wait for success message
+   - You should see: "✅ Promoted email@example.com to admin"
 
 4. **Verify**
    - Scroll down in the SQL Editor
@@ -28,15 +58,14 @@ This guide will help you create your first admin account for the Diamond Sports 
    - You should see your admin user with `role = 'admin'`
 
 5. **Sign In**
-   - Go to the admin login page: http://localhost:5173/admin/login (or your deployment URL)
-   - Enter your admin username (e.g., 'race-control-admin')
-   - Enter the password you set above
-   - Click "Sign In"
+   - Go to: http://localhost:5173/admin/login
+   - Username: `race-control-admin` (or whatever you set in Step 2)
+   - Password: (the password you set in Step 1)
    - You'll be redirected to /admin/markets with full admin access!
 
 ---
 
-## Option 2: Using psql (Advanced)
+## Alternative: Using psql (Advanced)
 
 If you prefer using psql, follow the original instructions:
 
