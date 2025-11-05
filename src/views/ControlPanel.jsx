@@ -324,17 +324,8 @@ export default function ControlPanel() {
       return;
     }
     baseTimeRef.current = sessionState.raceTime ?? 0;
-    const raceStartTime = Date.now();
-    startEpochRef.current = raceStartTime;
+    startEpochRef.current = Date.now();
     tickingRef.current = true;
-
-    // CRITICAL FIX: Auto-arm ALL driver lap timers when race starts
-    // This synchronizes all driver lap clocks with the race clock start
-    // Without this, drivers have no current lap until first manual lap log
-    drivers.forEach((driver) => {
-      setArmedStart(driver.id, raceStartTime);
-    });
-
     try {
       await persistSessionPatch({ is_timing: true, is_paused: false, procedure_phase: 'race' });
     } catch (error) {
@@ -343,7 +334,23 @@ export default function ControlPanel() {
       startEpochRef.current = null;
       setSessionError('Unable to start race timer.');
     }
-  }, [canWrite, gridReadyConfirmed, persistSessionPatch, sessionState.procedurePhase, sessionState.raceTime, drivers, setArmedStart]);
+  }, [canWrite, gridReadyConfirmed, persistSessionPatch, sessionState.procedurePhase, sessionState.raceTime]);
+
+  // CRITICAL FIX: Auto-arm all driver lap timers when race starts
+  // Separated into useEffect to avoid circular dependency with startTimer
+  useEffect(() => {
+    // Only auto-arm when transitioning TO race phase (not already in race)
+    if (sessionState.procedurePhase === 'race' && sessionState.isTiming && !sessionState.isPaused) {
+      const raceStartTime = Date.now();
+      drivers.forEach((driver) => {
+        // Only arm if not already armed (prevents re-arming on re-render)
+        const currentArmed = getArmedStart(driver.id);
+        if (!currentArmed) {
+          setArmedStart(driver.id, raceStartTime);
+        }
+      });
+    }
+  }, [sessionState.procedurePhase, sessionState.isTiming, sessionState.isPaused, drivers, getArmedStart, setArmedStart]);
 
   const pauseTimer = useCallback(async () => {
     if (!canWrite) return;
@@ -367,14 +374,17 @@ export default function ControlPanel() {
     tickingRef.current = false;
     startEpochRef.current = null;
     baseTimeRef.current = 0;
-
-    // Clear all driver lap timers when resetting session
-    drivers.forEach((driver) => {
-      setArmedStart(driver.id, null);
-    });
-
     await persistSessionPatch({ is_timing: false, is_paused: false, race_time_ms: 0, procedure_phase: 'setup' });
-  }, [canWrite, persistSessionPatch, drivers, setArmedStart]);
+  }, [canWrite, persistSessionPatch]);
+
+  // Clear all driver lap timers when resetting to setup phase
+  useEffect(() => {
+    if (sessionState.procedurePhase === 'setup' && !sessionState.isTiming) {
+      drivers.forEach((driver) => {
+        setArmedStart(driver.id, null);
+      });
+    }
+  }, [sessionState.procedurePhase, sessionState.isTiming, drivers, setArmedStart]);
 
   useEffect(() => {
     if (persistTimerRef.current) clearInterval(persistTimerRef.current);
