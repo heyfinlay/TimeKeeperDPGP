@@ -64,7 +64,6 @@ const LiveTimingBoard = ({ sessionId: sessionIdProp = null }) => {
   const [isLoading, setIsLoading] = useState(isSupabaseConfigured);
   const [error, setError] = useState(null);
   const raceClockRef = useRef({ base: 0, capturedAt: Date.now() });
-  const sessionStateRef = useRef(DEFAULT_SESSION_STATE);
 
   const deriveDisplayTime = useCallback((state) => {
     if (!state) {
@@ -174,37 +173,10 @@ const LiveTimingBoard = ({ sessionId: sessionIdProp = null }) => {
   const applySessionStateRow = useCallback(
     (row) => {
       const next = sessionRowToState(row);
-      const previous = sessionStateRef.current;
-      const prevRaceTime = Number.isFinite(previous?.raceTime)
-        ? previous.raceTime
-        : null;
-      const nextRaceTime = Number.isFinite(next.raceTime)
-        ? next.raceTime
-        : raceClockRef.current.base ?? 0;
-
-      const hasRaceTimeAdvanced =
-        prevRaceTime !== null && Number.isFinite(next.raceTime) && next.raceTime > prevRaceTime;
-      const hasRaceTimeReset =
-        prevRaceTime !== null && Number.isFinite(next.raceTime) && next.raceTime < prevRaceTime;
-      const becameFinite = prevRaceTime === null && Number.isFinite(next.raceTime);
-      const timingStateChanged =
-        previous?.isTiming !== next.isTiming || previous?.isPaused !== next.isPaused;
-
-      const shouldRefreshCapturedAt =
-        !previous ||
-        hasRaceTimeAdvanced ||
-        hasRaceTimeReset ||
-        becameFinite ||
-        timingStateChanged;
-
       raceClockRef.current = {
-        base: nextRaceTime,
-        capturedAt: shouldRefreshCapturedAt
-          ? Date.now()
-          : raceClockRef.current.capturedAt ?? Date.now(),
+        base: Number.isFinite(next.raceTime) ? next.raceTime : 0,
+        capturedAt: Date.now(),
       };
-
-      sessionStateRef.current = next;
       setSessionState(next);
       setDisplayTime(deriveDisplayTime(next));
     },
