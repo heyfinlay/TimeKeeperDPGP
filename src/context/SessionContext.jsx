@@ -22,6 +22,7 @@ const EventSessionContext = createContext({
   refreshSessions: async () => {},
   createSession: async () => {},
   seedSessionData: async () => {},
+  seedSessionAtomic: async () => {},
   startSession: async () => {},
   completeSession: async () => {},
   supportsSessions: true,
@@ -291,6 +292,35 @@ export const EventSessionProvider = ({ children }) => {
     [supportsSessions],
   );
 
+  const seedSessionAtomic = useCallback(async (sessionPayload = {}) => {
+    if (!isSupabaseConfigured) {
+      throw new Error('Supabase must be configured to create a session.');
+    }
+    if (!supportsSessions) {
+      const unavailableError = new Error(
+        'Session management is unavailable with this Supabase schema.',
+      );
+      setError(unavailableError.message);
+      throw unavailableError;
+    }
+    try {
+      const { data, error } = await supabase
+        .rpc('seed_session_rpc', { p_session: sessionPayload });
+      if (error) throw error;
+      const sessionId = Array.isArray(data) ? data[0] : data; // rpc returns uuid
+      if (!sessionId) throw new Error('Session creation did not return an id');
+      // Refresh list and select new session
+      await refreshSessions();
+      setActiveSessionId(sessionId);
+      setError(null);
+      return sessionId;
+    } catch (seedError) {
+      console.error('Failed to seed session atomically', seedError);
+      setError(seedError?.message ?? 'Unable to create session.');
+      throw seedError;
+    }
+  }, [refreshSessions, supportsSessions]);
+
   const createSession = useCallback(
     async ({ name, startsAt } = {}) => {
       if (!isSupabaseConfigured) return null;
@@ -426,6 +456,7 @@ export const EventSessionProvider = ({ children }) => {
       refreshSessions,
       createSession,
       seedSessionData,
+      seedSessionAtomic,
       startSession,
       completeSession,
       supportsSessions,

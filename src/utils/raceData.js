@@ -34,6 +34,9 @@ export const DEFAULT_SESSION_STATE = {
   isTiming: false,
   isPaused: false,
   raceTime: 0,
+  raceStartedAt: null,
+  accumulatedPauseMs: 0,
+  pauseStartedAt: null,
 };
 
 const parseInteger = (value) => {
@@ -136,4 +139,7 @@ export const sessionRowToState = (sessionRow) => ({
   isTiming: coerceBoolean(sessionRow?.is_timing, false),
   isPaused: coerceBoolean(sessionRow?.is_paused, false),
   raceTime: parseInteger(sessionRow?.race_time_ms) ?? 0,
+  raceStartedAt: sessionRow?.race_started_at ?? null,
+  accumulatedPauseMs: parseInteger(sessionRow?.accumulated_pause_ms) ?? 0,
+  pauseStartedAt: sessionRow?.pause_started_at ?? null,
 });

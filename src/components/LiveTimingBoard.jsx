@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle,
   Car,
@@ -59,16 +59,28 @@ const LiveTimingBoard = ({ sessionId: sessionIdProp = null }) => {
   const activeSessionId = sessionIdProp ?? contextActiveSessionId;
   const [drivers, setDrivers] = useState([]);
   const [sessionState, setSessionState] = useState(DEFAULT_SESSION_STATE);
+  const [displayTime, setDisplayTime] = useState(0);
   const [laps, setLaps] = useState([]);
   const [isLoading, setIsLoading] = useState(isSupabaseConfigured);
   const [error, setError] = useState(null);
+  const raceClockRef = useRef({ base: 0, capturedAt: Date.now() });
 
-  // Local timer state for continuous race clock updates
-  const [displayRaceTime, setDisplayRaceTime] = useState(0);
-  const tickingRef = useRef(false);
-  const startEpochRef = useRef(null);
-  const baseTimeRef = useRef(0);
-  const tickTimerRef = useRef(null);
+  const deriveDisplayTime = useCallback((state) => {
+    if (!state) {
+      return 0;
+    }
+    const baseTime = Number.isFinite(state.raceTime) ? state.raceTime : raceClockRef.current.base ?? 0;
+    if (!state.isTiming || state.isPaused) {
+      return baseTime;
+    }
+    const capturedAt = raceClockRef.current.capturedAt ?? Date.now();
+    return baseTime + Math.max(0, Date.now() - capturedAt);
+  }, []);
+
+  const computeDisplayTime = useCallback(
+    () => deriveDisplayTime(sessionState),
+    [deriveDisplayTime, sessionState],
+  );
 
   const sessionId = activeSessionId ?? LEGACY_SESSION_ID;
 
@@ -158,18 +170,18 @@ const LiveTimingBoard = ({ sessionId: sessionIdProp = null }) => {
     }
   }, [applySessionFilter, handleSchemaMismatch, supabaseClient, supabaseReady]);
 
-  const applySessionStateRow = useCallback((row) => {
-    const next = sessionRowToState(row);
-    setSessionState(next);
-    baseTimeRef.current = next.raceTime ?? 0;
-    if (next.isTiming && !next.isPaused) {
-      startEpochRef.current = Date.now();
-      tickingRef.current = true;
-    } else {
-      startEpochRef.current = null;
-      tickingRef.current = false;
-    }
-  }, []);
+  const applySessionStateRow = useCallback(
+    (row) => {
+      const next = sessionRowToState(row);
+      raceClockRef.current = {
+        base: Number.isFinite(next.raceTime) ? next.raceTime : 0,
+        capturedAt: Date.now(),
+      };
+      setSessionState(next);
+      setDisplayTime(deriveDisplayTime(next));
+    },
+    [deriveDisplayTime],
+  );
 
   const refreshSessionState = useCallback(async () => {
     if (!supabaseReady) return;
@@ -355,27 +367,12 @@ const LiveTimingBoard = ({ sessionId: sessionIdProp = null }) => {
       .slice(0, 12);
   }, [laps]);
 
-  // Compute current display time (ticks continuously when race is running)
-  const computeDisplayTime = useCallback(() => {
-    if (!sessionState.isTiming || sessionState.isPaused || !tickingRef.current || !startEpochRef.current) {
-      return baseTimeRef.current;
-    }
-    const now = Date.now();
-    return baseTimeRef.current + (now - startEpochRef.current);
-  }, [sessionState.isTiming, sessionState.isPaused]);
-
-  // Update display time every 250ms for smooth ticking
   useEffect(() => {
-    if (tickTimerRef.current) clearInterval(tickTimerRef.current);
-    tickTimerRef.current = setInterval(() => {
-      setDisplayRaceTime((prev) => {
-        const next = computeDisplayTime();
-        return next !== prev ? next : prev;
-      });
+    setDisplayTime(computeDisplayTime());
+    const timer = setInterval(() => {
+      setDisplayTime(computeDisplayTime());
     }, 250);
-    return () => {
-      if (tickTimerRef.current) clearInterval(tickTimerRef.current);
-    };
+    return () => clearInterval(timer);
   }, [computeDisplayTime]);
 
   return (
@@ -427,7 +424,7 @@ const LiveTimingBoard = ({ sessionId: sessionIdProp = null }) => {
               </div>
               <div className="flex items-center gap-3 text-[#9FF7D3]">
                 <Clock className="h-6 w-6" />
-                <span className="font-mono text-4xl">{formatRaceClock(displayRaceTime)}</span>
+                <span className="font-mono text-4xl">{formatRaceClock(displayTime)}</span>
               </div>
             </div>
           </div>
