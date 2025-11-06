@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle,
   Car,
@@ -63,27 +63,19 @@ const LiveTimingBoard = ({ sessionId: sessionIdProp = null }) => {
   const [laps, setLaps] = useState([]);
   const [isLoading, setIsLoading] = useState(isSupabaseConfigured);
   const [error, setError] = useState(null);
+  const raceClockRef = useRef({ base: 0, capturedAt: Date.now() });
+  const sessionStateRef = useRef(DEFAULT_SESSION_STATE);
 
   const deriveDisplayTime = useCallback((state) => {
-    if (!state?.isTiming) {
+    if (!state) {
       return 0;
     }
-    const startedAt = state.raceStartedAt
-      ? new Date(state.raceStartedAt).getTime()
-      : null;
-    if (!startedAt || Number.isNaN(startedAt)) {
-      return 0;
+    const baseTime = Number.isFinite(state.raceTime) ? state.raceTime : raceClockRef.current.base ?? 0;
+    if (!state.isTiming || state.isPaused) {
+      return baseTime;
     }
-    const accumulated = Number.isFinite(state.accumulatedPauseMs)
-      ? state.accumulatedPauseMs
-      : 0;
-    if (state.isPaused && state.pauseStartedAt) {
-      const pausedAt = new Date(state.pauseStartedAt).getTime();
-      if (!Number.isNaN(pausedAt)) {
-        return Math.max(0, pausedAt - startedAt - accumulated);
-      }
-    }
-    return Math.max(0, Date.now() - startedAt - accumulated);
+    const capturedAt = raceClockRef.current.capturedAt ?? Date.now();
+    return baseTime + Math.max(0, Date.now() - capturedAt);
   }, []);
 
   const computeDisplayTime = useCallback(
@@ -182,6 +174,37 @@ const LiveTimingBoard = ({ sessionId: sessionIdProp = null }) => {
   const applySessionStateRow = useCallback(
     (row) => {
       const next = sessionRowToState(row);
+      const previous = sessionStateRef.current;
+      const prevRaceTime = Number.isFinite(previous?.raceTime)
+        ? previous.raceTime
+        : null;
+      const nextRaceTime = Number.isFinite(next.raceTime)
+        ? next.raceTime
+        : raceClockRef.current.base ?? 0;
+
+      const hasRaceTimeAdvanced =
+        prevRaceTime !== null && Number.isFinite(next.raceTime) && next.raceTime > prevRaceTime;
+      const hasRaceTimeReset =
+        prevRaceTime !== null && Number.isFinite(next.raceTime) && next.raceTime < prevRaceTime;
+      const becameFinite = prevRaceTime === null && Number.isFinite(next.raceTime);
+      const timingStateChanged =
+        previous?.isTiming !== next.isTiming || previous?.isPaused !== next.isPaused;
+
+      const shouldRefreshCapturedAt =
+        !previous ||
+        hasRaceTimeAdvanced ||
+        hasRaceTimeReset ||
+        becameFinite ||
+        timingStateChanged;
+
+      raceClockRef.current = {
+        base: nextRaceTime,
+        capturedAt: shouldRefreshCapturedAt
+          ? Date.now()
+          : raceClockRef.current.capturedAt ?? Date.now(),
+      };
+
+      sessionStateRef.current = next;
       setSessionState(next);
       setDisplayTime(deriveDisplayTime(next));
     },
