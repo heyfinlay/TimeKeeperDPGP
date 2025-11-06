@@ -371,34 +371,32 @@ export default function NewSession() {
         inserted_at: nowIso,
       }));
 
-            const driversPayload = enabledDrivers.map((d) => ({ id: d.id, number: Number(d.number) || null, name: d.name, team: d.team }));
-      const assignedMarshalIds = new Set(enabledDrivers.map((driver) => driver.marshalId).filter((id) => isUuid(id)));
-      const membersPayload = Array.from(assignedMarshalIds).map((userId) => ({ user_id: userId, role: 'marshal' }));
-      const sessionPayload = {
-        name: sessionName?.trim() || Session ,
-        status: createdSession?.starts_at ? 'scheduled' : 'draft',
-        starts_at: createdSession?.starts_at || null,
-        event_type: sessionStateDraft.eventType,
-        total_laps: Number(sessionStateDraft.totalLaps) || null,
-        total_duration: Number(sessionStateDraft.totalDuration) || null,
-        procedure_phase: 'setup',
-        flag_status: 'green',
-        track_status: 'green',
-        drivers: driversPayload,
-        members: membersPayload,
-      };
-      const newId = await seedSessionAtomic(sessionPayload);
+      // Seed the session data (critical - must succeed)
+      try {
+        await seedSessionData(sessionId, {
+          sessionState: sessionStateRow,
+          drivers: driverRows,
+          entries: entryRows,
+          members: memberRows,
+        });
+      } catch (seedError) {
+        console.error('Failed to seed session', seedError);
+        setError('Unable to seed session data. Check Supabase permissions and try again.');
+        setIsSubmitting(false);
+        return;
+      }
 
-      selectSession(newId);
-      await refreshSessions?.();
-      navigate(/control/);
+      // Navigate to control panel (non-critical - session already created)
+      try {
+        selectSession(sessionId);
+        await refreshSessions?.();
+      } catch (navigationError) {
+        console.warn('Session created successfully but failed to refresh session list', navigationError);
+        // Continue anyway - session was created successfully
+      }
 
-      selectSession(sessionId);
-      await refreshSessions?.();
+      // Always navigate on success
       navigate(`/control/${sessionId}`);
-    } catch (submitError) {
-      console.error('Failed to seed session', submitError);
-      setError('Unable to seed session data. Check Supabase permissions and try again.');
     } finally {
       setIsSubmitting(false);
     }

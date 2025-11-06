@@ -1,4 +1,4 @@
-import { fireEvent, render } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import DriverTimingPanel from '@/components/DriverTimingPanel.jsx';
 import { SessionActionsProvider } from '@/context/SessionActionsContext.jsx';
@@ -37,5 +37,21 @@ describe('DriverTimingPanel', () => {
 
     expect(onLogLap).toHaveBeenCalledTimes(1);
     expect(onLogLap).toHaveBeenCalledWith('driver-1');
+  });
+
+  it('renders DriverTimingPanel with mocked context', () => {
+    const mockActions = {
+      onLogLap: vi.fn(),
+      invalidateLastLap: vi.fn(),
+      canWrite: true,
+    };
+
+    render(
+      <SessionActionsProvider value={mockActions}>
+        <DriverTimingPanel driver={{ id: 'driver1', name: 'Driver 1' }} />
+      </SessionActionsProvider>
+    );
+
+    expect(screen.getByText('Driver 1')).toBeInTheDocument();
   });
 });

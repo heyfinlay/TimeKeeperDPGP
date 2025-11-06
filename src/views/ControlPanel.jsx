@@ -13,10 +13,10 @@
  *   3. First lap times are calculated from race start, not first manual log
  *
  * LAP LOGGING BEHAVIOR:
- * - First hotkey/click press: Arms the timer (records start timestamp)
- * - Second hotkey/click press: Logs the lap (calculates time from armed start, re-arms)
- * - For RACE sessions: All drivers auto-armed on race start
- * - For QUALIFYING sessions: Manual arm/log cycle per driver
+ * - Hotkey/click press: Logs the lap (calculates time from armed start, re-arms)
+ * - All drivers are auto-armed on race start (grid → race phase transition)
+ * - Manual arming is DISABLED - timers only arm automatically on race start
+ * - Prevents accidental timer arming before race begins
  *
  * TIMING PERSISTENCE:
  * - Armed start times stored in localStorage (survives page refresh)
@@ -218,7 +218,11 @@ export default function ControlPanel() {
   const baseTimeRef = useRef(0);
   const tickTimerRef = useRef(null);
   const persistTimerRef = useRef(null);
-  const computeDisplayTime = useCallback(() => {\n    const started = sessionState.raceStartedAt ? new Date(sessionState.raceStartedAt).getTime() : null;\n    if (!sessionState.isTiming || !started) {\n      return 0;\n    }\n    const accum = Number.isFinite(sessionState.accumulatedPauseMs) ? sessionState.accumulatedPauseMs : 0;\n    if (sessionState.isPaused && sessionState.pauseStartedAt) {\n      const pausedAt = new Date(sessionState.pauseStartedAt).getTime();\n      return Math.max(0, pausedAt - started - accum);\n    }\n    return Math.max(0, Date.now() - started - accum);\n  }, [sessionState.isPaused, sessionState.isTiming, sessionState.raceStartedAt, sessionState.accumulatedPauseMs, sessionState.pauseStartedAt]);
+  const computeDisplayTime = useCallback(() => {
+    if (!sessionState.isTiming || sessionState.isPaused || !tickingRef.current || !startEpochRef.current) {
+      return sessionState.raceTime;
+    }
+    const now = Date.now();
     return baseTimeRef.current + (now - startEpochRef.current);
   }, [sessionState.isPaused, sessionState.isTiming, sessionState.raceTime]);
 
@@ -338,7 +342,7 @@ export default function ControlPanel() {
     });
 
     try {
-      await supabase.rpc('start_race_rpc', { p_session_id: sessionId });
+      await persistSessionPatch({ is_timing: true, is_paused: false, procedure_phase: 'race' });
     } catch (error) {
       console.error('Failed to start race timer', error);
       tickingRef.current = false;
@@ -377,7 +381,7 @@ export default function ControlPanel() {
     tickingRef.current = false;
     startEpochRef.current = null;
     baseTimeRef.current = current;
-    await supabase.rpc('pause_race_rpc', { p_session_id: sessionId });
+    await persistSessionPatch({ is_timing: true, is_paused: true, race_time_ms: current });
   }, [canWrite, computeDisplayTime, persistSessionPatch]);
 
   const resumeTimer = useCallback(async () => {
@@ -385,7 +389,7 @@ export default function ControlPanel() {
     baseTimeRef.current = sessionState.raceTime ?? 0;
     startEpochRef.current = Date.now();
     tickingRef.current = true;
-    await supabase.rpc('resume_race_rpc', { p_session_id: sessionId });
+    await persistSessionPatch({ is_paused: false, is_timing: true });
   }, [canWrite, persistSessionPatch, sessionState.raceTime]);
 
   const resetTimer = useCallback(async () => {
@@ -405,8 +409,28 @@ export default function ControlPanel() {
       }
     });
 
-    await supabase.rpc('finish_race_rpc', { p_session_id: sessionId });
+    await persistSessionPatch({ is_timing: false, is_paused: false, race_time_ms: 0, procedure_phase: 'setup' });
   }, [canWrite, persistSessionPatch, drivers, sessionId]);
+
+  const finishRace = useCallback(async () => {
+    if (!canWrite) return;
+    const current = computeDisplayTime();
+    tickingRef.current = false;
+    startEpochRef.current = null;
+    baseTimeRef.current = current;
+
+    // Clear all driver lap timers
+    drivers.forEach((driver) => {
+      try {
+        const key = `timekeeper.currentLapStart.${sessionId}.${driver.id}`;
+        window.localStorage.removeItem(key);
+      } catch {
+        // ignore localStorage errors
+      }
+    });
+
+    await persistSessionPatch({ is_timing: false, is_paused: false, race_time_ms: current, procedure_phase: 'setup' });
+  }, [canWrite, computeDisplayTime, persistSessionPatch, drivers, sessionId]);
 
   // SAFETY NET: Clear driver lap timers for REMOTE clients/observers
   // When remote clients see procedurePhase change to 'setup' via realtime,
@@ -429,7 +453,8 @@ export default function ControlPanel() {
     if (persistTimerRef.current) clearInterval(persistTimerRef.current);
     if (sessionState.isTiming && !sessionState.isPaused) {
       persistTimerRef.current = setInterval(() => {
-        const current = computeDisplayTime();
+        const current = computeDisplayTime();
+        void persistSessionPatch({ race_time_ms: current });
       }, 5000);
     }
     return () => { if (persistTimerRef.current) clearInterval(persistTimerRef.current); };
@@ -525,7 +550,6 @@ export default function ControlPanel() {
   const [displayTime, setDisplayTime] = useState(0);
   const [currentLapTimes, setCurrentLapTimes] = useState({});
   const pauseEpochRef = useRef(null);
-  const lastPressRefMap = useRef(new Map());
   const wasPausedRef = useRef(sessionState.isPaused);
 
   const computeCurrentLapMap = useCallback(() => {
@@ -597,22 +621,36 @@ export default function ControlPanel() {
     wasPausedRef.current = sessionState.isPaused;
   }, [sessionState.isPaused, drivers, getArmedStart, setArmedStart]);
 
-  const handleDriverPanelLogLap = useCallback(\n    async (driverId) => {\n      if (!canWrite || !driverId) return;\n      if (!sessionState.isTiming || sessionState.isPaused) return;\n      const now = Date.now();\n      const last = lastPressRefMap.current.get(driverId) || 0;\n      if (now - last < 120) return;\n      lastPressRefMap.current.set(driverId, now);\n      const armed = getArmedStart(driverId);\n      if (!armed) {\n        setArmedStart(driverId, now);\n        return;\n      }\n      try {\n        const lapTime = Math.max(1, now - armed);\n        await logLapAtomic({ sessionId, driverId, lapTimeMs: lapTime });\n        setArmedStart(driverId, now);\n      } catch (err) {\n        console.error('Panel log lap failed', err);\n        setSessionError('Lap logging failed.');\n      }\n    },\n    [canWrite, getArmedStart, setArmedStart, sessionId, setSessionError, sessionState.isPaused, sessionState.isTiming],\n  );
+  const handleDriverPanelLogLap = useCallback(
+    async (driverId) => {
+      if (!canWrite || !driverId) return;
+      const now = Date.now();
       const armed = getArmedStart(driverId);
+
+      // Only log laps if timer is already armed (race is running)
+      // Do NOT manually arm timers - they are auto-armed on race start
       if (!armed) {
-        setArmedStart(driverId, now);
+        const currentPhase = sessionState.procedurePhase ?? 'unknown';
+        const isTiming = sessionState.isTiming;
+        console.warn(
+          `Cannot log lap: timer not armed. Phase: ${currentPhase}, isTiming: ${isTiming}, armed: ${armed}`
+        );
+        setSessionError(
+          `Cannot log lap - timer not armed. Current phase: ${currentPhase}. ${currentPhase !== 'race' ? 'Start the race first (Grid → Grid Ready → Start Race).' : 'Race is running but timer not armed - this is a bug.'}`
+        );
         return;
       }
+
       try {
         const lapTime = Math.max(1, now - armed);
         await logLapAtomic({ sessionId, driverId, lapTimeMs: lapTime });
         setArmedStart(driverId, now);
       } catch (err) {
         console.error('Panel log lap failed', err);
-        setSessionError('Lap logging failed.');
+        setSessionError(`Lap logging failed: ${err.message || 'Unknown error'}`);
       }
     },
-    [canWrite, getArmedStart, setArmedStart, sessionId, setSessionError],
+    [canWrite, getArmedStart, setArmedStart, sessionId, setSessionError, sessionState.procedurePhase, sessionState.isTiming],
   );
 
   const handleInvalidateLap = useCallback(
@@ -722,11 +760,19 @@ export default function ControlPanel() {
           await togglePitComplete(driver);
           return;
         }
-        // Log a lap using armed start time per driver. First press arms, second press logs.
+        // Log a lap using armed start time per driver
+        // Do NOT manually arm timers - they are auto-armed on race start
         const armed = getArmedStart(driver.id);
         const now = Date.now();
         if (!armed) {
-          setArmedStart(driver.id, now);
+          const currentPhase = sessionState.procedurePhase ?? 'unknown';
+          const isTiming = sessionState.isTiming;
+          console.warn(
+            `Cannot log lap via hotkey: timer not armed. Driver: ${driver.name}, Phase: ${currentPhase}, isTiming: ${isTiming}`
+          );
+          setSessionError(
+            `Cannot log lap for ${driver.name} - timer not armed. Current phase: ${currentPhase}. ${currentPhase !== 'race' ? 'Start the race first (Grid → Grid Ready → Start Race).' : 'Race is running but timer not armed - check localStorage.'}`
+          );
           return;
         }
         const lapTime = Math.max(1, now - armed);
@@ -734,10 +780,10 @@ export default function ControlPanel() {
         setArmedStart(driver.id, now);
       } catch (err) {
         console.error('Hotkey action failed', err);
-        setSessionError('Hotkey action failed.');
+        setSessionError(`Hotkey failed: ${err.message || 'Unknown error'}`);
       }
     },
-    [canWrite, drivers, handleInvalidateLap, togglePitComplete, hotkeys, getArmedStart, setArmedStart],
+    [canWrite, drivers, handleInvalidateLap, togglePitComplete, hotkeys, getArmedStart, setArmedStart, sessionId, setSessionError, sessionState.procedurePhase, sessionState.isTiming],
   );
 
   useEffect(() => {
@@ -824,25 +870,9 @@ export default function ControlPanel() {
       {/* Track status + announcements */}
       <section className="grid gap-6 md:grid-cols-2">
         <div className="rounded-3xl border border-white/5 bg-[#060910]/80 p-6">
-          <div>
-            <p className="text-xs uppercase tracking-widest text-neutral-400">Track Status</p>
-            <p className="mt-1 text-xl font-semibold text-white">{TRACK_STATUS_MAP[sessionState.trackStatus]?.label ?? 'Green Flag'}</p>
-            <p className="mt-1 text-sm text-neutral-400">{TRACK_STATUS_MAP[sessionState.trackStatus]?.description ?? 'Track clear. Full racing speed permitted.'}</p>
-          </div>
-          <div className="mt-4 flex flex-wrap gap-3">
-            {TRACK_STATUS_OPTIONS.map((opt) => (
-              <button
-                key={opt.id}
-                type="button"
-                disabled={!canWrite}
-                onClick={() => setTrackStatus(opt.id)}
-                className={`rounded-xl px-3 py-2 text-sm font-semibold text-white/90 focus:outline-none focus-visible:ring-2 ${opt.controlClass} disabled:cursor-not-allowed disabled:opacity-60`}
-              >
-                {opt.shortLabel}
-              </button>
-            ))}
-          </div>
-          <p className="mt-4 text-[10px] uppercase tracking-[0.35em] text-neutral-500">Track status is controlled from the race control panel below.</p>
+          <p className="text-xs uppercase tracking-widest text-neutral-400">Track Status</p>
+          <p className="mt-1 text-xl font-semibold text-white">{TRACK_STATUS_MAP[sessionState.trackStatus]?.label ?? 'Green Flag'}</p>
+          <p className="mt-1 text-sm text-neutral-400">{TRACK_STATUS_MAP[sessionState.trackStatus]?.description ?? 'Track clear. Full racing speed permitted.'}</p>
         </div>
         <div className="rounded-3xl border border-white/5 bg-[#060910]/80 p-6">
           <p className="text-xs uppercase tracking-widest text-neutral-400">Live Announcements</p>
@@ -954,6 +984,14 @@ export default function ControlPanel() {
             className="rounded-xl border border-cyan-400/40 bg-cyan-500/20 px-3 py-2 text-sm font-semibold text-cyan-100 hover:bg-cyan-500/30 disabled:cursor-not-allowed disabled:opacity-60"
           >
             Resume Timer
+          </button>
+          <button
+            type="button"
+            disabled={!canWrite || !sessionState.isTiming}
+            onClick={finishRace}
+            className="rounded-xl border border-emerald-500/40 bg-emerald-600/20 px-3 py-2 text-sm font-semibold text-emerald-200 hover:bg-emerald-600/30 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            Finish Race
           </button>
           <button
             type="button"
@@ -1075,8 +1113,5 @@ export default function ControlPanel() {
     </SessionActionsProvider>
   );
 }
-
-
-
 
 
