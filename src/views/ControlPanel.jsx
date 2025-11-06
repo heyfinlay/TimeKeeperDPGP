@@ -630,8 +630,14 @@ export default function ControlPanel() {
       // Only log laps if timer is already armed (race is running)
       // Do NOT manually arm timers - they are auto-armed on race start
       if (!armed) {
-        console.warn('Cannot log lap: timer not armed. Ensure race has started.');
-        setSessionError('Cannot log lap before race starts.');
+        const currentPhase = sessionState.procedurePhase ?? 'unknown';
+        const isTiming = sessionState.isTiming;
+        console.warn(
+          `Cannot log lap: timer not armed. Phase: ${currentPhase}, isTiming: ${isTiming}, armed: ${armed}`
+        );
+        setSessionError(
+          `Cannot log lap - timer not armed. Current phase: ${currentPhase}. ${currentPhase !== 'race' ? 'Start the race first (Grid → Grid Ready → Start Race).' : 'Race is running but timer not armed - this is a bug.'}`
+        );
         return;
       }
 
@@ -641,10 +647,10 @@ export default function ControlPanel() {
         setArmedStart(driverId, now);
       } catch (err) {
         console.error('Panel log lap failed', err);
-        setSessionError('Lap logging failed.');
+        setSessionError(`Lap logging failed: ${err.message || 'Unknown error'}`);
       }
     },
-    [canWrite, getArmedStart, setArmedStart, sessionId, setSessionError],
+    [canWrite, getArmedStart, setArmedStart, sessionId, setSessionError, sessionState.procedurePhase, sessionState.isTiming],
   );
 
   const handleInvalidateLap = useCallback(
@@ -759,8 +765,14 @@ export default function ControlPanel() {
         const armed = getArmedStart(driver.id);
         const now = Date.now();
         if (!armed) {
-          console.warn('Cannot log lap via hotkey: timer not armed. Ensure race has started.');
-          setSessionError('Cannot log lap before race starts.');
+          const currentPhase = sessionState.procedurePhase ?? 'unknown';
+          const isTiming = sessionState.isTiming;
+          console.warn(
+            `Cannot log lap via hotkey: timer not armed. Driver: ${driver.name}, Phase: ${currentPhase}, isTiming: ${isTiming}`
+          );
+          setSessionError(
+            `Cannot log lap for ${driver.name} - timer not armed. Current phase: ${currentPhase}. ${currentPhase !== 'race' ? 'Start the race first (Grid → Grid Ready → Start Race).' : 'Race is running but timer not armed - check localStorage.'}`
+          );
           return;
         }
         const lapTime = Math.max(1, now - armed);
@@ -768,10 +780,10 @@ export default function ControlPanel() {
         setArmedStart(driver.id, now);
       } catch (err) {
         console.error('Hotkey action failed', err);
-        setSessionError('Hotkey action failed.');
+        setSessionError(`Hotkey failed: ${err.message || 'Unknown error'}`);
       }
     },
-    [canWrite, drivers, handleInvalidateLap, togglePitComplete, hotkeys, getArmedStart, setArmedStart],
+    [canWrite, drivers, handleInvalidateLap, togglePitComplete, hotkeys, getArmedStart, setArmedStart, sessionId, setSessionError, sessionState.procedurePhase, sessionState.isTiming],
   );
 
   useEffect(() => {
