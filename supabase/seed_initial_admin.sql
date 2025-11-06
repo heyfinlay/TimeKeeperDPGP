@@ -10,7 +10,7 @@
 -- Optional: supply -v admin_id='<uuid>' to control the admin identifier.
 
 \set admin_username 'initial-admin'
-\set admin_password 'ChangeMeNow!'
+\set admin_password '234494'
 \set admin_id ''
 
 with seed_input as (

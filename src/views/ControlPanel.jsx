@@ -160,9 +160,16 @@ export default function ControlPanel() {
     };
   }, [sessionId, hasAdminAccess, user?.id, status]);
 
+  const baseRole = useMemo(() => {
+    if (!isSupabaseConfigured || hasAdminAccess) {
+      return 'admin';
+    }
+    return role ?? 'spectator';
+  }, [hasAdminAccess, role]);
+
   const driverScope = useMemo(() => {
-    const isAdmin = hasAdminAccess || role === 'admin';
-    const restrictToMarshal = role === 'marshal';
+    const isAdmin = baseRole === 'admin';
+    const restrictToMarshal = baseRole === 'marshal';
     if (!isSupabaseConfigured) {
       return { onlyMine: false, userId: null, isAdmin: true };
     }
@@ -173,38 +180,52 @@ export default function ControlPanel() {
       return { onlyMine: true, userId: userId ?? null, isAdmin: false };
     }
     return { onlyMine: true, userId: userId ?? null, isAdmin: false };
-  }, [role, userId]);
+  }, [baseRole, userId]);
 
-  const {
-    drivers,
-    isLoading: isDriversLoading,
-    error: driversError,
-    refresh,
-  } = useSessionDrivers({
-    onlyMine: driverScope.onlyMine && !!driverScope.userId,
-    userId: driverScope.onlyMine ? driverScope.userId ?? undefined : undefined,
-  });
+  const { drivers, isLoading: isDriversLoading, error: driversError, refresh } =
+    useSessionDrivers({
+      onlyMine: driverScope.onlyMine && !!driverScope.userId,
+      userId: driverScope.onlyMine ? driverScope.userId ?? undefined : undefined,
+    });
 
-  const canWrite = !isSupabaseConfigured || hasAdminAccess || role === 'admin' || role === 'marshal';
-  const resolvedRole = !isSupabaseConfigured || hasAdminAccess ? 'admin' : role ?? 'spectator';
-  const roleLabel = roleLabels[resolvedRole] ?? 'Spectator';
+  const hasMarshalAssignment = useMemo(() => {
+    if (!userId || !Array.isArray(drivers)) return false;
+    return drivers.some((driver) => driver.marshal_user_id === userId);
+  }, [drivers, userId]);
 
-  const lastRoleRef = useRef(resolvedRole);
+  const effectiveRole = useMemo(() => {
+    if (!isSupabaseConfigured || hasAdminAccess) {
+      return 'admin';
+    }
+    if (baseRole === 'admin' || baseRole === 'marshal') {
+      return baseRole;
+    }
+    if (hasMarshalAssignment) {
+      return 'marshal';
+    }
+    return baseRole;
+  }, [baseRole, hasAdminAccess, hasMarshalAssignment]);
+
+  const canWrite =
+    !isSupabaseConfigured || effectiveRole === 'admin' || effectiveRole === 'marshal';
+  const roleLabel = roleLabels[effectiveRole] ?? 'Spectator';
+
+  const lastRoleRef = useRef(effectiveRole);
 
   useEffect(() => {
-    const hasRoleChanged = lastRoleRef.current !== resolvedRole;
-    lastRoleRef.current = resolvedRole;
+    const hasRoleChanged = lastRoleRef.current !== effectiveRole;
+    lastRoleRef.current = effectiveRole;
     if (
       !isSupabaseConfigured ||
       isRoleLoading ||
       !refresh ||
       !hasRoleChanged ||
-      (resolvedRole !== 'marshal' && resolvedRole !== 'admin')
+      (effectiveRole !== 'marshal' && effectiveRole !== 'admin')
     ) {
       return;
     }
     void refresh();
-  }, [isRoleLoading, refresh, resolvedRole]);
+  }, [effectiveRole, isRoleLoading, refresh]);
 
   // -------- Session state (track status, announcements, race timer) ---------
   const [sessionState, setSessionState] = useState(DEFAULT_SESSION_STATE);
@@ -858,7 +879,7 @@ export default function ControlPanel() {
       {isRoleLoading ? (
         <div className="flex min-h-[20vh] items-center justify-center text-sm text-neutral-400">Resolving access…</div>
       ) : null}
-      {!isRoleLoading && resolvedRole === 'spectator' && isSupabaseConfigured ? (
+      {!isRoleLoading && effectiveRole === 'spectator' && isSupabaseConfigured ? (
         <div className="rounded-3xl border border-white/5 bg-[#060910]/80 px-6 py-5 text-center text-sm text-neutral-300">
           <p className="text-base font-semibold text-white">Spectator access</p>
           <p className="mt-2 text-neutral-400">
