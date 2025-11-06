@@ -383,6 +383,23 @@ export const subscribeToTable = (
   };
 };
 
+export async function subscribeToTable({ schema, table, event }, callback, retries = 5) {
+  let attempt = 0;
+  const subscribe = () => {
+    const channel = supabase
+      .channel(`${schema}-${table}-${event}`)
+      .on('postgres_changes', { event, schema, table }, callback)
+      .subscribe((status) => {
+        if (status === 'closed' && attempt < retries) {
+          attempt++;
+          setTimeout(subscribe, Math.min(1000 * 2 ** attempt, 30000)); // Exponential backoff
+        }
+      });
+    return channel;
+  };
+  return subscribe();
+}
+
 export const supabaseEnvironment = {
   url: SUPABASE_URL,
   anonKey: SUPABASE_ANON_KEY,

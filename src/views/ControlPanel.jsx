@@ -13,10 +13,10 @@
  *   3. First lap times are calculated from race start, not first manual log
  *
  * LAP LOGGING BEHAVIOR:
- * - First hotkey/click press: Arms the timer (records start timestamp)
- * - Second hotkey/click press: Logs the lap (calculates time from armed start, re-arms)
- * - For RACE sessions: All drivers auto-armed on race start
- * - For QUALIFYING sessions: Manual arm/log cycle per driver
+ * - Hotkey/click press: Logs the lap (calculates time from armed start, re-arms)
+ * - All drivers are auto-armed on race start (grid → race phase transition)
+ * - Manual arming is DISABLED - timers only arm automatically on race start
+ * - Prevents accidental timer arming before race begins
  *
  * TIMING PERSISTENCE:
  * - Armed start times stored in localStorage (survives page refresh)
@@ -412,6 +412,26 @@ export default function ControlPanel() {
     await persistSessionPatch({ is_timing: false, is_paused: false, race_time_ms: 0, procedure_phase: 'setup' });
   }, [canWrite, persistSessionPatch, drivers, sessionId]);
 
+  const finishRace = useCallback(async () => {
+    if (!canWrite) return;
+    const current = computeDisplayTime();
+    tickingRef.current = false;
+    startEpochRef.current = null;
+    baseTimeRef.current = current;
+
+    // Clear all driver lap timers
+    drivers.forEach((driver) => {
+      try {
+        const key = `timekeeper.currentLapStart.${sessionId}.${driver.id}`;
+        window.localStorage.removeItem(key);
+      } catch {
+        // ignore localStorage errors
+      }
+    });
+
+    await persistSessionPatch({ is_timing: false, is_paused: false, race_time_ms: current, procedure_phase: 'setup' });
+  }, [canWrite, computeDisplayTime, persistSessionPatch, drivers, sessionId]);
+
   // SAFETY NET: Clear driver lap timers for REMOTE clients/observers
   // When remote clients see procedurePhase change to 'setup' via realtime,
   // they need their timers cleared. Local operator already cleared synchronously
@@ -606,10 +626,15 @@ export default function ControlPanel() {
       if (!canWrite || !driverId) return;
       const now = Date.now();
       const armed = getArmedStart(driverId);
+
+      // Only log laps if timer is already armed (race is running)
+      // Do NOT manually arm timers - they are auto-armed on race start
       if (!armed) {
-        setArmedStart(driverId, now);
+        console.warn('Cannot log lap: timer not armed. Ensure race has started.');
+        setSessionError('Cannot log lap before race starts.');
         return;
       }
+
       try {
         const lapTime = Math.max(1, now - armed);
         await logLapAtomic({ sessionId, driverId, lapTimeMs: lapTime });
@@ -729,11 +754,13 @@ export default function ControlPanel() {
           await togglePitComplete(driver);
           return;
         }
-        // Log a lap using armed start time per driver. First press arms, second press logs.
+        // Log a lap using armed start time per driver
+        // Do NOT manually arm timers - they are auto-armed on race start
         const armed = getArmedStart(driver.id);
         const now = Date.now();
         if (!armed) {
-          setArmedStart(driver.id, now);
+          console.warn('Cannot log lap via hotkey: timer not armed. Ensure race has started.');
+          setSessionError('Cannot log lap before race starts.');
           return;
         }
         const lapTime = Math.max(1, now - armed);
@@ -831,25 +858,9 @@ export default function ControlPanel() {
       {/* Track status + announcements */}
       <section className="grid gap-6 md:grid-cols-2">
         <div className="rounded-3xl border border-white/5 bg-[#060910]/80 p-6">
-          <div>
-            <p className="text-xs uppercase tracking-widest text-neutral-400">Track Status</p>
-            <p className="mt-1 text-xl font-semibold text-white">{TRACK_STATUS_MAP[sessionState.trackStatus]?.label ?? 'Green Flag'}</p>
-            <p className="mt-1 text-sm text-neutral-400">{TRACK_STATUS_MAP[sessionState.trackStatus]?.description ?? 'Track clear. Full racing speed permitted.'}</p>
-          </div>
-          <div className="mt-4 flex flex-wrap gap-3">
-            {TRACK_STATUS_OPTIONS.map((opt) => (
-              <button
-                key={opt.id}
-                type="button"
-                disabled={!canWrite}
-                onClick={() => setTrackStatus(opt.id)}
-                className={`rounded-xl px-3 py-2 text-sm font-semibold text-white/90 focus:outline-none focus-visible:ring-2 ${opt.controlClass} disabled:cursor-not-allowed disabled:opacity-60`}
-              >
-                {opt.shortLabel}
-              </button>
-            ))}
-          </div>
-          <p className="mt-4 text-[10px] uppercase tracking-[0.35em] text-neutral-500">Track status is controlled from the race control panel below.</p>
+          <p className="text-xs uppercase tracking-widest text-neutral-400">Track Status</p>
+          <p className="mt-1 text-xl font-semibold text-white">{TRACK_STATUS_MAP[sessionState.trackStatus]?.label ?? 'Green Flag'}</p>
+          <p className="mt-1 text-sm text-neutral-400">{TRACK_STATUS_MAP[sessionState.trackStatus]?.description ?? 'Track clear. Full racing speed permitted.'}</p>
         </div>
         <div className="rounded-3xl border border-white/5 bg-[#060910]/80 p-6">
           <p className="text-xs uppercase tracking-widest text-neutral-400">Live Announcements</p>
@@ -961,6 +972,14 @@ export default function ControlPanel() {
             className="rounded-xl border border-cyan-400/40 bg-cyan-500/20 px-3 py-2 text-sm font-semibold text-cyan-100 hover:bg-cyan-500/30 disabled:cursor-not-allowed disabled:opacity-60"
           >
             Resume Timer
+          </button>
+          <button
+            type="button"
+            disabled={!canWrite || !sessionState.isTiming}
+            onClick={finishRace}
+            className="rounded-xl border border-emerald-500/40 bg-emerald-600/20 px-3 py-2 text-sm font-semibold text-emerald-200 hover:bg-emerald-600/30 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            Finish Race
           </button>
           <button
             type="button"

@@ -1,9 +1,10 @@
-import { useMemo } from 'react';
-import { NavLink, Outlet } from 'react-router-dom';
+import { useMemo, useState, useRef, useEffect } from 'react';
+import { NavLink, Outlet, Link } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext.jsx';
 import { useEventSession } from '@/context/SessionContext.jsx';
 import { useAdminAccess } from '@/components/auth/AuthGuard.jsx';
 import { useWallet } from '@/context/WalletContext.jsx';
+import { ChevronDown } from 'lucide-react';
 
 const NAV_ITEMS = [
   {
@@ -46,11 +47,24 @@ export default function AppLayout() {
   const { activeSessionId } = useEventSession();
   const { isAdmin } = useAdminAccess();
   const { balance, isLoading: isWalletLoading, supportsWallets } = useWallet();
+  const [isWalletMenuOpen, setIsWalletMenuOpen] = useState(false);
+  const walletMenuRef = useRef(null);
 
   const showWallet = isAuthenticated || !isSupabaseConfigured;
   const balanceFormatter = useMemo(() => new Intl.NumberFormat('en-US'), []);
   const formattedBalance = balanceFormatter.format(Number.isFinite(balance) ? balance : 0);
   const walletLabel = isWalletLoading ? 'Loading' : supportsWallets ? formattedBalance : 'Unavailable';
+
+  // Close wallet menu when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (walletMenuRef.current && !walletMenuRef.current.contains(event.target)) {
+        setIsWalletMenuOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
 
   const navItems = NAV_ITEMS.map((item) => ({
     ...item,
@@ -75,16 +89,8 @@ export default function AppLayout() {
               to="/"
               className="text-sm font-semibold uppercase tracking-[0.4em] text-[#9FF7D3] transition hover:text-[#7de6c0]"
             >
-              TimeKeeper
+              DBGP
             </NavLink>
-            {showWallet ? (
-              <span className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs font-semibold uppercase tracking-[0.35em] text-[#9FF7D3]">
-                <span role="img" aria-label="Diamonds">
-                  ??
-                </span>
-                {walletLabel}
-              </span>
-            ) : null}
           </div>
           <div className="flex flex-wrap items-center justify-center gap-2 text-xs uppercase tracking-[0.3em] text-neutral-400">
             {visibleNavItems.map(({ id, to, label, activeClass, hoverClass }) => (
@@ -101,6 +107,35 @@ export default function AppLayout() {
               </NavLink>
             ))}
           </div>
+          {showWallet ? (
+            <div className="relative" ref={walletMenuRef}>
+              <button
+                onClick={() => setIsWalletMenuOpen(!isWalletMenuOpen)}
+                className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs font-semibold uppercase tracking-[0.35em] text-[#9FF7D3] transition hover:border-[#9FF7D3]/50 hover:bg-white/10"
+              >
+                <span>$</span>
+                {walletLabel}
+                <ChevronDown className={`h-3 w-3 transition-transform ${isWalletMenuOpen ? 'rotate-180' : ''}`} />
+              </button>
+              {isWalletMenuOpen && (
+                <div className="absolute right-0 top-full mt-2 w-56 rounded-2xl border border-white/10 bg-[#05070F]/95 p-3 shadow-[0_0_50px_rgba(15,23,42,0.6)] backdrop-blur">
+                  <div className="flex flex-col gap-2">
+                    <div className="rounded-xl border border-white/5 bg-white/5 px-4 py-3">
+                      <p className="text-[0.6rem] uppercase tracking-[0.35em] text-neutral-500">Balance</p>
+                      <p className="mt-1 text-xl font-semibold text-white">${formattedBalance}</p>
+                    </div>
+                    <Link
+                      to="/account/setup"
+                      onClick={() => setIsWalletMenuOpen(false)}
+                      className="inline-flex items-center justify-center gap-2 rounded-full border border-[#F5A97F]/30 bg-[#F5A97F]/10 px-4 py-2 text-xs uppercase tracking-[0.35em] text-[#F5A97F] transition hover:border-[#F5A97F]/60 hover:text-white"
+                    >
+                      Request Top-Up
+                    </Link>
+                  </div>
+                </div>
+              )}
+            </div>
+          ) : null}
         </div>
       </nav>
       <main className="relative mx-auto flex min-h-screen w-full max-w-6xl flex-col px-4 pb-16 pt-28 sm:px-6">

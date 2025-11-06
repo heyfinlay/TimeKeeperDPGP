@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState, useRef } from 'react';
 import {
   AlertTriangle,
   Car,
@@ -62,6 +62,13 @@ const LiveTimingBoard = ({ sessionId: sessionIdProp = null }) => {
   const [laps, setLaps] = useState([]);
   const [isLoading, setIsLoading] = useState(isSupabaseConfigured);
   const [error, setError] = useState(null);
+
+  // Local timer state for continuous race clock updates
+  const [displayRaceTime, setDisplayRaceTime] = useState(0);
+  const tickingRef = useRef(false);
+  const startEpochRef = useRef(null);
+  const baseTimeRef = useRef(0);
+  const tickTimerRef = useRef(null);
 
   const sessionId = activeSessionId ?? LEGACY_SESSION_ID;
 
@@ -151,6 +158,19 @@ const LiveTimingBoard = ({ sessionId: sessionIdProp = null }) => {
     }
   }, [applySessionFilter, handleSchemaMismatch, supabaseClient, supabaseReady]);
 
+  const applySessionStateRow = useCallback((row) => {
+    const next = sessionRowToState(row);
+    setSessionState(next);
+    baseTimeRef.current = next.raceTime ?? 0;
+    if (next.isTiming && !next.isPaused) {
+      startEpochRef.current = Date.now();
+      tickingRef.current = true;
+    } else {
+      startEpochRef.current = null;
+      tickingRef.current = false;
+    }
+  }, []);
+
   const refreshSessionState = useCallback(async () => {
     if (!supabaseReady) return;
     try {
@@ -163,7 +183,7 @@ const LiveTimingBoard = ({ sessionId: sessionIdProp = null }) => {
           throw error;
         }
         if (data) {
-          setSessionState(sessionRowToState(data));
+          applySessionStateRow(data);
         }
       } else {
         const { data, error } = await query.limit(1);
@@ -172,7 +192,7 @@ const LiveTimingBoard = ({ sessionId: sessionIdProp = null }) => {
         }
         const [firstRow] = Array.isArray(data) ? data : [];
         if (firstRow) {
-          setSessionState(sessionRowToState(firstRow));
+          applySessionStateRow(firstRow);
         }
       }
     } catch (sessionError) {
@@ -185,6 +205,7 @@ const LiveTimingBoard = ({ sessionId: sessionIdProp = null }) => {
     }
   }, [
     applySessionFilter,
+    applySessionStateRow,
     handleSchemaMismatch,
     sessionId,
     supabaseClient,
@@ -238,7 +259,7 @@ const LiveTimingBoard = ({ sessionId: sessionIdProp = null }) => {
         { event: '*', schema: 'public', table: 'session_state', ...(filter ? { filter } : {}) },
         (payload) => {
           if (payload?.new) {
-            setSessionState(sessionRowToState(payload.new));
+            applySessionStateRow(payload.new);
           }
         },
       )
@@ -248,7 +269,7 @@ const LiveTimingBoard = ({ sessionId: sessionIdProp = null }) => {
       supabaseClient.removeChannel(driverChannel);
       supabaseClient.removeChannel(sessionChannel);
     };
-  }, [refreshDriverData, sessionId, supabaseClient, supabaseReady, supportsSessions]);
+  }, [refreshDriverData, sessionId, supabaseClient, supabaseReady, supportsSessions, applySessionStateRow]);
 
   const leaderboard = useMemo(() => {
     const sorted = [...drivers]
@@ -334,6 +355,29 @@ const LiveTimingBoard = ({ sessionId: sessionIdProp = null }) => {
       .slice(0, 12);
   }, [laps]);
 
+  // Compute current display time (ticks continuously when race is running)
+  const computeDisplayTime = useCallback(() => {
+    if (!sessionState.isTiming || sessionState.isPaused || !tickingRef.current || !startEpochRef.current) {
+      return baseTimeRef.current;
+    }
+    const now = Date.now();
+    return baseTimeRef.current + (now - startEpochRef.current);
+  }, [sessionState.isTiming, sessionState.isPaused]);
+
+  // Update display time every 250ms for smooth ticking
+  useEffect(() => {
+    if (tickTimerRef.current) clearInterval(tickTimerRef.current);
+    tickTimerRef.current = setInterval(() => {
+      setDisplayRaceTime((prev) => {
+        const next = computeDisplayTime();
+        return next !== prev ? next : prev;
+      });
+    }, 250);
+    return () => {
+      if (tickTimerRef.current) clearInterval(tickTimerRef.current);
+    };
+  }, [computeDisplayTime]);
+
   return (
     <div className="min-h-screen bg-[#05070F] text-white">
       <div className="mx-auto flex max-w-6xl flex-col gap-6 px-4 py-6">
@@ -383,7 +427,7 @@ const LiveTimingBoard = ({ sessionId: sessionIdProp = null }) => {
               </div>
               <div className="flex items-center gap-3 text-[#9FF7D3]">
                 <Clock className="h-6 w-6" />
-                <span className="font-mono text-4xl">{formatRaceClock(sessionState.raceTime)}</span>
+                <span className="font-mono text-4xl">{formatRaceClock(displayRaceTime)}</span>
               </div>
             </div>
           </div>

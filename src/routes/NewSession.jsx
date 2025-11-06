@@ -379,19 +379,32 @@ export default function NewSession() {
         inserted_at: nowIso,
       }));
 
-      await seedSessionData(sessionId, {
-        sessionState: sessionStateRow,
-        drivers: driverRows,
-        entries: entryRows,
-        members: memberRows,
-      });
+      // Seed the session data (critical - must succeed)
+      try {
+        await seedSessionData(sessionId, {
+          sessionState: sessionStateRow,
+          drivers: driverRows,
+          entries: entryRows,
+          members: memberRows,
+        });
+      } catch (seedError) {
+        console.error('Failed to seed session', seedError);
+        setError('Unable to seed session data. Check Supabase permissions and try again.');
+        setIsSubmitting(false);
+        return;
+      }
 
-      selectSession(sessionId);
-      await refreshSessions?.();
+      // Navigate to control panel (non-critical - session already created)
+      try {
+        selectSession(sessionId);
+        await refreshSessions?.();
+      } catch (navigationError) {
+        console.warn('Session created successfully but failed to refresh session list', navigationError);
+        // Continue anyway - session was created successfully
+      }
+
+      // Always navigate on success
       navigate(`/control/${sessionId}`);
-    } catch (submitError) {
-      console.error('Failed to seed session', submitError);
-      setError('Unable to seed session data. Check Supabase permissions and try again.');
     } finally {
       setIsSubmitting(false);
     }

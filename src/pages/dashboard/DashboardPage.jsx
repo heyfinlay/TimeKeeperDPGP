@@ -15,7 +15,6 @@ import {
 import { useAuth } from '../../context/AuthContext.jsx';
 import { useEventSession } from '../../context/SessionContext.jsx';
 import { useWagers } from '../../hooks/useWagers.js';
-import TopUpModal from '../../components/dashboard/TopUpModal.jsx';
 
 const MARKET_REFRESH_INTERVAL = 5000;
 const tierOrder = ['Silver', 'Gold', 'Diamond', 'VIP', 'Marshal', 'Admin'];
@@ -168,7 +167,6 @@ const DashboardPage = () => {
     [profile],
   );
   const profileComplete = Boolean(profile?.display_name?.trim());
-  const [isTopUpOpen, setIsTopUpOpen] = useState(false);
   const controlPath = activeSessionId ? `/control/${activeSessionId}` : '/sessions';
 
   useEffect(() => {
@@ -388,14 +386,6 @@ const DashboardPage = () => {
           >
             Update details <ArrowRight className="h-4 w-4" />
           </Link>
-          <button
-            type="button"
-            onClick={() => setIsTopUpOpen(true)}
-            className="inline-flex items-center justify-center gap-2 rounded-full border border-[#F5A97F]/30 bg-[#F5A97F]/10 px-4 py-2 text-xs uppercase tracking-[0.35em] text-[#F5A97F] transition hover:border-[#F5A97F]/60 hover:text-white"
-          >
-            Top up balance
-            <ArrowRight className="h-4 w-4" />
-          </button>
         </div>
       </section>
 
@@ -406,10 +396,10 @@ const DashboardPage = () => {
             <h2 className="text-2xl font-semibold text-white">Live pool overview</h2>
           </div>
           <Link
-            to={controlPath}
+            to="/markets"
             className="inline-flex items-center gap-2 rounded-full border border-white/10 px-4 py-2 text-xs uppercase tracking-[0.35em] text-neutral-300 transition hover:border-white/30 hover:text-white"
           >
-            Enter race control <ArrowRight className="h-4 w-4" />
+            Live Markets <ArrowRight className="h-4 w-4" />
           </Link>
         </div>
 
@@ -469,12 +459,12 @@ const DashboardPage = () => {
                     <BarChart3 className="h-4 w-4 text-[#7C6BFF]" />
                     <span>Live volume updates every 5s</span>
                   </div>
-                  <button
-                    type="button"
+                  <Link
+                    to="/markets"
                     className="inline-flex items-center gap-2 text-[#9FF7D3] transition hover:text-white"
                   >
-                    Manage market <ArrowRight className="h-4 w-4" />
-                  </button>
+                    Quick bet <ArrowRight className="h-4 w-4" />
+                  </Link>
                 </footer>
               </div>
             );
@@ -485,15 +475,7 @@ const DashboardPage = () => {
       {/* Active Bets & Settled Bets */}
       {supportsWagers && (
         <section className="flex flex-col gap-6">
-          <div className="flex items-center justify-between">
-            <h2 className="text-2xl font-semibold text-white">Your Wagers</h2>
-            <Link
-              to="/markets"
-              className="inline-flex items-center gap-2 text-sm text-[#9FF7D3] transition hover:text-white"
-            >
-              Browse markets <ArrowRight className="h-4 w-4" />
-            </Link>
-          </div>
+          <h2 className="text-2xl font-semibold text-white">Your Wagers</h2>
 
           {isLoadingWagers ? (
             <div className="flex items-center gap-2 text-sm text-neutral-400">
@@ -613,8 +595,6 @@ const DashboardPage = () => {
           )}
         </section>
       )}
-
-      <TopUpModal isOpen={isTopUpOpen} onClose={() => setIsTopUpOpen(false)} />
     </div>
   );
 };
