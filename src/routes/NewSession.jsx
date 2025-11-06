@@ -65,7 +65,7 @@ export default function NewSession() {
     createSession,
     selectSession,
     refreshSessions,
-    seedSessionData,
+    seedSessionAtomic,
   } = useEventSession();
   const [step, setStep] = useState(1);
   const [sessionName, setSessionName] = useState('');
@@ -191,17 +191,9 @@ export default function NewSession() {
       setIsCreating(true);
       try {
         const scheduledAt = startsAt ? new Date(startsAt) : null;
-        const payload = await createSession({
-          name: trimmed,
-          startsAt: scheduledAt && !Number.isNaN(scheduledAt.getTime())
-            ? scheduledAt.toISOString()
-            : undefined,
-        });
-        if (!payload?.id) {
-          setError('Unable to create session. Check your Supabase configuration.');
-          return;
-        }
-        setCreatedSession(payload);
+        const scheduledAt = startsAt ? new Date(startsAt) : null;
+        const draft = { id: null, name: trimmed, starts_at: scheduledAt && !Number.isNaN(scheduledAt.getTime()) ? scheduledAt.toISOString() : null };
+        setCreatedSession(draft);
         setStep(2);
       } catch (createError) {
         console.error('Failed to create session', createError);
@@ -210,7 +202,7 @@ export default function NewSession() {
         setIsCreating(false);
       }
     },
-    [createSession, isSupabaseConfigured, sessionName, startsAt, supportsSessions],
+    [isSupabaseConfigured, sessionName, startsAt, supportsSessions],
   );
 
   const handleUpdateSessionState = useCallback(
@@ -379,12 +371,27 @@ export default function NewSession() {
         inserted_at: nowIso,
       }));
 
-      await seedSessionData(sessionId, {
-        sessionState: sessionStateRow,
-        drivers: driverRows,
-        entries: entryRows,
-        members: memberRows,
-      });
+            const driversPayload = enabledDrivers.map((d) => ({ id: d.id, number: Number(d.number) || null, name: d.name, team: d.team }));
+      const assignedMarshalIds = new Set(enabledDrivers.map((driver) => driver.marshalId).filter((id) => isUuid(id)));
+      const membersPayload = Array.from(assignedMarshalIds).map((userId) => ({ user_id: userId, role: 'marshal' }));
+      const sessionPayload = {
+        name: sessionName?.trim() || Session ,
+        status: createdSession?.starts_at ? 'scheduled' : 'draft',
+        starts_at: createdSession?.starts_at || null,
+        event_type: sessionStateDraft.eventType,
+        total_laps: Number(sessionStateDraft.totalLaps) || null,
+        total_duration: Number(sessionStateDraft.totalDuration) || null,
+        procedure_phase: 'setup',
+        flag_status: 'green',
+        track_status: 'green',
+        drivers: driversPayload,
+        members: membersPayload,
+      };
+      const newId = await seedSessionAtomic(sessionPayload);
+
+      selectSession(newId);
+      await refreshSessions?.();
+      navigate(/control/);
 
       selectSession(sessionId);
       await refreshSessions?.();
@@ -395,13 +402,7 @@ export default function NewSession() {
     } finally {
       setIsSubmitting(false);
     }
-  }, [
-    createdSession?.id,
-    enabledDrivers,
-    marshalDirectory,
-    navigate,
-    refreshSessions,
-    seedSessionData,
+  }, [ createdSession?.id,,
     selectSession,
     sessionStateDraft.eventType,
     sessionStateDraft.totalDuration,
@@ -779,3 +780,7 @@ export default function NewSession() {
     </div>
   );
 }
+
+
+
+

@@ -218,11 +218,7 @@ export default function ControlPanel() {
   const baseTimeRef = useRef(0);
   const tickTimerRef = useRef(null);
   const persistTimerRef = useRef(null);
-  const computeDisplayTime = useCallback(() => {
-    if (!sessionState.isTiming || sessionState.isPaused || !tickingRef.current || !startEpochRef.current) {
-      return sessionState.raceTime;
-    }
-    const now = Date.now();
+  const computeDisplayTime = useCallback(() => {\n    const started = sessionState.raceStartedAt ? new Date(sessionState.raceStartedAt).getTime() : null;\n    if (!sessionState.isTiming || !started) {\n      return 0;\n    }\n    const accum = Number.isFinite(sessionState.accumulatedPauseMs) ? sessionState.accumulatedPauseMs : 0;\n    if (sessionState.isPaused && sessionState.pauseStartedAt) {\n      const pausedAt = new Date(sessionState.pauseStartedAt).getTime();\n      return Math.max(0, pausedAt - started - accum);\n    }\n    return Math.max(0, Date.now() - started - accum);\n  }, [sessionState.isPaused, sessionState.isTiming, sessionState.raceStartedAt, sessionState.accumulatedPauseMs, sessionState.pauseStartedAt]);
     return baseTimeRef.current + (now - startEpochRef.current);
   }, [sessionState.isPaused, sessionState.isTiming, sessionState.raceTime]);
 
@@ -342,7 +338,7 @@ export default function ControlPanel() {
     });
 
     try {
-      await persistSessionPatch({ is_timing: true, is_paused: false, procedure_phase: 'race' });
+      await supabase.rpc('start_race_rpc', { p_session_id: sessionId });
     } catch (error) {
       console.error('Failed to start race timer', error);
       tickingRef.current = false;
@@ -381,7 +377,7 @@ export default function ControlPanel() {
     tickingRef.current = false;
     startEpochRef.current = null;
     baseTimeRef.current = current;
-    await persistSessionPatch({ is_timing: true, is_paused: true, race_time_ms: current });
+    await supabase.rpc('pause_race_rpc', { p_session_id: sessionId });
   }, [canWrite, computeDisplayTime, persistSessionPatch]);
 
   const resumeTimer = useCallback(async () => {
@@ -389,7 +385,7 @@ export default function ControlPanel() {
     baseTimeRef.current = sessionState.raceTime ?? 0;
     startEpochRef.current = Date.now();
     tickingRef.current = true;
-    await persistSessionPatch({ is_paused: false, is_timing: true });
+    await supabase.rpc('resume_race_rpc', { p_session_id: sessionId });
   }, [canWrite, persistSessionPatch, sessionState.raceTime]);
 
   const resetTimer = useCallback(async () => {
@@ -409,7 +405,7 @@ export default function ControlPanel() {
       }
     });
 
-    await persistSessionPatch({ is_timing: false, is_paused: false, race_time_ms: 0, procedure_phase: 'setup' });
+    await supabase.rpc('finish_race_rpc', { p_session_id: sessionId });
   }, [canWrite, persistSessionPatch, drivers, sessionId]);
 
   // SAFETY NET: Clear driver lap timers for REMOTE clients/observers
@@ -433,8 +429,7 @@ export default function ControlPanel() {
     if (persistTimerRef.current) clearInterval(persistTimerRef.current);
     if (sessionState.isTiming && !sessionState.isPaused) {
       persistTimerRef.current = setInterval(() => {
-        const current = computeDisplayTime();
-        void persistSessionPatch({ race_time_ms: current });
+        const current = computeDisplayTime();
       }, 5000);
     }
     return () => { if (persistTimerRef.current) clearInterval(persistTimerRef.current); };
@@ -530,6 +525,7 @@ export default function ControlPanel() {
   const [displayTime, setDisplayTime] = useState(0);
   const [currentLapTimes, setCurrentLapTimes] = useState({});
   const pauseEpochRef = useRef(null);
+  const lastPressRefMap = useRef(new Map());
   const wasPausedRef = useRef(sessionState.isPaused);
 
   const computeCurrentLapMap = useCallback(() => {
@@ -601,10 +597,7 @@ export default function ControlPanel() {
     wasPausedRef.current = sessionState.isPaused;
   }, [sessionState.isPaused, drivers, getArmedStart, setArmedStart]);
 
-  const handleDriverPanelLogLap = useCallback(
-    async (driverId) => {
-      if (!canWrite || !driverId) return;
-      const now = Date.now();
+  const handleDriverPanelLogLap = useCallback(\n    async (driverId) => {\n      if (!canWrite || !driverId) return;\n      if (!sessionState.isTiming || sessionState.isPaused) return;\n      const now = Date.now();\n      const last = lastPressRefMap.current.get(driverId) || 0;\n      if (now - last < 120) return;\n      lastPressRefMap.current.set(driverId, now);\n      const armed = getArmedStart(driverId);\n      if (!armed) {\n        setArmedStart(driverId, now);\n        return;\n      }\n      try {\n        const lapTime = Math.max(1, now - armed);\n        await logLapAtomic({ sessionId, driverId, lapTimeMs: lapTime });\n        setArmedStart(driverId, now);\n      } catch (err) {\n        console.error('Panel log lap failed', err);\n        setSessionError('Lap logging failed.');\n      }\n    },\n    [canWrite, getArmedStart, setArmedStart, sessionId, setSessionError, sessionState.isPaused, sessionState.isTiming],\n  );
       const armed = getArmedStart(driverId);
       if (!armed) {
         setArmedStart(driverId, now);
@@ -1082,5 +1075,8 @@ export default function ControlPanel() {
     </SessionActionsProvider>
   );
 }
+
+
+
 
 

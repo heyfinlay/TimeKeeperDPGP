@@ -58,7 +58,7 @@ const LiveTimingBoard = ({ sessionId: sessionIdProp = null }) => {
   } = useEventSession();
   const activeSessionId = sessionIdProp ?? contextActiveSessionId;
   const [drivers, setDrivers] = useState([]);
-  const [sessionState, setSessionState] = useState(DEFAULT_SESSION_STATE);
+  const [sessionState, setSessionState] = useState(DEFAULT_SESSION_STATE);\n  const [displayTime, setDisplayTime] = useState(0);
   const [laps, setLaps] = useState([]);
   const [isLoading, setIsLoading] = useState(isSupabaseConfigured);
   const [error, setError] = useState(null);
@@ -383,7 +383,7 @@ const LiveTimingBoard = ({ sessionId: sessionIdProp = null }) => {
               </div>
               <div className="flex items-center gap-3 text-[#9FF7D3]">
                 <Clock className="h-6 w-6" />
-                <span className="font-mono text-4xl">{formatRaceClock(sessionState.raceTime)}</span>
+                <span className="font-mono text-4xl">{formatRaceClock(displayTime)}</span>
               </div>
             </div>
           </div>
@@ -523,3 +523,4 @@ const LiveTimingBoard = ({ sessionId: sessionIdProp = null }) => {
 };
 
 export default LiveTimingBoard;
+\n\n  // Derived race clock\n  const computeDisplayTime = useCallback(() => {\n    const started = sessionState.raceStartedAt ? new Date(sessionState.raceStartedAt).getTime() : null;\n    if (!sessionState.isTiming || !started) return 0;\n    const accum = Number.isFinite(sessionState.accumulatedPauseMs) ? sessionState.accumulatedPauseMs : 0;\n    if (sessionState.isPaused && sessionState.pauseStartedAt) {\n      const pausedAt = new Date(sessionState.pauseStartedAt).getTime();\n      return Math.max(0, pausedAt - started - accum);\n    }\n    return Math.max(0, Date.now() - started - accum);\n  }, [sessionState]);\n\n  useEffect(() => {\n    const t = setInterval(() => setDisplayTime(computeDisplayTime()), 250);\n    return () => clearInterval(t);\n  }, [computeDisplayTime]);\n
