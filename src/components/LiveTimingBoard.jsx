@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   AlertTriangle,
   Car,
@@ -58,17 +58,38 @@ const LiveTimingBoard = ({ sessionId: sessionIdProp = null }) => {
   } = useEventSession();
   const activeSessionId = sessionIdProp ?? contextActiveSessionId;
   const [drivers, setDrivers] = useState([]);
-  const [sessionState, setSessionState] = useState(DEFAULT_SESSION_STATE);\n  const [displayTime, setDisplayTime] = useState(0);
+  const [sessionState, setSessionState] = useState(DEFAULT_SESSION_STATE);
+  const [displayTime, setDisplayTime] = useState(0);
   const [laps, setLaps] = useState([]);
   const [isLoading, setIsLoading] = useState(isSupabaseConfigured);
   const [error, setError] = useState(null);
 
-  // Local timer state for continuous race clock updates
-  const [displayRaceTime, setDisplayRaceTime] = useState(0);
-  const tickingRef = useRef(false);
-  const startEpochRef = useRef(null);
-  const baseTimeRef = useRef(0);
-  const tickTimerRef = useRef(null);
+  const deriveDisplayTime = useCallback((state) => {
+    if (!state?.isTiming) {
+      return 0;
+    }
+    const startedAt = state.raceStartedAt
+      ? new Date(state.raceStartedAt).getTime()
+      : null;
+    if (!startedAt || Number.isNaN(startedAt)) {
+      return 0;
+    }
+    const accumulated = Number.isFinite(state.accumulatedPauseMs)
+      ? state.accumulatedPauseMs
+      : 0;
+    if (state.isPaused && state.pauseStartedAt) {
+      const pausedAt = new Date(state.pauseStartedAt).getTime();
+      if (!Number.isNaN(pausedAt)) {
+        return Math.max(0, pausedAt - startedAt - accumulated);
+      }
+    }
+    return Math.max(0, Date.now() - startedAt - accumulated);
+  }, []);
+
+  const computeDisplayTime = useCallback(
+    () => deriveDisplayTime(sessionState),
+    [deriveDisplayTime, sessionState],
+  );
 
   const sessionId = activeSessionId ?? LEGACY_SESSION_ID;
 
@@ -158,18 +179,14 @@ const LiveTimingBoard = ({ sessionId: sessionIdProp = null }) => {
     }
   }, [applySessionFilter, handleSchemaMismatch, supabaseClient, supabaseReady]);
 
-  const applySessionStateRow = useCallback((row) => {
-    const next = sessionRowToState(row);
-    setSessionState(next);
-    baseTimeRef.current = next.raceTime ?? 0;
-    if (next.isTiming && !next.isPaused) {
-      startEpochRef.current = Date.now();
-      tickingRef.current = true;
-    } else {
-      startEpochRef.current = null;
-      tickingRef.current = false;
-    }
-  }, []);
+  const applySessionStateRow = useCallback(
+    (row) => {
+      const next = sessionRowToState(row);
+      setSessionState(next);
+      setDisplayTime(deriveDisplayTime(next));
+    },
+    [deriveDisplayTime],
+  );
 
   const refreshSessionState = useCallback(async () => {
     if (!supabaseReady) return;
@@ -355,27 +372,12 @@ const LiveTimingBoard = ({ sessionId: sessionIdProp = null }) => {
       .slice(0, 12);
   }, [laps]);
 
-  // Compute current display time (ticks continuously when race is running)
-  const computeDisplayTime = useCallback(() => {
-    if (!sessionState.isTiming || sessionState.isPaused || !tickingRef.current || !startEpochRef.current) {
-      return baseTimeRef.current;
-    }
-    const now = Date.now();
-    return baseTimeRef.current + (now - startEpochRef.current);
-  }, [sessionState.isTiming, sessionState.isPaused]);
-
-  // Update display time every 250ms for smooth ticking
   useEffect(() => {
-    if (tickTimerRef.current) clearInterval(tickTimerRef.current);
-    tickTimerRef.current = setInterval(() => {
-      setDisplayRaceTime((prev) => {
-        const next = computeDisplayTime();
-        return next !== prev ? next : prev;
-      });
+    setDisplayTime(computeDisplayTime());
+    const timer = setInterval(() => {
+      setDisplayTime(computeDisplayTime());
     }, 250);
-    return () => {
-      if (tickTimerRef.current) clearInterval(tickTimerRef.current);
-    };
+    return () => clearInterval(timer);
   }, [computeDisplayTime]);
 
   return (
@@ -427,7 +429,7 @@ const LiveTimingBoard = ({ sessionId: sessionIdProp = null }) => {
               </div>
               <div className="flex items-center gap-3 text-[#9FF7D3]">
                 <Clock className="h-6 w-6" />
-                <span className="font-mono text-4xl">{formatRaceClock(displayRaceTime)}</span>
+                <span className="font-mono text-4xl">{formatRaceClock(displayTime)}</span>
               </div>
             </div>
           </div>
@@ -567,4 +569,3 @@ const LiveTimingBoard = ({ sessionId: sessionIdProp = null }) => {
 };
 
 export default LiveTimingBoard;
-\n\n  // Derived race clock\n  const computeDisplayTime = useCallback(() => {\n    const started = sessionState.raceStartedAt ? new Date(sessionState.raceStartedAt).getTime() : null;\n    if (!sessionState.isTiming || !started) return 0;\n    const accum = Number.isFinite(sessionState.accumulatedPauseMs) ? sessionState.accumulatedPauseMs : 0;\n    if (sessionState.isPaused && sessionState.pauseStartedAt) {\n      const pausedAt = new Date(sessionState.pauseStartedAt).getTime();\n      return Math.max(0, pausedAt - started - accum);\n    }\n    return Math.max(0, Date.now() - started - accum);\n  }, [sessionState]);\n\n  useEffect(() => {\n    const t = setInterval(() => setDisplayTime(computeDisplayTime()), 250);\n    return () => clearInterval(t);\n  }, [computeDisplayTime]);\n
