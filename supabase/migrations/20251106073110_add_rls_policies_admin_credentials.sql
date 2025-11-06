@@ -1,5 +1,5 @@
 -- ============================================================================
--- Migration: Add RLS Policies for admin_credentials and teams
+-- Migration: Add RLS Policies for admin_credentials
 -- ============================================================================
 
 -- ============================================================================
@@ -14,22 +14,3 @@ CREATE POLICY "Admin full access to admin credentials"
   TO public
   USING (public.is_admin())
   WITH CHECK (public.is_admin());
-
--- ============================================================================
--- FIX: Add RLS policies to teams
--- ============================================================================
--- teams table stores team names used across sessions
--- Anyone can read teams, but only admins can modify
-
-CREATE POLICY "Admin full access to teams"
-  ON public.teams
-  FOR ALL
-  TO public
-  USING (public.is_admin())
-  WITH CHECK (public.is_admin());
-
-CREATE POLICY "Anyone can read teams"
-  ON public.teams
-  FOR SELECT
-  TO public
-  USING (true);
