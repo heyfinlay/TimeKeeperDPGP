@@ -17,9 +17,9 @@ create index if not exists outcomes_driver_id_idx on public.outcomes (driver_id)
 create or replace function public.admin_create_market(
   p_session_id uuid,
   p_market_name text,
+  p_outcomes jsonb,
   p_rake_bps int default 500,
   p_closes_at timestamptz default null,
-  p_outcomes jsonb,
   p_market_type text default 'parimutuel'
 ) returns jsonb
 language plpgsql
@@ -146,4 +146,4 @@ BEGIN
 END;
 $$;
 
-grant execute on function public.admin_create_market(uuid, text, int, timestamptz, jsonb, text) to authenticated;
+grant execute on function public.admin_create_market(uuid, text, jsonb, int, timestamptz, text) to authenticated;
