@@ -107,7 +107,15 @@ export default function AuthCallback() {
 
         if (isMounted) {
           const requiresSetup = !profile?.display_name?.trim();
-          navigate(requiresSetup ? '/account/setup' : '/dashboard', { replace: true });
+
+          // Route admins to admin dashboard, others to regular dashboard
+          if (requiresSetup) {
+            navigate('/account/setup', { replace: true });
+          } else if (profile?.role === 'admin') {
+            navigate('/admin/sessions', { replace: true });
+          } else {
+            navigate('/dashboard', { replace: true });
+          }
         }
       } catch (callbackError) {
         console.error('Unexpected error during auth callback', callbackError);

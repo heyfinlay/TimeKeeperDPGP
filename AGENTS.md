@@ -25,19 +25,34 @@ The app falls back to offline mode, but realtime sync requires setting `VITE_SUP
 ## Admin Authentication - Single Source of Truth
 **Admin access is determined solely by `profiles.role = 'admin'`.** Do not rely on JWT roles or separate credential tables.
 
+### Authentication Flow
+**Discord OAuth is the ONLY supported authentication method** for all users, including admins. The legacy admin credential system (username/password via `/admin-auth` endpoint) has been deprecated.
+
 ### Database Layer
 - **`is_admin()` function**: Returns true only if the current user's profile has `role = 'admin'`. No JWT role checks.
 - **RLS policies**: Use `is_admin()` or direct `profiles.role = 'admin'` checks. Never reference removed helpers like `session_has_access()`.
 - **Admin RPCs**: All admin functions (`admin_adjust_wallet`, `admin_process_withdrawal`, etc.) are `SECURITY DEFINER` with `search_path = public, pg_temp` and granted to `authenticated` only (not `anon`).
+- **`admin_credentials` table**: DEPRECATED and locked with restrictive RLS. Read-only for admins, preserved for historical reference only.
 
 ### Frontend Layer
+- **Authentication**: All users sign in via `signInWithDiscord()` from `AuthContext` or `src/lib/auth.js`
 - **AuthGuard component** (`src/components/auth/AuthGuard.jsx`): Checks `profile.role === 'admin'` loaded from Supabase. Does not use JWT claims.
 - **Admin routes**: Protected by `<AuthGuard requireAdmin={true}>`. Will redirect if `profile.role !== 'admin'`.
+- **OAuth callback** (`src/routes/AuthCallback.jsx`): Routes admins to `/admin/sessions`, regular users to `/dashboard`
+- **Legacy routes**: `/admin/login` redirects to `/` (use Discord OAuth from home page)
 
 ### To Grant Admin Access
-1. Set the user's profile: `UPDATE profiles SET role = 'admin' WHERE id = '<user_id>';`
-2. User must sign out and back in for frontend to reload the profile
-3. Admin routes (`/admin/markets`, `/dashboard/admin`) will now render
+1. User signs in with Discord OAuth (via WelcomePage or any auth prompt)
+2. Admin manually sets the user's profile: `UPDATE profiles SET role = 'admin' WHERE id = '<user_id>';`
+3. User must sign out and back in to reload the profile with new role
+4. Admin routes (`/admin/sessions`) will now be accessible
+
+### Deprecated Components (Do Not Use)
+- `loginWithAdminCredentials()` in `src/services/adminAuth.js` - throws error
+- `AdminLoginPage` component - no longer in routing
+- `/admin-auth` Edge Function endpoint - should return 410 Gone
+- `admin_credentials` table - read-only, not used for authentication
+- `verify_admin_credentials()` function - removed from database
 
 ## RLS Policy Architecture
 All RLS policies follow a **non-recursive, membership-based pattern** to prevent infinite loops and 401 errors.

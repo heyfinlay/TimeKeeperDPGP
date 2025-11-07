@@ -1,3 +1,13 @@
+/**
+ * @deprecated This component is deprecated and should not be used.
+ *
+ * Diamond Sports Book now uses Discord OAuth for ALL authentication.
+ * This page is preserved for reference but is no longer accessible via routes.
+ *
+ * Use Discord OAuth via the WelcomePage or AuthGate components instead.
+ * @see src/lib/auth.js
+ */
+
 import { useCallback, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '@/lib/supabaseClient.js';
