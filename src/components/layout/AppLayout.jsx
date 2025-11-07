@@ -45,7 +45,8 @@ export default function AppLayout() {
   const { status, isSupabaseConfigured } = useAuth();
   const isAuthenticated = status === 'authenticated';
   const { activeSessionId } = useEventSession();
-  const { isAdmin } = useAdminAccess();
+  const { isAdmin, canControl } = useAdminAccess();
+  const hasControlAccess = typeof canControl === 'boolean' ? canControl : isAdmin;
   const { balance, isLoading: isWalletLoading, supportsWallets } = useWallet();
   const [isWalletMenuOpen, setIsWalletMenuOpen] = useState(false);
   const walletMenuRef = useRef(null);
@@ -72,7 +73,7 @@ export default function AppLayout() {
   }));
 
   const visibleNavItems = navItems.filter((item) => {
-    if (item.requiresAdmin && !isAdmin) {
+    if (item.requiresAdmin && !hasControlAccess) {
       return false;
     }
     if (!item.requiresAuth) return true;

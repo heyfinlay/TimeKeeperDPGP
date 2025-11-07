@@ -11,7 +11,9 @@ export function SessionProvider({ sessionId, children }) {
     throw new Error('SessionProvider requires a sessionId prop.');
   }
 
-  const { isAdmin } = useAdminAccess();
+  const { isAdmin, canControl } = useAdminAccess();
+  const hasControlAccess = typeof canControl === 'boolean' ? canControl : Boolean(isAdmin);
+  const hasAdminRole = Boolean(isAdmin);
   const { status, user } = useAuth();
   const [assignedDriverIds, setAssignedDriverIds] = useState([]);
 
@@ -42,8 +44,14 @@ export function SessionProvider({ sessionId, children }) {
   }, [status, user?.id]);
 
   const value = useMemo(
-    () => ({ sessionId, isAdmin: Boolean(isAdmin), assignedDriverIds }),
-    [sessionId, isAdmin, assignedDriverIds],
+    () => ({
+      sessionId,
+      isAdmin: hasControlAccess,
+      canControl: hasControlAccess,
+      hasAdminRole,
+      assignedDriverIds,
+    }),
+    [sessionId, hasControlAccess, hasAdminRole, assignedDriverIds],
   );
 
   return <SessionContext.Provider value={value}>{children}</SessionContext.Provider>;

@@ -10,20 +10,24 @@ export const useAdminAccess = () => {
   if (context) {
     return context;
   }
-  // Single source of truth: profiles.role = 'admin'
   const role = String(profile?.role ?? '').toLowerCase();
   const isAdmin = !isSupabaseConfigured || role === 'admin';
-  return { isAdmin };
+  const canControl = !isSupabaseConfigured || isAdmin || role === 'race_control';
+  return { isAdmin, canControl };
 };
 
 const AuthGuard = ({ children, redirectTo = '/', requireAdmin = false }) => {
   const { status, user, profile, isSupabaseConfigured } = useAuth();
-  const isAdmin = useMemo(() => {
-    if (!isSupabaseConfigured) return true;
-    // Single source of truth: profiles.role = 'admin'
-    const role = String(profile?.role ?? '').toLowerCase();
-    return role === 'admin';
-  }, [isSupabaseConfigured, profile?.role]);
+  const role = String(profile?.role ?? '').toLowerCase();
+  const { isAdmin, canControl } = useMemo(() => {
+    if (!isSupabaseConfigured) {
+      return { isAdmin: true, canControl: true };
+    }
+    const resolvedIsAdmin = role === 'admin';
+    // Race control operators retain control privileges without full admin status.
+    const resolvedCanControl = resolvedIsAdmin || role === 'race_control';
+    return { isAdmin: resolvedIsAdmin, canControl: resolvedCanControl };
+  }, [isSupabaseConfigured, role]);
 
   if (isSupabaseConfigured && status === 'loading') {
     return (
@@ -35,7 +39,7 @@ const AuthGuard = ({ children, redirectTo = '/', requireAdmin = false }) => {
 
   if (!isSupabaseConfigured) {
     return (
-      <AdminAccessContext.Provider value={{ isAdmin: true }}>
+      <AdminAccessContext.Provider value={{ isAdmin: true, canControl: true }}>
         {children}
       </AdminAccessContext.Provider>
     );
@@ -50,8 +54,8 @@ const AuthGuard = ({ children, redirectTo = '/', requireAdmin = false }) => {
   }
 
   const contextValue = useMemo(
-    () => ({ isAdmin }),
-    [isAdmin],
+    () => ({ isAdmin, canControl }),
+    [isAdmin, canControl],
   );
 
   return <AdminAccessContext.Provider value={contextValue}>{children}</AdminAccessContext.Provider>;
