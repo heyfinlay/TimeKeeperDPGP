@@ -1,6 +1,7 @@
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
 import { EventSessionProvider } from '@/context/SessionContext.jsx';
 import { WalletProvider } from '@/context/WalletContext.jsx';
+import { ParimutuelProvider } from '@/state/parimutuelStore.js';
 import AuthGuard from '@/components/auth/AuthGuard.jsx';
 import ProtectedRoute from '@/components/auth/ProtectedRoute.jsx';
 import SessionAccessGuard from '@/components/auth/SessionAccessGuard.jsx';
@@ -22,7 +23,8 @@ export default function App() {
   return (
     <BrowserRouter>
       <WalletProvider>
-        <EventSessionProvider>
+        <ParimutuelProvider>
+          <EventSessionProvider>
           <Routes>
           <Route element={<AppLayout />}>
             <Route path="/" element={<Welcome />} />
@@ -98,7 +100,8 @@ export default function App() {
           <Route path="/auth/callback" element={<AuthCallback />} />
           <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
-        </EventSessionProvider>
+          </EventSessionProvider>
+        </ParimutuelProvider>
       </WalletProvider>
     </BrowserRouter>
   );

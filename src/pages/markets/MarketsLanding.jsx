@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { ArrowRight, Layers, TrendingUp, Timer } from 'lucide-react';
-import { isSupabaseConfigured, supabaseSelect, isTableMissingError } from '@/lib/supabaseClient.js';
+import MarketCard from '@/components/betting/MarketCard.jsx';
+import { useParimutuelStore } from '@/state/parimutuelStore.js';
 
 const highlights = [
   {
@@ -16,88 +17,44 @@ const highlights = [
   },
 ];
 
-const formatStatus = (raw) => {
-  if (!raw) return 'Unknown';
-  return String(raw).replaceAll('_', ' ');
-};
-
-const formatClosesAt = (timestamp) => {
-  if (!timestamp) return 'No scheduled close';
-  const closeDate = new Date(timestamp);
-  if (Number.isNaN(closeDate.getTime())) return 'No scheduled close';
-  const diffMs = closeDate.getTime() - Date.now();
-  if (diffMs <= 0) {
-    return 'Closed';
-  }
-  const minutes = Math.round(diffMs / 60000);
-  if (minutes < 60) {
-    return `Closes in ${minutes}m`;
-  }
-  const hours = Math.round(minutes / 60);
-  return `Closes in ${hours}h`;
-};
-
-const normaliseEvents = (rows = []) =>
-  rows.map((event) => ({
-    ...event,
-    markets: Array.isArray(event?.markets)
-      ? event.markets.map((market) => ({
-          ...market,
-          outcomes: Array.isArray(market?.outcomes) ? market.outcomes : [],
-        }))
-      : [],
-  }));
-
 export default function MarketsLanding() {
-  const [events, setEvents] = useState([]);
-  const [isLoading, setIsLoading] = useState(false);
-  const [supportsMarkets, setSupportsMarkets] = useState(!isSupabaseConfigured);
-  const [error, setError] = useState(null);
+  const {
+    state: { status, events, supportsMarkets, error, pools },
+    actions,
+  } = useParimutuelStore();
+  const [expandedEventId, setExpandedEventId] = useState(null);
 
   useEffect(() => {
-    if (!isSupabaseConfigured) {
-      setSupportsMarkets(false);
+    if (status === 'idle') {
+      void actions.loadEvents();
+    }
+  }, [status, actions]);
+
+  useEffect(() => {
+    if (!events.length) {
+      setExpandedEventId(null);
       return;
     }
+    if (expandedEventId && events.some((event) => event.id === expandedEventId)) {
+      return;
+    }
+    const nextEvent = events[0];
+    setExpandedEventId(nextEvent?.id ?? null);
+    if (nextEvent?.id) {
+      actions.selectEvent(nextEvent.id);
+    }
+  }, [events, expandedEventId, actions]);
 
-    let isActive = true;
-    const loadMarkets = async () => {
-      setIsLoading(true);
-      try {
-        const rows = await supabaseSelect('events', {
-          select: 'id,title,venue,starts_at,status,markets(id,name,type,rake_bps,status,closes_at,outcomes(id,label,sort_order))',
-          order: { column: 'starts_at', ascending: true },
-        });
-        if (!isActive) return;
-        setEvents(normaliseEvents(Array.isArray(rows) ? rows : []));
-        setSupportsMarkets(true);
-        setError(null);
-      } catch (loadError) {
-        if (!isActive) return;
-        if (isTableMissingError(loadError, 'events')) {
-          setSupportsMarkets(false);
-          setEvents([]);
-          setError(null);
-        } else {
-          console.error('Failed to load markets', loadError);
-          setSupportsMarkets(true);
-          setEvents([]);
-          setError('Unable to load live markets right now.');
-        }
-      } finally {
-        if (isActive) {
-          setIsLoading(false);
-        }
-      }
-    };
+  const isLoading = status === 'loading';
+  const hasLiveData = useMemo(
+    () => supportsMarkets && events.some((event) => Array.isArray(event.markets) && event.markets.length > 0),
+    [supportsMarkets, events],
+  );
 
-    void loadMarkets();
-    return () => {
-      isActive = false;
-    };
-  }, []);
-
-  const hasLiveData = useMemo(() => supportsMarkets && events.length > 0, [supportsMarkets, events]);
+  const handleExpandEvent = (eventId) => {
+    setExpandedEventId(eventId);
+    actions.selectEvent(eventId);
+  };
 
   return (
     <div className="flex flex-col gap-10">
@@ -105,7 +62,8 @@ export default function MarketsLanding() {
         <span className="text-xs uppercase tracking-[0.35em] text-[#9FF7D3]">Diamond Sports Book</span>
         <h1 className="text-4xl font-semibold text-white sm:text-5xl">Markets and tote boards</h1>
         <p className="max-w-2xl text-sm text-neutral-300 sm:text-base">
-          Gamble on everything - from podiums to power plays. Pick an event to see live pools, wager breakdowns, and realtime odds fed directly from race control telemetry.
+          Gamble on everything - from podiums to power plays. Pick an event to see live pools, wager breakdowns, and realtime odds
+          fed directly from race control telemetry.
         </p>
         <p className="text-[0.7rem] uppercase tracking-[0.3em] text-neutral-500">
           All wagers settled in Diamonds (in-game currency). Parody product; no real-world stakes.
@@ -134,44 +92,46 @@ export default function MarketsLanding() {
 
       {hasLiveData ? (
         <section className="flex flex-col gap-6">
-          {events.map((event) => (
-            <div key={event.id} className="flex flex-col gap-4 rounded-3xl border border-white/5 bg-[#05070F]/80 p-6">
-              <header className="flex flex-col gap-1">
-                <span className="text-xs uppercase tracking-[0.35em] text-[#7C6BFF]">Event</span>
-                <h2 className="text-2xl font-semibold text-white">{event.title}</h2>
-                <p className="text-sm text-neutral-400">
-                  {event.venue ? `${event.venue} • ` : ''}
-                  {event.starts_at ? new Date(event.starts_at).toLocaleString() : 'Schedule TBC'}
-                </p>
-              </header>
-              <div className="grid gap-4 md:grid-cols-2">
-                {event.markets.map((market) => (
-                  <div key={market.id} className="flex flex-col gap-3 rounded-2xl border border-white/10 bg-[#060910]/80 p-4">
-                    <div className="flex items-center justify-between text-xs uppercase tracking-[0.35em] text-neutral-500">
-                      <span>{market.type}</span>
-                      <span>{formatStatus(market.status)}</span>
-                    </div>
-                    <h3 className="text-lg font-semibold text-white">{market.name}</h3>
-                    <p className="text-xs text-neutral-400">
-                      {formatClosesAt(market.closes_at)} • Rake {Number.isFinite(market.rake_bps) ? (market.rake_bps / 100).toFixed(2) : '0.00'}%
+          {events.map((event) => {
+            const isActive = expandedEventId === event.id;
+            return (
+              <div
+                key={event.id}
+                className={`flex flex-col gap-4 rounded-3xl border bg-[#05070F]/80 p-6 ${
+                  isActive ? 'border-[#9FF7D3]/60' : 'border-white/5'
+                }`}
+              >
+                <header className="flex flex-col gap-1">
+                  <button
+                    type="button"
+                    onClick={() => handleExpandEvent(event.id)}
+                    className="flex w-full flex-col gap-1 text-left transition hover:text-white"
+                  >
+                    <span className="text-xs uppercase tracking-[0.35em] text-[#7C6BFF]">Event</span>
+                    <h2 className="text-2xl font-semibold text-white">{event.title}</h2>
+                    <p className="text-sm text-neutral-400">
+                      {event.venue ? `${event.venue}  ` : ''}
+                      {event.starts_at ? new Date(event.starts_at).toLocaleString() : 'Schedule TBC'}
                     </p>
-                    <ul className="flex flex-wrap gap-2 text-xs text-neutral-300">
-                      {market.outcomes.slice(0, 4).map((outcome) => (
-                        <li key={outcome.id} className="rounded-full border border-white/10 px-3 py-1">
-                          {outcome.label}
-                        </li>
-                      ))}
-                      {market.outcomes.length > 4 ? (
-                        <li className="rounded-full border border-white/10 px-3 py-1 text-neutral-500">
-                          +{market.outcomes.length - 4} more
-                        </li>
-                      ) : null}
-                    </ul>
-                  </div>
-                ))}
+                  </button>
+                </header>
+                <div className="grid gap-4 md:grid-cols-2">
+                  {event.markets.map((market) => (
+                    <MarketCard
+                      key={market.id}
+                      market={market}
+                      pool={pools[market.id]}
+                      onSelect={() => {
+                        actions.selectEvent(event.id);
+                        actions.selectMarket(market.id);
+                      }}
+                      ctaLabel="Bet now"
+                    />
+                  ))}
+                </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </section>
       ) : (
         <div className="flex flex-wrap items-center gap-3 rounded-3xl border border-dashed border-white/10 bg-[#05070F]/40 p-8 text-sm text-neutral-400">
@@ -191,3 +151,4 @@ export default function MarketsLanding() {
     </div>
   );
 }
+

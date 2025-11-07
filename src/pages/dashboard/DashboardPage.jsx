@@ -3,20 +3,18 @@ import { Link, useNavigate } from 'react-router-dom';
 import {
   Activity,
   ArrowRight,
-  BarChart3,
   Clock,
   Crown,
   Loader2,
   RefreshCcw,
-  TrendingUp,
   Users,
   Sparkles,
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext.jsx';
 import { useEventSession } from '../../context/SessionContext.jsx';
 import { useWagers } from '../../hooks/useWagers.js';
-
-const MARKET_REFRESH_INTERVAL = 5000;
+import MarketCard from '@/components/betting/MarketCard.jsx';
+import { useParimutuelStore } from '@/state/parimutuelStore.js';
 const tierOrder = ['Silver', 'Gold', 'Diamond', 'VIP', 'Marshal', 'Admin'];
 
 const baseMarkets = [
@@ -61,6 +59,32 @@ const baseMarkets = [
     closesInMinutes: 12,
   },
 ];
+
+const buildFallbackMarket = (market) => ({
+  id: market.id,
+  name: market.title,
+  type: 'Promo',
+  status: 'open',
+  description: market.description,
+  closes_at: new Date(Date.now() + market.closesInMinutes * 60000).toISOString(),
+  outcomes: market.participants.map((participant, index) => ({
+    id: participant.id,
+    label: participant.name,
+    pool_total: participant.contribution,
+    sort_order: index,
+  })),
+  pool_total: market.poolTotal,
+  rake_bps: 0,
+});
+
+const buildFallbackPool = (market) => ({
+  total: market.poolTotal,
+  rakeBps: 0,
+  outcomes: market.participants.reduce((acc, participant) => {
+    acc[participant.id] = { total: participant.contribution, wagerCount: 0 };
+    return acc;
+  }, {}),
+});
 
 const deriveTier = (profile) => {
   if (!profile) {
@@ -157,7 +181,8 @@ const DashboardPage = () => {
   const navigate = useNavigate();
   const { sessions, refreshSessions, activeSessionId } = useEventSession();
   const { wagers, isLoading: isLoadingWagers, supportsWagers } = useWagers();
-  const [markets, setMarkets] = useState(baseMarkets);
+  const { state: parimutuelState, actions: pariActions } = useParimutuelStore();
+  const { loadEvents: loadParimutuelEvents, selectEvent: selectPariEvent, selectMarket: selectPariMarket } = pariActions;
   const [isRefreshingSessions, setIsRefreshingSessions] = useState(false);
   const [now, setNow] = useState(() => new Date());
 
@@ -194,24 +219,10 @@ const DashboardPage = () => {
   }, []);
 
   useEffect(() => {
-    const interval = setInterval(() => {
-      setMarkets((currentMarkets) =>
-        currentMarkets.map((market) => {
-          const volatility = (Math.random() - 0.5) * 0.04;
-          const delta = market.poolTotal * volatility;
-          const nextTotal = Math.max(0, Math.round((market.poolTotal + delta) * 100) / 100);
-          const change = Math.round(((nextTotal - market.poolTotal) / Math.max(market.poolTotal, 1)) * 1000) / 10;
-          return {
-            ...market,
-            poolTotal: nextTotal,
-            change,
-          };
-        }),
-      );
-    }, MARKET_REFRESH_INTERVAL);
-
-    return () => clearInterval(interval);
-  }, []);
+    if (parimutuelState.status === 'idle') {
+      void loadParimutuelEvents();
+    }
+  }, [parimutuelState.status, loadParimutuelEvents]);
 
   const nextSession = useMemo(() => {
     if (!sessions?.length) return null;
@@ -231,6 +242,32 @@ const DashboardPage = () => {
   }, [now, sessions]);
 
   const countdown = useMemo(() => formatCountdown(nextSession?.starts_at, now), [nextSession?.starts_at, now]);
+
+  const marketsLoading = parimutuelState.status === 'loading';
+  const marketsError = parimutuelState.status === 'error' ? parimutuelState.error : null;
+
+  const dashboardMarkets = useMemo(() => {
+    if (!parimutuelState.supportsMarkets || parimutuelState.events.length === 0) {
+      return baseMarkets.map((market) => ({
+        market: buildFallbackMarket(market),
+        pool: buildFallbackPool(market),
+        eventId: null,
+        fallback: true,
+      }));
+    }
+    const activeEvent =
+      parimutuelState.events.find((event) => event.id === parimutuelState.selectedEventId) ??
+      parimutuelState.events[0];
+    if (!activeEvent) {
+      return [];
+    }
+    return activeEvent.markets.map((market) => ({
+      market,
+      pool: parimutuelState.pools[market.id],
+      eventId: activeEvent.id,
+      fallback: false,
+    }));
+  }, [parimutuelState.supportsMarkets, parimutuelState.events, parimutuelState.pools, parimutuelState.selectedEventId]);
   const tier = useMemo(() => deriveTier(profile), [profile]);
 
   const handleRefreshSessions = async () => {
@@ -403,73 +440,35 @@ const DashboardPage = () => {
           </Link>
         </div>
 
-        <div className="grid gap-6 lg:grid-cols-3">
-          {markets.map((market) => {
-            const totalContribution = market.participants.reduce((sum, participant) => sum + participant.contribution, 0);
-            return (
-              <div
-                key={market.id}
-                className="flex flex-col gap-5 rounded-3xl border border-white/5 bg-[#05070F]/80 p-6 shadow-[0_0_40px_rgba(15,23,42,0.45)]"
-              >
-                <header className="flex items-start justify-between gap-3">
-                  <div className="flex flex-col gap-2">
-                    <span className="inline-flex items-center gap-2 rounded-full border border-[#9FF7D3]/30 bg-[#9FF7D3]/10 px-3 py-1 text-[0.6rem] uppercase tracking-[0.35em] text-[#9FF7D3]">
-                      Open
-                    </span>
-                    <h3 className="text-xl font-semibold text-white">{market.title}</h3>
-                    <p className="text-sm text-neutral-400">{market.description}</p>
-                  </div>
-                  <div className={`flex items-center gap-2 rounded-full px-3 py-1 text-xs ${market.change >= 0 ? 'bg-emerald-500/10 text-emerald-300' : 'bg-red-500/10 text-red-200'}`}>
-                    <TrendingUp className="h-4 w-4" />
-                    <span>{market.change >= 0 ? '+' : ''}{market.change.toFixed(1)}%</span>
-                  </div>
-                </header>
+        {marketsLoading ? (
+          <div className="flex items-center gap-2 text-sm text-neutral-400">
+            <Loader2 className="h-4 w-4 animate-spin" /> Syncing live pools...
+          </div>
+        ) : null}
 
-                <div className="flex flex-col gap-4">
-                  <div className="flex items-baseline justify-between text-neutral-300">
-                    <div className="flex flex-col">
-                      <span className="text-xs uppercase tracking-[0.35em] text-neutral-500">Pool size</span>
-                      <span className="text-2xl font-semibold text-white">${market.poolTotal.toLocaleString()}</span>
-                    </div>
-                    <div className="text-xs text-neutral-500">Closes in {market.closesInMinutes}m</div>
-                  </div>
-                  <div className="flex flex-col gap-3">
-                    {market.participants.map((participant) => {
-                      const share = totalContribution ? Math.round((participant.contribution / totalContribution) * 100) : 0;
-                      return (
-                        <div key={participant.id} className="flex flex-col gap-2">
-                          <div className="flex items-center justify-between text-sm text-neutral-300">
-                            <span>{participant.name}</span>
-                            <span>${participant.contribution.toLocaleString()}</span>
-                          </div>
-                          <div className="h-2 w-full rounded-full bg-white/10">
-                            <div
-                              className="h-2 rounded-full bg-gradient-to-r from-[#7C6BFF] via-[#9FF7D3] to-[#dcd7ff]"
-                              style={{ width: `${share}%` }}
-                            />
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
+        {marketsError ? <p className="text-sm text-amber-300">{marketsError}</p> : null}
 
-                <footer className="mt-auto flex items-center justify-between text-xs text-neutral-500">
-                  <div className="inline-flex items-center gap-2">
-                    <BarChart3 className="h-4 w-4 text-[#7C6BFF]" />
-                    <span>Live volume updates every 5s</span>
-                  </div>
-                  <Link
-                    to="/markets"
-                    className="inline-flex items-center gap-2 text-[#9FF7D3] transition hover:text-white"
-                  >
-                    Quick bet <ArrowRight className="h-4 w-4" />
-                  </Link>
-                </footer>
-              </div>
-            );
-          })}
-        </div>
+        {dashboardMarkets.length > 0 ? (
+          <div className="grid gap-6 lg:grid-cols-3">
+            {dashboardMarkets.map(({ market, pool, eventId }) => (
+              <MarketCard
+                key={`${eventId ?? 'promo'}-${market.id}`}
+                market={market}
+                pool={pool}
+                onSelect={() => {
+                  if (eventId) {
+                    selectPariEvent(eventId);
+                    selectPariMarket(market.id);
+                  }
+                  navigate('/markets');
+                }}
+                ctaLabel="View market"
+              />
+            ))}
+          </div>
+        ) : (
+          <p className="text-sm text-neutral-400">No live markets available right now.</p>
+        )}
       </section>
 
       {/* Active Bets & Settled Bets */}
