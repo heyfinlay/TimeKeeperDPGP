@@ -21,3 +21,47 @@ Follow the repository history by using short, imperative commit subjects (e.g., 
 
 ## Supabase & Configuration Tips
 The app falls back to offline mode, but realtime sync requires setting `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` in `.env.local`. Update `supabase/schema.sql` when altering tables and mention required migrations in the PR description. Rotate keys before sharing recordings or logs that include connection strings.
+
+## Admin Authentication - Single Source of Truth
+**Admin access is determined solely by `profiles.role = 'admin'`.** Do not rely on JWT roles or separate credential tables.
+
+### Database Layer
+- **`is_admin()` function**: Returns true only if the current user's profile has `role = 'admin'`. No JWT role checks.
+- **RLS policies**: Use `is_admin()` or direct `profiles.role = 'admin'` checks. Never reference removed helpers like `session_has_access()`.
+- **Admin RPCs**: All admin functions (`admin_adjust_wallet`, `admin_process_withdrawal`, etc.) are `SECURITY DEFINER` with `search_path = public, pg_temp` and granted to `authenticated` only (not `anon`).
+
+### Frontend Layer
+- **AuthGuard component** (`src/components/auth/AuthGuard.jsx`): Checks `profile.role === 'admin'` loaded from Supabase. Does not use JWT claims.
+- **Admin routes**: Protected by `<AuthGuard requireAdmin={true}>`. Will redirect if `profile.role !== 'admin'`.
+
+### To Grant Admin Access
+1. Set the user's profile: `UPDATE profiles SET role = 'admin' WHERE id = '<user_id>';`
+2. User must sign out and back in for frontend to reload the profile
+3. Admin routes (`/admin/markets`, `/dashboard/admin`) will now render
+
+## RLS Policy Architecture
+All RLS policies follow a **non-recursive, membership-based pattern** to prevent infinite loops and 401 errors.
+
+### Core Pattern
+Policies check three authorization paths (in order):
+1. **Admin**: `is_admin()` grants full access
+2. **Session Creator**: `EXISTS (SELECT 1 FROM sessions WHERE id = <table>.session_id AND created_by = auth.uid())`
+3. **Session Member**: `EXISTS (SELECT 1 FROM session_members WHERE session_id = <table>.session_id AND user_id = auth.uid())`
+
+### Example: `session_state` Policies
+- **SELECT**: Creator, members, and admins can read
+- **INSERT**: Creator and members can insert (needed when session wizard seeds initial state)
+- **UPDATE**: Same actors can update race state during live timing
+- **DELETE**: Only admins and creators can delete
+
+### Key Rules
+- **No helper recursion**: Never call helpers that query tables whose policies recurse back
+- **Explicit checks**: Always qualify columns (`sessions.created_by`, not `created_by`) to avoid ambiguity
+- **SECURITY DEFINER functions**: Must set `search_path = public, pg_temp` and be owned by `postgres`
+- **Granular policies**: Separate `SELECT`, `INSERT`, `UPDATE`, `DELETE` instead of using `ALL` to avoid permission errors
+
+### Session Creation Flow
+1. User calls `create_session_atomic(jsonb)` RPC
+2. RPC inserts: `sessions` → `session_members` (owner + marshals) → `session_state` (default state)
+3. All inserts succeed because RPC is `SECURITY DEFINER` and policies allow creator/member access
+4. UI can immediately read/update `session_state` via REST without 401 errors

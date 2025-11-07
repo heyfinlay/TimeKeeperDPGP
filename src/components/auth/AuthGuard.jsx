@@ -10,8 +10,9 @@ export const useAdminAccess = () => {
   if (context) {
     return context;
   }
+  // Single source of truth: profiles.role = 'admin'
   const role = String(profile?.role ?? '').toLowerCase();
-  const isAdmin = !isSupabaseConfigured || role === 'admin' || role === 'race_control';
+  const isAdmin = !isSupabaseConfigured || role === 'admin';
   return { isAdmin };
 };
 
@@ -19,8 +20,9 @@ const AuthGuard = ({ children, redirectTo = '/', requireAdmin = false }) => {
   const { status, user, profile, isSupabaseConfigured } = useAuth();
   const isAdmin = useMemo(() => {
     if (!isSupabaseConfigured) return true;
+    // Single source of truth: profiles.role = 'admin'
     const role = String(profile?.role ?? '').toLowerCase();
-    return role === 'admin' || role === 'race_control';
+    return role === 'admin';
   }, [isSupabaseConfigured, profile?.role]);
 
   if (isSupabaseConfigured && status === 'loading') {
