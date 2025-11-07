@@ -353,6 +353,10 @@ export default function NewSession() {
       let sessionId;
       try {
         sessionId = await seedSessionAtomic(sessionPayload);
+        setCreatedSession((prev) => ({
+          ...(prev ?? {}),
+          id: sessionId,
+        }));
       } catch (seedError) {
         console.error('Failed to create session', seedError);
         setError('Unable to create the session in Supabase.');
@@ -382,7 +386,20 @@ export default function NewSession() {
       });
 
       try {
+        const sessionStateRow = {
+          id: sessionId,
+          session_id: sessionId,
+          event_type:
+            sessionStateDraft.eventType || DEFAULT_SESSION_STATE.eventType,
+          total_laps: Number.isNaN(totalLaps)
+            ? DEFAULT_SESSION_STATE.totalLaps
+            : totalLaps,
+          total_duration: Number.isNaN(totalDuration)
+            ? DEFAULT_SESSION_STATE.totalDuration
+            : totalDuration,
+        };
         await seedSessionData(sessionId, {
+          sessionState: sessionStateRow,
           drivers: driverRows,
         });
       } catch (seedError) {

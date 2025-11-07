@@ -33,20 +33,27 @@ const DEFAULT_HEADERS = isSupabaseConfigured
   : {};
 
 /** @type {import('@supabase/supabase-js').SupabaseClient<Database> | null} */
-let supabaseClient = null;
+let browserClient = null;
 
-if (isSupabaseConfigured) {
-  supabaseClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+const createSupabaseBrowserClient = () => {
+  if (!isSupabaseConfigured) {
+    return null;
+  }
+  return createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
     auth: {
       persistSession: true,
       autoRefreshToken: true,
     },
   });
-}
+};
 
-if (typeof globalThis !== 'undefined') {
-  globalThis.supabaseClient = supabaseClient;
-}
+export const getSupabaseBrowserClient = () => {
+  if (browserClient) {
+    return browserClient;
+  }
+  browserClient = createSupabaseBrowserClient();
+  return browserClient;
+};
 
 const buildError = async (response) => {
   const errorText = await response.text();
@@ -277,6 +284,7 @@ export const subscribeToTable = (
   callback,
   options = {},
 ) => {
+  const supabaseClient = getSupabaseBrowserClient();
   if (!isSupabaseConfigured || !supabaseClient) {
     console.warn('Supabase realtime subscription skipped. Supabase is not configured.');
     return () => {};
@@ -388,4 +396,4 @@ export const supabaseEnvironment = {
   anonKey: SUPABASE_ANON_KEY,
 };
 
-export const supabase = supabaseClient;
+export const supabase = getSupabaseBrowserClient();

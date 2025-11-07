@@ -2,10 +2,14 @@ import { describe, expect, test, it, vi } from 'vitest';
 
 import { isColumnMissingError, supabaseInsert, supabaseSelect } from '@/lib/supabaseClient';
 
-vi.mock('@/lib/supabaseClient', () => ({
-  supabaseInsert: vi.fn(),
-  supabaseSelect: vi.fn(),
-}));
+vi.mock('@/lib/supabaseClient', async () => {
+  const actual = await vi.importActual('@/lib/supabaseClient');
+  return {
+    ...actual,
+    supabaseInsert: vi.fn(),
+    supabaseSelect: vi.fn(),
+  };
+});
 
 describe('session seeding regression', () => {
   test('detects missing created_at column on session_entries insert', () => {
