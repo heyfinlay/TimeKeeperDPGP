@@ -3,6 +3,7 @@ import {
   buildStorageObjectUrl,
   isSupabaseConfigured,
   isTableMissingError,
+  supabase,
   supabaseInsert,
   supabaseSelect,
   supabaseStorageUpload,
