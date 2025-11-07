@@ -18,33 +18,68 @@ const STORAGE_ENDPOINT = isSupabaseConfigured
   ? `${SUPABASE_URL.replace(/\/$/, '')}/storage/v1/object`
   : null;
 
-const AUTH_HEADERS = isSupabaseConfigured
-  ? {
-      apikey: SUPABASE_ANON_KEY,
-      Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
-    }
-  : {};
+let currentAccessToken = null;
 
-const DEFAULT_HEADERS = isSupabaseConfigured
-  ? {
-      ...AUTH_HEADERS,
-      Accept: 'application/json',
-    }
-  : {};
+const resolveAccessToken = () => currentAccessToken;
+
+const buildAuthHeaders = () => {
+  if (!isSupabaseConfigured) {
+    return {};
+  }
+  const headers = {};
+  if (SUPABASE_ANON_KEY) {
+    headers.apikey = SUPABASE_ANON_KEY;
+  }
+  const token = resolveAccessToken();
+  if (token) {
+    headers.Authorization = `Bearer ${token}`;
+  } else if (SUPABASE_ANON_KEY) {
+    headers.Authorization = `Bearer ${SUPABASE_ANON_KEY}`;
+  }
+  return headers;
+};
+
+const buildDefaultHeaders = () => {
+  if (!isSupabaseConfigured) {
+    return {};
+  }
+  return {
+    ...buildAuthHeaders(),
+    Accept: 'application/json',
+  };
+};
 
 /** @type {import('@supabase/supabase-js').SupabaseClient<Database> | null} */
 let browserClient = null;
+
+const setAccessTokenFromSession = (session) => {
+  currentAccessToken = session?.access_token ?? null;
+};
+
+const attachAuthListeners = (client) => {
+  if (!client) {
+    return;
+  }
+  void client.auth.getSession().then(({ data }) => {
+    setAccessTokenFromSession(data?.session ?? null);
+  });
+  client.auth.onAuthStateChange((_event, session) => {
+    setAccessTokenFromSession(session ?? null);
+  });
+};
 
 const createSupabaseBrowserClient = () => {
   if (!isSupabaseConfigured) {
     return null;
   }
-  return createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+  const client = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
     auth: {
       persistSession: true,
       autoRefreshToken: true,
     },
   });
+  attachAuthListeners(client);
+  return client;
 };
 
 export const getSupabaseBrowserClient = () => {
@@ -119,7 +154,7 @@ const request = async (
     url.searchParams.set('order', orderValue);
   }
 
-  const headers = { ...DEFAULT_HEADERS };
+  const headers = { ...buildDefaultHeaders() };
   if (prefer) {
     headers.Prefer = prefer;
   }
@@ -209,7 +244,7 @@ export const supabaseStorageUpload = async (
   const response = await fetch(url, {
     method: 'PUT',
     headers: {
-      ...AUTH_HEADERS,
+      ...buildAuthHeaders(),
       'Content-Type': contentType,
     },
     body,
