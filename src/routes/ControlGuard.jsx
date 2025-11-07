@@ -1,10 +1,9 @@
 import { useEffect, useState } from 'react';
-import { Navigate } from 'react-router-dom';
+import { Navigate, useParams } from 'react-router-dom';
 import { isSupabaseConfigured, supabase } from '@/lib/supabaseClient.js';
 
-const ALLOWED_ROLES = new Set(['marshal', 'admin', 'race_control']);
-
 export default function ControlGuard({ children }) {
+  const { sessionId } = useParams();
   const [status, setStatus] = useState(isSupabaseConfigured ? 'loading' : 'allowed');
 
   useEffect(() => {
@@ -30,6 +29,7 @@ export default function ControlGuard({ children }) {
           return;
         }
 
+        // Check if user is admin OR session creator OR session member
         const { data: profile, error: profileError } = await supabase
           .from('profiles')
           .select('role')
@@ -40,11 +40,50 @@ export default function ControlGuard({ children }) {
           throw profileError;
         }
 
-        const resolvedRole = String(profile?.role ?? 'marshal').toLowerCase();
-        const canAccess = ALLOWED_ROLES.has(resolvedRole);
+        const isAdmin = profile?.role === 'admin';
+
+        // If admin, allow access immediately
+        if (isAdmin) {
+          if (isActive) {
+            setStatus('allowed');
+          }
+          return;
+        }
+
+        // Check if user is the session creator
+        const { data: session, error: sessionError } = await supabase
+          .from('sessions')
+          .select('created_by')
+          .eq('id', sessionId)
+          .maybeSingle();
+
+        if (sessionError && sessionError.code !== 'PGRST116') {
+          throw sessionError;
+        }
+
+        if (session?.created_by === user.id) {
+          if (isActive) {
+            setStatus('allowed');
+          }
+          return;
+        }
+
+        // Check if user is a session member
+        const { data: membership, error: memberError } = await supabase
+          .from('session_members')
+          .select('user_id')
+          .eq('session_id', sessionId)
+          .eq('user_id', user.id)
+          .maybeSingle();
+
+        if (memberError && memberError.code !== 'PGRST116') {
+          throw memberError;
+        }
+
+        const isMember = !!membership;
 
         if (isActive) {
-          setStatus(canAccess ? 'allowed' : 'forbidden');
+          setStatus(isMember ? 'allowed' : 'forbidden');
         }
       } catch (error) {
         console.error('Failed to verify control permissions', error);
@@ -59,7 +98,7 @@ export default function ControlGuard({ children }) {
     return () => {
       isActive = false;
     };
-  }, []);
+  }, [sessionId]);
 
   if (status === 'loading') {
     return (
