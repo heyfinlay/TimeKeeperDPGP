@@ -2,6 +2,37 @@ import { useMemo } from 'react';
 import { useSessionActions } from '@/context/SessionActionsContext.jsx';
 import { formatLapTime } from '@/utils/time.js';
 
+export const parseLapInput = (input) => {
+  if (input === null || input === undefined) return null;
+  const raw = String(input).trim();
+  if (raw.length === 0) return null;
+
+  const minuteMatch = raw.match(/^(-?\d+):(\d{1,2}(?:\.\d{1,3})?)$/);
+  if (minuteMatch) {
+    const minutes = Number.parseInt(minuteMatch[1], 10);
+    const seconds = Number.parseFloat(minuteMatch[2]);
+    if (Number.isNaN(minutes) || Number.isNaN(seconds)) {
+      return null;
+    }
+    return Math.round((minutes * 60 + seconds) * 1000);
+  }
+
+  const numeric = Number.parseFloat(raw);
+  if (Number.isNaN(numeric)) {
+    return null;
+  }
+
+  if (raw.includes('.') || raw.includes(':')) {
+    return Math.round(numeric * 1000);
+  }
+
+  if (numeric >= 1000) {
+    return Math.round(numeric);
+  }
+
+  return Math.round(numeric * 1000);
+};
+
 export default function DriverTimingPanel({ driver, canWrite = false, currentLapMs = null }) {
   const { onLogLap: contextOnLogLap } = useSessionActions();
 

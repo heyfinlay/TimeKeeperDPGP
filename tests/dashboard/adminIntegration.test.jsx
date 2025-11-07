@@ -4,9 +4,10 @@ import { beforeEach, describe, expect, test, vi } from 'vitest';
 
 vi.mock('../../src/lib/supabaseClient.js', () => {
   const from = vi.fn();
+  const rpc = vi.fn();
   return {
     isSupabaseConfigured: true,
-    supabase: { from },
+    supabase: { from, rpc },
   };
 });
 
@@ -25,6 +26,7 @@ import { SessionProvider, useSessionContext } from '../../src/state/SessionConte
 describe('admin integrations', () => {
   beforeEach(() => {
     supabase.from.mockReset();
+    supabase.rpc.mockReset();
   });
 
   test('fetchAdminSessions loads all sessions and drivers', async () => {
@@ -73,7 +75,7 @@ describe('admin integrations', () => {
     const updateEqSession = vi.fn(() => ({ eq: updateEqId }));
     const update = vi.fn(() => ({ eq: updateEqSession }));
 
-    const upsert = vi.fn(() => Promise.resolve({ error: null }));
+    supabase.rpc.mockResolvedValue({ data: null, error: null });
 
     supabase.from
       .mockImplementationOnce((table) => {
@@ -83,10 +85,6 @@ describe('admin integrations', () => {
       .mockImplementationOnce((table) => {
         expect(table).toBe('drivers');
         return { update };
-      })
-      .mockImplementationOnce((table) => {
-        expect(table).toBe('session_members');
-        return { upsert };
       });
 
     const result = await assignMarshalToDriver({
@@ -106,10 +104,11 @@ describe('admin integrations', () => {
     expect(updateSelect).toHaveBeenCalledWith('id, marshal_user_id, session_id, name, number');
     expect(updateMaybeSingle).toHaveBeenCalled();
 
-    expect(upsert).toHaveBeenCalledWith(
-      { session_id: 'session-1', user_id: 'marshal-1', role: 'marshal' },
-      { onConflict: 'session_id,user_id' },
-    );
+    expect(supabase.rpc).toHaveBeenCalledWith('ensure_session_member', {
+      p_session_id: 'session-1',
+      p_user_id: 'marshal-1',
+      p_role: 'marshal',
+    });
     expect(result).toEqual({ id: 'driver-1', marshal_user_id: 'marshal-1' });
   });
 
@@ -135,10 +134,7 @@ describe('admin integrations', () => {
     const countEqSession = vi.fn(() => ({ eq: countEqMarshal }));
     const countSelect = vi.fn(() => ({ eq: countEqSession }));
 
-    const deleteEqRole = vi.fn(() => Promise.resolve({ error: null }));
-    const deleteEqUser = vi.fn(() => ({ eq: deleteEqRole }));
-    const deleteEqSession = vi.fn(() => ({ eq: deleteEqUser }));
-    const destroy = vi.fn(() => ({ eq: deleteEqSession }));
+    supabase.rpc.mockResolvedValue({ data: null, error: null });
 
     supabase.from
       .mockImplementationOnce((table) => {
@@ -152,10 +148,6 @@ describe('admin integrations', () => {
       .mockImplementationOnce((table) => {
         expect(table).toBe('drivers');
         return { select: countSelect };
-      })
-      .mockImplementationOnce((table) => {
-        expect(table).toBe('session_members');
-        return { delete: destroy };
       });
 
     await assignMarshalToDriver({
@@ -170,10 +162,11 @@ describe('admin integrations', () => {
     expect(countSelect).toHaveBeenCalledWith('id', { head: true, count: 'exact' });
     expect(countEqSession).toHaveBeenCalledWith('session_id', 'session-1');
     expect(countEqMarshal).toHaveBeenCalledWith('marshal_user_id', 'marshal-old');
-    expect(destroy).toHaveBeenCalled();
-    expect(deleteEqSession).toHaveBeenCalledWith('session_id', 'session-1');
-    expect(deleteEqUser).toHaveBeenCalledWith('user_id', 'marshal-old');
-    expect(deleteEqRole).toHaveBeenCalledWith('role', 'marshal');
+    expect(supabase.rpc).toHaveBeenCalledWith('remove_session_member', {
+      p_session_id: 'session-1',
+      p_user_id: 'marshal-old',
+      p_role: 'marshal',
+    });
   });
 
   test('SessionProvider surfaces admin privileges for control access', () => {
@@ -189,6 +182,6 @@ describe('admin integrations', () => {
       </SessionProvider>,
     );
 
-    expect(context).toEqual({ sessionId: 'session-42', isAdmin: true });
+    expect(context).toEqual(expect.objectContaining({ sessionId: 'session-42', isAdmin: true }));
   });
 });

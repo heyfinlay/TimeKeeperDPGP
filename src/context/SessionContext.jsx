@@ -304,18 +304,34 @@ export const EventSessionProvider = ({ children }) => {
       throw unavailableError;
     }
     try {
+      console.info('[Supabase] create_session_atomic request', {
+        payload: {
+          ...sessionPayload,
+          members: Array.isArray(sessionPayload?.members)
+            ? sessionPayload.members.map((member) => ({
+                ...member,
+                user_id: member?.user_id ?? null,
+              }))
+            : [],
+        },
+      });
+      const startedAt = Date.now();
       const { data, error } = await supabase
-        .rpc('seed_session_rpc', { p_session: sessionPayload });
+        .rpc('create_session_atomic', { p_session: sessionPayload });
       if (error) throw error;
       const sessionId = Array.isArray(data) ? data[0] : data; // rpc returns uuid
       if (!sessionId) throw new Error('Session creation did not return an id');
+      console.info('[Supabase] create_session_atomic success', {
+        sessionId,
+        durationMs: Date.now() - startedAt,
+      });
       // Refresh list and select new session
       await refreshSessions();
       setActiveSessionId(sessionId);
       setError(null);
       return sessionId;
     } catch (seedError) {
-      console.error('Failed to seed session atomically', seedError);
+      console.error('create_session_atomic failed', seedError);
       setError(seedError?.message ?? 'Unable to create session.');
       throw seedError;
     }

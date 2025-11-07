@@ -127,11 +127,11 @@ export async function assignMarshalToDriver({ sessionId, driverId, marshalUserId
 
   if (resolvedMarshalId) {
     const { error: membershipError } = await supabase
-      .from('session_members')
-      .upsert(
-        { session_id: sessionId, user_id: resolvedMarshalId, role: 'marshal' },
-        { onConflict: 'session_id,user_id' },
-      );
+      .rpc('ensure_session_member', {
+        p_session_id: sessionId,
+        p_user_id: resolvedMarshalId,
+        p_role: 'marshal',
+      });
     if (membershipError) {
       throw membershipError;
     }
@@ -148,11 +148,11 @@ export async function assignMarshalToDriver({ sessionId, driverId, marshalUserId
     }
     if ((remainingAssignments ?? 0) === 0) {
       const { error: revokeError } = await supabase
-        .from('session_members')
-        .delete()
-        .eq('session_id', sessionId)
-        .eq('user_id', previousMarshalId)
-        .eq('role', 'marshal');
+        .rpc('remove_session_member', {
+          p_session_id: sessionId,
+          p_user_id: previousMarshalId,
+          p_role: 'marshal',
+        });
       if (revokeError) {
         throw revokeError;
       }
