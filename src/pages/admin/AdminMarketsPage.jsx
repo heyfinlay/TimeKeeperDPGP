@@ -8,7 +8,6 @@ import {
   DollarSign,
   Eye,
   Loader2,
-  Plus,
   RefreshCcw,
   Search,
   Settings,
@@ -19,6 +18,8 @@ import {
 } from 'lucide-react';
 import { supabase } from '../../lib/supabaseClient';
 import { useAuth } from '../../context/AuthContext';
+import AdminMarketWizard from '@/components/admin/markets/AdminMarketWizard.jsx';
+import { useParimutuelStore } from '@/state/parimutuelStore.js';
 
 const TABS = {
   MARKETS: 'markets',
@@ -47,7 +48,9 @@ const AdminMarketsPage = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedMarket, setSelectedMarket] = useState(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [modalMode, setModalMode] = useState(null); // 'create', 'edit', 'close', 'settle'
+  const [modalMode, setModalMode] = useState(null); // 'close', 'settle'
+  const { actions: parimutuelActions } = useParimutuelStore();
+  const loadParimutuelEvents = parimutuelActions?.loadEvents;
 
   // Fetch all data
   const fetchData = useCallback(async () => {
@@ -206,6 +209,17 @@ const AdminMarketsPage = () => {
   const getOutcomesByMarketId = (marketId) => outcomes.filter(o => o.market_id === marketId);
   const getWagersByMarketId = (marketId) => wagers.filter(w => w.market_id === marketId);
 
+  const handleMarketCreated = useCallback(async () => {
+    await fetchData();
+    if (typeof loadParimutuelEvents === 'function') {
+      try {
+        await loadParimutuelEvents();
+      } catch (error) {
+        console.warn('Failed to refresh parimutuel markets after creation', error);
+      }
+    }
+  }, [fetchData, loadParimutuelEvents]);
+
   if (isLoading) {
     return (
       <div className="flex min-h-[50vh] items-center justify-center">
@@ -326,20 +340,14 @@ const AdminMarketsPage = () => {
       {/* Tab Content */}
       <section>
         {activeTab === TABS.MARKETS && (
-          <div className="flex flex-col gap-4">
+          <div className="flex flex-col gap-6">
+            <AdminMarketWizard onCreated={handleMarketCreated} />
+
             <div className="flex items-center justify-between">
               <h2 className="text-xl font-semibold text-white">All Markets</h2>
-              <button
-                onClick={() => {
-                  setModalMode('create');
-                  setSelectedMarket(null);
-                  setIsModalOpen(true);
-                }}
-                className="inline-flex items-center gap-2 rounded-full border border-[#9FF7D3]/40 bg-[#9FF7D3]/10 px-4 py-2 text-sm text-[#9FF7D3] transition hover:border-[#9FF7D3]/70"
-              >
-                <Plus className="h-4 w-4" />
-                Create Market
-              </button>
+              <span className="text-xs uppercase tracking-[0.3em] text-neutral-500">
+                {markets.length} total
+              </span>
             </div>
 
             <div className="grid gap-4">
@@ -439,10 +447,17 @@ const AdminMarketsPage = () => {
                               const outcomeWagers = marketWagers.filter(w => w.outcome_id === outcome.id);
                               const outcomeStake = outcomeWagers.reduce((sum, w) => sum + (w.stake || 0), 0);
                               const odds = totalStake > 0 ? (totalStake / Math.max(outcomeStake, 1)).toFixed(2) : '0.00';
+                              const outcomeColor = outcome.color || '#9FF7D3';
 
                               return (
                                 <div key={outcome.id} className="flex items-center justify-between rounded-lg border border-white/5 bg-[#05070F]/60 px-3 py-2">
-                                  <span className="text-sm text-white">{outcome.label}</span>
+                                  <div className="flex items-center gap-2">
+                                    <span
+                                      className="inline-block h-2.5 w-2.5 rounded-full"
+                                      style={{ backgroundColor: outcomeColor }}
+                                    />
+                                    <span className="text-sm text-white">{outcome.label}</span>
+                                  </div>
                                   <div className="flex items-center gap-2 text-xs text-neutral-400">
                                     <span>{odds}x</span>
                                     <span className="text-[#9FF7D3]">💎 {(outcomeStake / 1000).toFixed(1)}K</span>

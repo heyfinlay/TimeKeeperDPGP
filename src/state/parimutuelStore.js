@@ -414,7 +414,7 @@ export function ParimutuelProvider({ children }) {
     try {
       const rows = await supabaseSelect('events', {
         select:
-          'id,title,venue,starts_at,status,markets(id,name,type,rake_bps,status,closes_at,description,pool_total,outcomes(id,label,sort_order,pool_total,wager_count)))',
+          'id,title,venue,starts_at,status,session_id,markets(id,name,type,rake_bps,status,closes_at,description,pool_total,outcomes(id,label,sort_order,pool_total,wager_count,color,driver_id)))',
         order: { column: 'starts_at', ascending: true },
       });
       const events = Array.isArray(rows)
