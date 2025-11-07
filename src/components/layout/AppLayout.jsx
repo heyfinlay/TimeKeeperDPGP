@@ -31,6 +31,15 @@ const NAV_ITEMS = [
     requiresAuth: true,
   },
   {
+    id: 'markets',
+    label: 'Markets',
+    buildPath: () => '/admin/markets',
+    activeClass: 'bg-[#F7768E]/20 text-[#F7768E]',
+    hoverClass: 'hover:border-[#F7768E]/50 hover:text-[#F7768E]',
+    requiresAuth: true,
+    requiresAdmin: true,
+  },
+  {
     id: 'admin',
     label: 'Admin',
     buildPath: () => '/dashboard/admin',
