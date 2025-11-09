@@ -24,7 +24,9 @@
  * - Reset clears all armed timers and returns to setup phase
  */
 import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import DriverTimingPanel from '@/components/DriverTimingPanel.jsx';
+import SingleMarshalBoard from '@/components/SingleMarshalBoard.jsx';
 import { useSessionContext, useSessionId } from '@/state/SessionContext.jsx';
 import { SessionActionsProvider } from '@/context/SessionActionsContext.jsx';
 import { useSessionDrivers } from '@/hooks/useSessionDrivers.js';
@@ -76,6 +78,15 @@ const toPanelDriver = (driver) => ({
 });
 
 export default function ControlPanel() {
+  let routerSearchParams;
+  let routerSetSearchParams;
+  try {
+    [routerSearchParams, routerSetSearchParams] = useSearchParams();
+  } catch {
+    routerSearchParams = null;
+    routerSetSearchParams = null;
+  }
+  const [fallbackLayoutMode, setFallbackLayoutMode] = useState('control');
   const sessionId = useSessionId();
   const { isAdmin: hasAdminAccess } = useSessionContext();
   const { status, user } = useAuth();
@@ -83,6 +94,32 @@ export default function ControlPanel() {
   const [role, setRole] = useState(null);
   const [roleError, setRoleError] = useState(null);
   const [isRoleLoading, setIsRoleLoading] = useState(isSupabaseConfigured);
+
+  const layoutParam = routerSearchParams?.get('view');
+  const layoutMode = layoutParam === 'marshal' ? 'marshal' : layoutParam === 'control' ? 'control' : fallbackLayoutMode;
+  const isMarshalLayout = layoutMode === 'marshal';
+
+  const setLayoutMode = useCallback(
+    (mode) => {
+      if (routerSetSearchParams) {
+        routerSetSearchParams(
+          (current) => {
+            const next = new URLSearchParams(current);
+            if (mode === 'control') {
+              next.delete('view');
+            } else {
+              next.set('view', mode);
+            }
+            return next;
+          },
+          { replace: true },
+        );
+      } else {
+        setFallbackLayoutMode(mode === 'marshal' ? 'marshal' : 'control');
+      }
+    },
+    [routerSetSearchParams],
+  );
 
   // Resolve role for this session
   useEffect(() => {
@@ -184,6 +221,8 @@ export default function ControlPanel() {
     onlyMine: driverScope.onlyMine && !!driverScope.userId,
     userId: driverScope.onlyMine ? driverScope.userId ?? undefined : undefined,
   });
+
+  const panelDrivers = useMemo(() => drivers.map(toPanelDriver), [drivers]);
 
   const canWrite = !isSupabaseConfigured || hasAdminAccess || role === 'admin' || role === 'marshal';
   const resolvedRole = !isSupabaseConfigured || hasAdminAccess ? 'admin' : role ?? 'spectator';
@@ -795,6 +834,11 @@ export default function ControlPanel() {
   const [isEditingHotkeys, setIsEditingHotkeys] = useState(false);
   const [hotkeyDraft, setHotkeyDraft] = useState(hotkeys);
   useEffect(() => setHotkeyDraft(hotkeys), [hotkeys]);
+  useEffect(() => {
+    if (isMarshalLayout) {
+      setIsEditingHotkeys(false);
+    }
+  }, [isMarshalLayout]);
   const updateKeyDraft = (idx, value) => {
     setHotkeyDraft((prev) => {
       const next = { ...prev, keys: [...prev.keys] };
@@ -823,6 +867,20 @@ export default function ControlPanel() {
     [handleDriverPanelLogLap, handleInvalidateLap, canWrite],
   );
 
+  const invalidateLapTimeOnly = useCallback(
+    async (driverId) => handleInvalidateLap({ driverId, mode: 'time_only' }),
+    [handleInvalidateLap],
+  );
+  const removeLap = useCallback(
+    async (driverId) => handleInvalidateLap({ driverId, mode: 'remove_lap' }),
+    [handleInvalidateLap],
+  );
+
+  const layoutButtonClass = (mode) =>
+    mode === layoutMode
+      ? 'border-white/40 bg-white/15 text-white'
+      : 'border-white/10 text-white/70 hover:border-white/30 hover:text-white';
+
   return (
     <SessionActionsProvider value={sessionActionsValue}>
       <div className="mx-auto flex w-full max-w-6xl flex-col gap-6">
@@ -840,6 +898,22 @@ export default function ControlPanel() {
           >
             {isDriversLoading ? 'Refreshing…' : 'Refresh'}
           </button>
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={() => setLayoutMode('control')}
+              className={`rounded-full border px-4 py-2 font-semibold uppercase tracking-[0.35em] transition ${layoutButtonClass('control')}`}
+            >
+              Control Layout
+            </button>
+            <button
+              type="button"
+              onClick={() => setLayoutMode('marshal')}
+              className={`rounded-full border px-4 py-2 font-semibold uppercase tracking-[0.35em] transition ${layoutButtonClass('marshal')}`}
+            >
+              Marshal Layout
+            </button>
+          </div>
         </div>
       </header>
 
@@ -867,39 +941,40 @@ export default function ControlPanel() {
         </div>
       ) : null}
 
-      {/* Track status + announcements */}
-      <section className="grid gap-6 md:grid-cols-2">
-        <div className="rounded-3xl border border-white/5 bg-[#060910]/80 p-6">
-          <p className="text-xs uppercase tracking-widest text-neutral-400">Track Status</p>
-          <p className="mt-1 text-xl font-semibold text-white">{TRACK_STATUS_MAP[sessionState.trackStatus]?.label ?? 'Green Flag'}</p>
-          <p className="mt-1 text-sm text-neutral-400">{TRACK_STATUS_MAP[sessionState.trackStatus]?.description ?? 'Track clear. Full racing speed permitted.'}</p>
-        </div>
-        <div className="rounded-3xl border border-white/5 bg-[#060910]/80 p-6">
-          <p className="text-xs uppercase tracking-widest text-neutral-400">Live Announcements</p>
-          <p className="mt-1 text-sm text-neutral-300">{sessionState.announcement?.trim() ? sessionState.announcement : 'No active announcements.'}</p>
-          <div className="mt-4 flex gap-3">
-            <input
-              type="text"
-              value={announcementDraft}
-              onChange={(e) => setAnnouncementDraft(e.target.value)}
-              placeholder="Enter live message..."
-              disabled={!canWrite}
-              className="flex-1 rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-sm text-white placeholder:text-neutral-500 focus:outline-none focus:ring-2 focus:ring-white/20 disabled:cursor-not-allowed disabled:opacity-60"
-            />
-            <button
-              type="button"
-              onClick={updateAnnouncement}
-              disabled={!canWrite}
-              className="rounded-xl bg-emerald-700 px-4 py-2 text-sm font-semibold text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400 disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              Update
-            </button>
+      {!isMarshalLayout ? (
+        <section className="grid gap-6 md:grid-cols-2">
+          <div className="rounded-3xl border border-white/5 bg-[#060910]/80 p-6">
+            <p className="text-xs uppercase tracking-widest text-neutral-400">Track Status</p>
+            <p className="mt-1 text-xl font-semibold text-white">{TRACK_STATUS_MAP[sessionState.trackStatus]?.label ?? 'Green Flag'}</p>
+            <p className="mt-1 text-sm text-neutral-400">{TRACK_STATUS_MAP[sessionState.trackStatus]?.description ?? 'Track clear. Full racing speed permitted.'}</p>
           </div>
-        </div>
-      </section>
+          <div className="rounded-3xl border border-white/5 bg-[#060910]/80 p-6">
+            <p className="text-xs uppercase tracking-widest text-neutral-400">Live Announcements</p>
+            <p className="mt-1 text-sm text-neutral-300">{sessionState.announcement?.trim() ? sessionState.announcement : 'No active announcements.'}</p>
+            <div className="mt-4 flex gap-3">
+              <input
+                type="text"
+                value={announcementDraft}
+                onChange={(e) => setAnnouncementDraft(e.target.value)}
+                placeholder="Enter live message..."
+                disabled={!canWrite}
+                className="flex-1 rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-sm text-white placeholder:text-neutral-500 focus:outline-none focus:ring-2 focus:ring-white/20 disabled:cursor-not-allowed disabled:opacity-60"
+              />
+              <button
+                type="button"
+                onClick={updateAnnouncement}
+                disabled={!canWrite}
+                className="rounded-xl bg-emerald-700 px-4 py-2 text-sm font-semibold text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                Update
+              </button>
+            </div>
+          </div>
+        </section>
+      ) : null}
 
-      {/* Session control bar */}
-      <section className="rounded-3xl border border-white/5 bg-[#05070F]/80 p-6">
+      {!isMarshalLayout ? (
+        <section className="rounded-3xl border border-white/5 bg-[#05070F]/80 p-6">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
             <p className="text-white">
@@ -1090,25 +1165,40 @@ export default function ControlPanel() {
           </div>
         ) : null}
       </section>
+      ) : null}
 
-      <section className="rounded-3xl border border-white/5 bg-[#05070F]/80 p-6">
-        {isDriversLoading && !drivers.length ? (
-          <p className="text-sm text-neutral-400">Loading drivers…</p>
-        ) : null}
-        {!isDriversLoading && drivers.length === 0 ? (
-          <p className="text-sm text-neutral-400">No drivers are available for this session.</p>
-        ) : null}
-        <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-          {drivers.map((driver) => (
-            <DriverTimingPanel
-              key={driver.id}
-              driver={toPanelDriver(driver)}
-              canWrite={canWrite}
-              currentLapMs={currentLapTimes[driver.id] ?? null}
-            />
-          ))}
-        </div>
-      </section>
+      {isMarshalLayout ? (
+        <SingleMarshalBoard
+          sessionId={sessionId}
+          drivers={panelDrivers}
+          currentLapTimes={currentLapTimes}
+          sessionState={sessionState}
+          displayTime={displayTime}
+          canWrite={canWrite}
+          onLogLap={handleDriverPanelLogLap}
+          onInvalidateLap={invalidateLapTimeOnly}
+          onRemoveLap={removeLap}
+        />
+      ) : (
+        <section className="rounded-3xl border border-white/5 bg-[#05070F]/80 p-6">
+          {isDriversLoading && !drivers.length ? (
+            <p className="text-sm text-neutral-400">Loading drivers…</p>
+          ) : null}
+          {!isDriversLoading && drivers.length === 0 ? (
+            <p className="text-sm text-neutral-400">No drivers are available for this session.</p>
+          ) : null}
+          <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+            {panelDrivers.map((driver) => (
+              <DriverTimingPanel
+                key={driver.id}
+                driver={driver}
+                canWrite={canWrite}
+                currentLapMs={currentLapTimes[driver.id] ?? null}
+              />
+            ))}
+          </div>
+        </section>
+      )}
       </div>
     </SessionActionsProvider>
   );

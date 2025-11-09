@@ -12,6 +12,15 @@ const isMissingRpcError = (error, rpcName) => {
   return message.includes(rpcName) && message.includes('function');
 };
 
+const isAmbiguousSessionIdError = (error) => {
+  if (!error) return false;
+  if (error.code === '42702') {
+    return true;
+  }
+  const message = String(error.message ?? error.details ?? '').toLowerCase();
+  return message.includes('session_id') && message.includes('ambiguous');
+};
+
 const ensureSupabase = () => {
   if (!isSupabaseConfigured || !supabase) {
     throw new Error('Supabase must be configured to log laps.');
@@ -90,7 +99,7 @@ export async function logLapAtomic({ sessionId, driverId, lapTimeMs }) {
     p_lap_time_ms: lapTimeMs,
   });
   if (error) {
-    if (isMissingRpcError(error, LOG_LAP_RPC)) {
+    if (isMissingRpcError(error, LOG_LAP_RPC) || isAmbiguousSessionIdError(error)) {
       return fallbackLogLap({ sessionId, driverId, lapTimeMs });
     }
     throw error;
@@ -202,7 +211,7 @@ export async function invalidateLastLap({ sessionId, driverId, mode = 'time_only
     p_mode: mode,
   });
   if (error) {
-    if (isMissingRpcError(error, INVALIDATE_LAST_LAP_RPC)) {
+    if (isMissingRpcError(error, INVALIDATE_LAST_LAP_RPC) || isAmbiguousSessionIdError(error)) {
       return fallbackInvalidateLastLap({ sessionId, driverId, mode });
     }
     throw error;
