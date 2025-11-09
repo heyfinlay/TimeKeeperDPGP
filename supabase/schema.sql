@@ -42,6 +42,106 @@ create table if not exists public.control_logs (
 
 create index if not exists control_logs_session_id_idx on public.control_logs (session_id, created_at desc);
 
+alter table public.control_logs enable row level security;
+
+drop policy if exists "control_logs_admin_select" on public.control_logs;
+create policy "control_logs_admin_select"
+  on public.control_logs
+  for select
+  using (public.is_admin());
+
+drop policy if exists "control_logs_creator_select" on public.control_logs;
+create policy "control_logs_creator_select"
+  on public.control_logs
+  for select
+  using (
+    exists (
+      select 1
+      from public.sessions s
+      where s.id = control_logs.session_id
+        and s.created_by = auth.uid()
+    )
+  );
+
+drop policy if exists "control_logs_member_select" on public.control_logs;
+create policy "control_logs_member_select"
+  on public.control_logs
+  for select
+  using (
+    exists (
+      select 1
+      from public.session_members sm
+      where sm.session_id = control_logs.session_id
+        and sm.user_id = auth.uid()
+    )
+  );
+
+drop policy if exists "control_logs_admin_insert" on public.control_logs;
+create policy "control_logs_admin_insert"
+  on public.control_logs
+  for insert
+  with check (public.is_admin());
+
+drop policy if exists "control_logs_creator_insert" on public.control_logs;
+create policy "control_logs_creator_insert"
+  on public.control_logs
+  for insert
+  with check (
+    exists (
+      select 1
+      from public.sessions s
+      where s.id = control_logs.session_id
+        and s.created_by = auth.uid()
+    )
+  );
+
+drop policy if exists "control_logs_member_insert" on public.control_logs;
+create policy "control_logs_member_insert"
+  on public.control_logs
+  for insert
+  with check (
+    exists (
+      select 1
+      from public.session_members sm
+      where sm.session_id = control_logs.session_id
+        and sm.user_id = auth.uid()
+    )
+  );
+
+drop policy if exists "control_logs_admin_update" on public.control_logs;
+create policy "control_logs_admin_update"
+  on public.control_logs
+  for update
+  using (public.is_admin())
+  with check (public.is_admin());
+
+drop policy if exists "control_logs_creator_update" on public.control_logs;
+create policy "control_logs_creator_update"
+  on public.control_logs
+  for update
+  using (
+    exists (
+      select 1
+      from public.sessions s
+      where s.id = control_logs.session_id
+        and s.created_by = auth.uid()
+    )
+  )
+  with check (
+    exists (
+      select 1
+      from public.sessions s
+      where s.id = control_logs.session_id
+        and s.created_by = auth.uid()
+    )
+  );
+
+drop policy if exists "control_logs_admin_delete" on public.control_logs;
+create policy "control_logs_admin_delete"
+  on public.control_logs
+  for delete
+  using (public.is_admin());
+
 -- Penalties applied by stewarding desk
 create table if not exists public.penalties (
   id uuid primary key default gen_random_uuid(),
@@ -56,6 +156,106 @@ create table if not exists public.penalties (
 
 create index if not exists penalties_session_driver_idx on public.penalties (session_id, driver_id);
 
+alter table public.penalties enable row level security;
+
+drop policy if exists "penalties_admin_select" on public.penalties;
+create policy "penalties_admin_select"
+  on public.penalties
+  for select
+  using (public.is_admin());
+
+drop policy if exists "penalties_creator_select" on public.penalties;
+create policy "penalties_creator_select"
+  on public.penalties
+  for select
+  using (
+    exists (
+      select 1
+      from public.sessions s
+      where s.id = penalties.session_id
+        and s.created_by = auth.uid()
+    )
+  );
+
+drop policy if exists "penalties_member_select" on public.penalties;
+create policy "penalties_member_select"
+  on public.penalties
+  for select
+  using (
+    exists (
+      select 1
+      from public.session_members sm
+      where sm.session_id = penalties.session_id
+        and sm.user_id = auth.uid()
+    )
+  );
+
+drop policy if exists "penalties_admin_insert" on public.penalties;
+create policy "penalties_admin_insert"
+  on public.penalties
+  for insert
+  with check (public.is_admin());
+
+drop policy if exists "penalties_creator_insert" on public.penalties;
+create policy "penalties_creator_insert"
+  on public.penalties
+  for insert
+  with check (
+    exists (
+      select 1
+      from public.sessions s
+      where s.id = penalties.session_id
+        and s.created_by = auth.uid()
+    )
+  );
+
+drop policy if exists "penalties_member_insert" on public.penalties;
+create policy "penalties_member_insert"
+  on public.penalties
+  for insert
+  with check (
+    exists (
+      select 1
+      from public.session_members sm
+      where sm.session_id = penalties.session_id
+        and sm.user_id = auth.uid()
+    )
+  );
+
+drop policy if exists "penalties_admin_update" on public.penalties;
+create policy "penalties_admin_update"
+  on public.penalties
+  for update
+  using (public.is_admin())
+  with check (public.is_admin());
+
+drop policy if exists "penalties_creator_update" on public.penalties;
+create policy "penalties_creator_update"
+  on public.penalties
+  for update
+  using (
+    exists (
+      select 1
+      from public.sessions s
+      where s.id = penalties.session_id
+        and s.created_by = auth.uid()
+    )
+  )
+  with check (
+    exists (
+      select 1
+      from public.sessions s
+      where s.id = penalties.session_id
+        and s.created_by = auth.uid()
+    )
+  );
+
+drop policy if exists "penalties_admin_delete" on public.penalties;
+create policy "penalties_admin_delete"
+  on public.penalties
+  for delete
+  using (public.is_admin());
+
 -- Published classification once race is validated
 create table if not exists public.results_final (
   session_id uuid not null references public.sessions(id) on delete cascade,
@@ -69,6 +269,93 @@ create table if not exists public.results_final (
 );
 
 create index if not exists results_final_session_idx on public.results_final (session_id, final_pos);
+
+alter table public.results_final enable row level security;
+
+drop policy if exists "results_final_admin_select" on public.results_final;
+create policy "results_final_admin_select"
+  on public.results_final
+  for select
+  using (public.is_admin());
+
+drop policy if exists "results_final_creator_select" on public.results_final;
+create policy "results_final_creator_select"
+  on public.results_final
+  for select
+  using (
+    exists (
+      select 1
+      from public.sessions s
+      where s.id = results_final.session_id
+        and s.created_by = auth.uid()
+    )
+  );
+
+drop policy if exists "results_final_member_select" on public.results_final;
+create policy "results_final_member_select"
+  on public.results_final
+  for select
+  using (
+    exists (
+      select 1
+      from public.session_members sm
+      where sm.session_id = results_final.session_id
+        and sm.user_id = auth.uid()
+    )
+  );
+
+drop policy if exists "results_final_admin_insert" on public.results_final;
+create policy "results_final_admin_insert"
+  on public.results_final
+  for insert
+  with check (public.is_admin());
+
+drop policy if exists "results_final_creator_insert" on public.results_final;
+create policy "results_final_creator_insert"
+  on public.results_final
+  for insert
+  with check (
+    exists (
+      select 1
+      from public.sessions s
+      where s.id = results_final.session_id
+        and s.created_by = auth.uid()
+    )
+  );
+
+drop policy if exists "results_final_admin_update" on public.results_final;
+create policy "results_final_admin_update"
+  on public.results_final
+  for update
+  using (public.is_admin())
+  with check (public.is_admin());
+
+drop policy if exists "results_final_creator_update" on public.results_final;
+create policy "results_final_creator_update"
+  on public.results_final
+  for update
+  using (
+    exists (
+      select 1
+      from public.sessions s
+      where s.id = results_final.session_id
+        and s.created_by = auth.uid()
+    )
+  )
+  with check (
+    exists (
+      select 1
+      from public.sessions s
+      where s.id = results_final.session_id
+        and s.created_by = auth.uid()
+    )
+  );
+
+drop policy if exists "results_final_admin_delete" on public.results_final;
+create policy "results_final_admin_delete"
+  on public.results_final
+  for delete
+  using (public.is_admin());
 
 -- Ensure realtime publishes new stewarding tables
 DO

@@ -15,23 +15,23 @@ const callRpc = async (name, params) => {
 };
 
 export async function startSession(sessionId) {
-  await callRpc('start_session', { p_session_id: sessionId, session_id: sessionId });
+  await callRpc('start_session', { p_session_id: sessionId });
 }
 
 export async function pauseSession(sessionId) {
-  await callRpc('pause_session', { p_session_id: sessionId, session_id: sessionId });
+  await callRpc('pause_session', { p_session_id: sessionId });
 }
 
 export async function resumeSession(sessionId) {
-  await callRpc('resume_session', { p_session_id: sessionId, session_id: sessionId });
+  await callRpc('resume_session', { p_session_id: sessionId });
 }
 
 export async function finalizeResults(sessionId) {
-  await callRpc('finalize_results', { p_session_id: sessionId, session_id: sessionId });
+  await callRpc('finalize_results', { p_session_id: sessionId });
 }
 
 export async function setFlag(sessionId, flag) {
-  await callRpc('set_flag', { p_session_id: sessionId, p_flag: flag, session_id: sessionId, flag_type: flag });
+  await callRpc('set_flag', { p_session_id: sessionId, p_flag: flag });
 }
 
 export async function applyPenalty(sessionId, driverId, { category, valueMs = 0, reason, issuedBy }) {
