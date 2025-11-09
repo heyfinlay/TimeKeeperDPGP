@@ -33,7 +33,7 @@ export const parseLapInput = (input) => {
   return Math.round(numeric * 1000);
 };
 
-export default function DriverTimingPanel({ driver, canWrite = false, currentLapMs = null }) {
+export default function DriverTimingPanel({ driver, canWrite = false, currentLapMs = null, onPitIn, onPitOut }) {
   const { onLogLap: contextOnLogLap } = useSessionActions();
 
   const metrics = useMemo(
@@ -92,6 +92,30 @@ export default function DriverTimingPanel({ driver, canWrite = false, currentLap
           ))}
         </dl>
       </div>
+
+      {/* Pit Control Buttons */}
+      {canWrite && (onPitIn || onPitOut) ? (
+        <div className="flex gap-2">
+          {onPitIn ? (
+            <button
+              type="button"
+              onClick={() => onPitIn(driver.id)}
+              className="flex-1 rounded-lg bg-amber-700/80 px-3 py-2 text-xs font-semibold text-white hover:bg-amber-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400"
+            >
+              Pit In
+            </button>
+          ) : null}
+          {onPitOut ? (
+            <button
+              type="button"
+              onClick={() => onPitOut(driver.id)}
+              className="flex-1 rounded-lg bg-emerald-700/80 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400"
+            >
+              Pit Out
+            </button>
+          ) : null}
+        </div>
+      ) : null}
     </article>
   );
 }

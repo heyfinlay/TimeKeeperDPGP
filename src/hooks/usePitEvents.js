@@ -1,36 +1,36 @@
 /**
- * usePenalties Hook
+ * usePitEvents Hook
  *
- * Real-time penalties for a session
+ * Real-time pit events for a session
  */
 import { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabaseClient.js';
-import { getPenalties } from '@/services/penalties.js';
+import { getPitEvents } from '@/services/pitEvents.js';
 
-export function usePenalties(sessionId) {
-  const [penalties, setPenalties] = useState([]);
+export function usePitEvents(sessionId) {
+  const [pitEvents, setPitEvents] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(null);
 
   useEffect(() => {
     if (!sessionId) {
-      setPenalties([]);
+      setPitEvents([]);
       setIsLoading(false);
       return;
     }
 
     let mounted = true;
 
-    const loadPenalties = async () => {
+    const loadPitEvents = async () => {
       try {
         setIsLoading(true);
         setError(null);
-        const data = await getPenalties(sessionId);
+        const data = await getPitEvents(sessionId);
         if (mounted) {
-          setPenalties(data);
+          setPitEvents(data);
         }
       } catch (err) {
-        console.error('Failed to load penalties:', err);
+        console.error('Failed to load pit events:', err);
         if (mounted) {
           setError(err.message);
         }
@@ -41,22 +41,22 @@ export function usePenalties(sessionId) {
       }
     };
 
-    loadPenalties();
+    loadPitEvents();
 
-    // Subscribe to penalties changes
+    // Subscribe to pit events changes
     const subscription = supabase
-      .channel(`penalties:${sessionId}`)
+      .channel(`pit_events:${sessionId}`)
       .on(
         'postgres_changes',
         {
           event: '*',
           schema: 'public',
-          table: 'penalties',
+          table: 'pit_events',
           filter: `session_id=eq.${sessionId}`,
         },
         () => {
-          // Reload penalties on any change
-          loadPenalties();
+          // Reload pit events on any change
+          loadPitEvents();
         }
       )
       .subscribe();
@@ -67,5 +67,5 @@ export function usePenalties(sessionId) {
     };
   }, [sessionId]);
 
-  return { penalties, isLoading, error, refresh: () => getPenalties(sessionId).then(setPenalties) };
+  return { pitEvents, isLoading, error, refresh: () => getPitEvents(sessionId).then(setPitEvents) };
 }

@@ -1,85 +1,81 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { isSupabaseConfigured, subscribeToTable, supabase } from '@/lib/supabaseClient.js';
-import { useSessionId } from '@/state/SessionContext.jsx';
+/**
+ * useControlLogs Hook
+ *
+ * Real-time control logs (audit trail) for a session
+ */
+import { useEffect, useState } from 'react';
+import { supabase } from '@/lib/supabaseClient.js';
 
-const CONTROL_LOG_COLUMNS = 'id, action, payload, actor, created_at';
-
-export function useControlLogs({ limit = 80 } = {}) {
-  const sessionId = useSessionId();
+export function useControlLogs(sessionId, limit = 50) {
   const [logs, setLogs] = useState([]);
-  const [isLoading, setIsLoading] = useState(isSupabaseConfigured);
+  const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(null);
-  const mountedRef = useRef(true);
 
-  useEffect(() => () => {
-    mountedRef.current = false;
-  }, []);
+  useEffect(() => {
+    if (!sessionId) {
+      setLogs([]);
+      setIsLoading(false);
+      return;
+    }
 
-  const refresh = useCallback(
-    async ({ silent = false } = {}) => {
-      if (!sessionId) {
-        setLogs([]);
-        setIsLoading(false);
-        return [];
-      }
-      if (!isSupabaseConfigured || !supabase) {
-        setIsLoading(false);
-        return [];
-      }
-      if (!silent) {
-        setIsLoading(true);
-      }
+    let mounted = true;
+
+    const loadLogs = async () => {
       try {
-        const { data, error: selectError } = await supabase
+        setIsLoading(true);
+        setError(null);
+
+        const { data, error: fetchError } = await supabase
           .from('control_logs')
-          .select(CONTROL_LOG_COLUMNS)
+          .select('*')
           .eq('session_id', sessionId)
           .order('created_at', { ascending: false })
           .limit(limit);
-        if (selectError) throw selectError;
-        if (mountedRef.current) {
-          setLogs(Array.isArray(data) ? data : []);
-          setError(null);
+
+        if (fetchError) throw fetchError;
+
+        if (mounted) {
+          setLogs(data || []);
         }
-        return data ?? [];
-      } catch (refreshError) {
-        console.error('Failed to load control logs', refreshError);
-        if (mountedRef.current) {
-          setError(refreshError?.message ?? 'Unable to load control logs.');
+      } catch (err) {
+        console.error('Failed to load control logs:', err);
+        if (mounted) {
+          setError(err.message);
         }
-        return [];
       } finally {
-        if (mountedRef.current) {
+        if (mounted) {
           setIsLoading(false);
         }
       }
-    },
-    [sessionId, limit],
-  );
-
-  useEffect(() => {
-    void refresh();
-  }, [refresh]);
-
-  useEffect(() => {
-    if (!sessionId || !isSupabaseConfigured || !supabase) {
-      return () => {};
-    }
-    const unsubscribe = subscribeToTable(
-      {
-        schema: 'public',
-        table: 'control_logs',
-        event: 'INSERT',
-        filter: `session_id=eq.${sessionId}`,
-      },
-      () => {
-        void refresh({ silent: true });
-      },
-    );
-    return () => {
-      unsubscribe?.();
     };
-  }, [sessionId, refresh]);
 
-  return { logs, isLoading, error, refresh };
+    loadLogs();
+
+    // Subscribe to control logs changes (INSERT only for performance)
+    const subscription = supabase
+      .channel(`control_logs:${sessionId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'control_logs',
+          filter: `session_id=eq.${sessionId}`,
+        },
+        (payload) => {
+          if (mounted && payload.new) {
+            // Prepend new log entry
+            setLogs((prev) => [payload.new, ...prev].slice(0, limit));
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      mounted = false;
+      subscription.unsubscribe();
+    };
+  }, [sessionId, limit]);
+
+  return { logs, isLoading, error };
 }

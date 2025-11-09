@@ -36,6 +36,8 @@ import { TRACK_STATUS_OPTIONS, TRACK_STATUS_MAP } from '@/constants/trackStatus.
 import { DEFAULT_SESSION_STATE, sessionRowToState } from '@/utils/raceData.js';
 import { formatRaceClock } from '@/utils/time.js';
 import { logLapAtomic, invalidateLastLap } from '@/services/laps.js';
+import { finalizeAndExport } from '@/services/results.js';
+import { logPitEvent } from '@/services/pitEvents.js';
 
 const roleLabels = {
   admin: 'Admin',
@@ -248,22 +250,38 @@ export default function ControlPanel() {
   // -------- Session state (track status, announcements, race timer) ---------
   const [sessionState, setSessionState] = useState(DEFAULT_SESSION_STATE);
   const [announcementDraft, setAnnouncementDraft] = useState('');
+  const [isEditingAnnouncement, setIsEditingAnnouncement] = useState(false);
   const [sessionError, setSessionError] = useState(null);
   const [gridReadyConfirmed, setGridReadyConfirmed] = useState(false);
   const [isPhaseMutating, setIsPhaseMutating] = useState(false);
 
   const tickingRef = useRef(false);
-  const startEpochRef = useRef(null);
-  const baseTimeRef = useRef(0);
   const tickTimerRef = useRef(null);
   const persistTimerRef = useRef(null);
+
+  // Authoritative clock calculation using database fields
   const computeDisplayTime = useCallback(() => {
-    if (!sessionState.isTiming || sessionState.isPaused || !tickingRef.current || !startEpochRef.current) {
+    if (!sessionState.isTiming) {
       return sessionState.raceTime;
     }
+
+    if (!sessionState.raceStartedAt) {
+      return sessionState.raceTime;
+    }
+
     const now = Date.now();
-    return baseTimeRef.current + (now - startEpochRef.current);
-  }, [sessionState.isPaused, sessionState.isTiming, sessionState.raceTime]);
+    const raceStartMs = new Date(sessionState.raceStartedAt).getTime();
+    const elapsed = now - raceStartMs;
+    const accumulatedPause = sessionState.accumulatedPauseMs || 0;
+
+    if (sessionState.isPaused && sessionState.pauseStartedAt) {
+      const pauseStartMs = new Date(sessionState.pauseStartedAt).getTime();
+      const currentPauseDuration = now - pauseStartMs;
+      return elapsed - accumulatedPause - currentPauseDuration;
+    }
+
+    return elapsed - accumulatedPause;
+  }, [sessionState.isTiming, sessionState.isPaused, sessionState.raceTime, sessionState.raceStartedAt, sessionState.accumulatedPauseMs, sessionState.pauseStartedAt]);
 
   const procedurePhase = sessionState.procedurePhase ?? 'setup';
   const procedurePhaseLabel = PROCEDURE_PHASE_LABELS[procedurePhase] ?? PROCEDURE_PHASE_LABELS.setup;
@@ -273,16 +291,10 @@ export default function ControlPanel() {
   const applySessionStateRow = useCallback((row) => {
     const next = sessionRowToState(row);
     setSessionState(next);
-    setAnnouncementDraft(next.announcement ?? '');
-    baseTimeRef.current = next.raceTime ?? 0;
-    if (next.isTiming && !next.isPaused) {
-      startEpochRef.current = Date.now();
-      tickingRef.current = true;
-    } else {
-      startEpochRef.current = null;
-      tickingRef.current = false;
-    }
-  }, []);
+    // Only update announcementDraft if user is not actively editing
+    setAnnouncementDraft(prev => isEditingAnnouncement ? prev : (next.announcement ?? ''));
+    tickingRef.current = next.isTiming && !next.isPaused;
+  }, [isEditingAnnouncement]);
 
   useEffect(() => {
     if (sessionState.procedurePhase !== 'grid') {
@@ -362,9 +374,7 @@ export default function ControlPanel() {
     if (sessionState.procedurePhase !== 'grid' || !gridReadyConfirmed) {
       return;
     }
-    baseTimeRef.current = sessionState.raceTime ?? 0;
     const raceStartTime = Date.now();
-    startEpochRef.current = raceStartTime;
     tickingRef.current = true;
 
     // CRITICAL: Arm all driver lap timers SYNCHRONOUSLY before network round-trip
@@ -381,14 +391,17 @@ export default function ControlPanel() {
     });
 
     try {
-      await persistSessionPatch({ is_timing: true, is_paused: false, procedure_phase: 'race' });
+      if (!isSupabaseConfigured || !supabase) {
+        await persistSessionPatch({ is_timing: true, is_paused: false, procedure_phase: 'race' });
+      } else {
+        await supabase.rpc('start_race_rpc', { p_session_id: sessionId });
+      }
     } catch (error) {
       console.error('Failed to start race timer', error);
       tickingRef.current = false;
-      startEpochRef.current = null;
       setSessionError('Unable to start race timer.');
     }
-  }, [canWrite, gridReadyConfirmed, persistSessionPatch, sessionState.procedurePhase, sessionState.raceTime, drivers, sessionId]);
+  }, [canWrite, gridReadyConfirmed, persistSessionPatch, sessionState.procedurePhase, drivers, sessionId]);
 
   // SAFETY NET: Auto-arm driver lap timers for REMOTE clients/observers
   // When remote clients see procedurePhase change to 'race' via realtime,
@@ -416,26 +429,38 @@ export default function ControlPanel() {
 
   const pauseTimer = useCallback(async () => {
     if (!canWrite) return;
-    const current = computeDisplayTime();
     tickingRef.current = false;
-    startEpochRef.current = null;
-    baseTimeRef.current = current;
-    await persistSessionPatch({ is_timing: true, is_paused: true, race_time_ms: current });
-  }, [canWrite, computeDisplayTime, persistSessionPatch]);
+    try {
+      if (!isSupabaseConfigured || !supabase) {
+        const current = computeDisplayTime();
+        await persistSessionPatch({ is_timing: true, is_paused: true, race_time_ms: current });
+      } else {
+        await supabase.rpc('pause_race_rpc', { p_session_id: sessionId });
+      }
+    } catch (error) {
+      console.error('Failed to pause race timer', error);
+      setSessionError('Unable to pause race timer.');
+    }
+  }, [canWrite, computeDisplayTime, persistSessionPatch, sessionId]);
 
   const resumeTimer = useCallback(async () => {
     if (!canWrite) return;
-    baseTimeRef.current = sessionState.raceTime ?? 0;
-    startEpochRef.current = Date.now();
     tickingRef.current = true;
-    await persistSessionPatch({ is_paused: false, is_timing: true });
-  }, [canWrite, persistSessionPatch, sessionState.raceTime]);
+    try {
+      if (!isSupabaseConfigured || !supabase) {
+        await persistSessionPatch({ is_paused: false, is_timing: true });
+      } else {
+        await supabase.rpc('resume_race_rpc', { p_session_id: sessionId });
+      }
+    } catch (error) {
+      console.error('Failed to resume race timer', error);
+      setSessionError('Unable to resume race timer.');
+    }
+  }, [canWrite, persistSessionPatch, sessionId]);
 
   const resetTimer = useCallback(async () => {
     if (!canWrite) return;
     tickingRef.current = false;
-    startEpochRef.current = null;
-    baseTimeRef.current = 0;
 
     // Clear all driver lap timers SYNCHRONOUSLY before network round-trip
     // Ensures local operator sees immediate reset
@@ -453,10 +478,13 @@ export default function ControlPanel() {
 
   const finishRace = useCallback(async () => {
     if (!canWrite) return;
+
+    const shouldExport = window.confirm(
+      'Finish session and export results?\n\nThis will:\n- Stop timing\n- Calculate final positions\n- Apply penalties\n- Download results as CSV\n\nClick OK to proceed, or Cancel to finish without export.'
+    );
+
     const current = computeDisplayTime();
     tickingRef.current = false;
-    startEpochRef.current = null;
-    baseTimeRef.current = current;
 
     // Clear all driver lap timers
     drivers.forEach((driver) => {
@@ -468,8 +496,25 @@ export default function ControlPanel() {
       }
     });
 
-    await persistSessionPatch({ is_timing: false, is_paused: false, race_time_ms: current, procedure_phase: 'setup' });
-  }, [canWrite, computeDisplayTime, persistSessionPatch, drivers, sessionId]);
+    try {
+      if (!isSupabaseConfigured || !supabase) {
+        await persistSessionPatch({ is_timing: false, is_paused: false, race_time_ms: current, procedure_phase: 'setup' });
+      } else {
+        await supabase.rpc('finish_race_rpc', { p_session_id: sessionId });
+
+        if (shouldExport) {
+          // Finalize results and export CSV
+          const sessionName = sessionState.eventType || 'Session';
+          await finalizeAndExport(sessionId, sessionName);
+          setSessionError(null); // Clear any previous errors
+          alert('Results finalized and downloaded successfully!');
+        }
+      }
+    } catch (error) {
+      console.error('Failed to finish race', error);
+      setSessionError(error.message || 'Unable to finish race.');
+    }
+  }, [canWrite, computeDisplayTime, persistSessionPatch, drivers, sessionId, sessionState.eventType]);
 
   // SAFETY NET: Clear driver lap timers for REMOTE clients/observers
   // When remote clients see procedurePhase change to 'setup' via realtime,
@@ -488,9 +533,13 @@ export default function ControlPanel() {
     }
   }, [sessionState.procedurePhase, sessionState.isTiming, drivers, sessionId]);
 
+  // Periodic clock persistence for backward compatibility with LiveTimingBoard
+  // The clock is now calculated from race_started_at and accumulated_pause_ms,
+  // but we still update race_time_ms for components that haven't been updated yet
   useEffect(() => {
     if (persistTimerRef.current) clearInterval(persistTimerRef.current);
-    if (sessionState.isTiming && !sessionState.isPaused) {
+    if (sessionState.isTiming && !sessionState.isPaused && !isSupabaseConfigured) {
+      // Only persist for non-Supabase setups (Supabase uses authoritative RPC clock)
       persistTimerRef.current = setInterval(() => {
         const current = computeDisplayTime();
         void persistSessionPatch({ race_time_ms: current });
@@ -515,6 +564,7 @@ export default function ControlPanel() {
     try {
       const text = (announcementDraft ?? '').slice(0, 500);
       await persistSessionPatch({ announcement: text });
+      setIsEditingAnnouncement(false); // Stop editing after successful update
     } catch (error) {
       console.error('Failed to update announcement', error);
       setSessionError('Unable to update announcement.');
@@ -690,6 +740,32 @@ export default function ControlPanel() {
       }
     },
     [canWrite, getArmedStart, setArmedStart, sessionId, setSessionError, sessionState.procedurePhase, sessionState.isTiming],
+  );
+
+  const handlePitIn = useCallback(
+    async (driverId) => {
+      if (!canWrite || !driverId) return;
+      try {
+        await logPitEvent({ sessionId, driverId, eventType: 'in' });
+      } catch (err) {
+        console.error('Pit in failed', err);
+        setSessionError(`Pit in failed: ${err.message || 'Unknown error'}`);
+      }
+    },
+    [canWrite, sessionId]
+  );
+
+  const handlePitOut = useCallback(
+    async (driverId) => {
+      if (!canWrite || !driverId) return;
+      try {
+        await logPitEvent({ sessionId, driverId, eventType: 'out' });
+      } catch (err) {
+        console.error('Pit out failed', err);
+        setSessionError(`Pit out failed: ${err.message || 'Unknown error'}`);
+      }
+    },
+    [canWrite, sessionId]
   );
 
   const handleInvalidateLap = useCallback(
@@ -955,7 +1031,12 @@ export default function ControlPanel() {
               <input
                 type="text"
                 value={announcementDraft}
-                onChange={(e) => setAnnouncementDraft(e.target.value)}
+                onChange={(e) => {
+                  setAnnouncementDraft(e.target.value);
+                  setIsEditingAnnouncement(true);
+                }}
+                onFocus={() => setIsEditingAnnouncement(true)}
+                onBlur={() => setIsEditingAnnouncement(false)}
                 placeholder="Enter live message..."
                 disabled={!canWrite}
                 className="flex-1 rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-sm text-white placeholder:text-neutral-500 focus:outline-none focus:ring-2 focus:ring-white/20 disabled:cursor-not-allowed disabled:opacity-60"
@@ -1194,6 +1275,8 @@ export default function ControlPanel() {
                 driver={driver}
                 canWrite={canWrite}
                 currentLapMs={currentLapTimes[driver.id] ?? null}
+                onPitIn={handlePitIn}
+                onPitOut={handlePitOut}
               />
             ))}
           </div>

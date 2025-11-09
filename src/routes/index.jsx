@@ -9,7 +9,6 @@ import AccountSetup from '@/routes/AccountSetup.jsx';
 import AuthCallback from '@/routes/AuthCallback.jsx';
 import Control from '@/routes/Control.jsx';
 import LiveTiming from '@/routes/LiveTiming.jsx';
-import MarshalRoute from '@/routes/Marshal.jsx';
 import LiveSessions from '@/routes/LiveSessions.jsx';
 import NewSession from '@/routes/NewSession.jsx';
 import AdminSessions from '@/routes/AdminSessions.jsx';
@@ -65,7 +64,7 @@ const AppRoutes = () => (
         element={
           <ProtectedRoute>
             <SessionAccessGuard>
-              <MarshalRoute />
+              <Control />
             </SessionAccessGuard>
           </ProtectedRoute>
         }
