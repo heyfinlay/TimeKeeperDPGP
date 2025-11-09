@@ -64,7 +64,7 @@ const AppRoutes = () => (
         element={
           <ProtectedRoute>
             <SessionAccessGuard>
-              <MarshalRoute />
+              <Control />
             </SessionAccessGuard>
           </ProtectedRoute>
         }
