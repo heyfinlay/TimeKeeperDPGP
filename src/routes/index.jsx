@@ -59,6 +59,16 @@ const AppRoutes = () => (
           </ProtectedRoute>
         }
       />
+      <Route
+        path="/marshal/:sessionId"
+        element={
+          <ProtectedRoute>
+            <SessionAccessGuard>
+              <Control />
+            </SessionAccessGuard>
+          </ProtectedRoute>
+        }
+      />
       <Route path="/live/:sessionId" element={<LiveTiming />} />
       <Route
         path="/admin/sessions"
