@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import { Navigate, useParams } from 'react-router-dom';
-import RaceControlV2Page from '@/pages/RaceControlV2Page.jsx';
+import ControlPanel from '@/views/ControlPanel.jsx';
 import { SessionProvider } from '@/state/SessionContext.jsx';
 
 export default function Control() {
@@ -13,7 +13,7 @@ export default function Control() {
 
   return (
     <SessionProvider sessionId={safeSessionId}>
-      <RaceControlV2Page />
+      <ControlPanel />
     </SessionProvider>
   );
 }
