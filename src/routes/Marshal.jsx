@@ -1,9 +1,9 @@
 import { useMemo } from 'react';
 import { Navigate, useParams } from 'react-router-dom';
-import RaceControlV2Page from '@/pages/RaceControlV2Page.jsx';
 import { SessionProvider } from '@/state/SessionContext.jsx';
+import MarshalPanelPage from '@/pages/MarshalPanelPage.jsx';
 
-export default function Control() {
+export default function MarshalRoute() {
   const { sessionId } = useParams();
   const safeSessionId = useMemo(() => (typeof sessionId === 'string' ? sessionId : null), [sessionId]);
 
@@ -13,7 +13,7 @@ export default function Control() {
 
   return (
     <SessionProvider sessionId={safeSessionId}>
-      <RaceControlV2Page />
+      <MarshalPanelPage />
     </SessionProvider>
   );
 }

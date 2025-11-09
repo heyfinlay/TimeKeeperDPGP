@@ -1,3 +1,214 @@
+-- Race Control V2 core tables and helpers
+
+-- Extend sessions with authoritative race control columns
+alter table if exists public.sessions
+  add column if not exists phase text,
+  add column if not exists banner_state text,
+  add column if not exists started_at timestamptz,
+  add column if not exists clock_ms bigint default 0,
+  add column if not exists lap_limit int,
+  add column if not exists is_final boolean default false;
+
+create index if not exists sessions_phase_idx on public.sessions (phase);
+
+-- Driver metadata extensions for marshal workflows
+alter table if exists public.drivers
+  add column if not exists tri_code text,
+  add column if not exists team_color text,
+  add column if not exists slot_number int,
+  add column if not exists status text default 'READY';
+
+create index if not exists drivers_slot_number_idx on public.drivers (slot_number);
+
+-- Lap logging extensions for atomic V2 workflow
+alter table if exists public.laps
+  add column if not exists lap_no int,
+  add column if not exists lap_ms bigint,
+  add column if not exists valid boolean default true,
+  add column if not exists source text default 'manual';
+
+create index if not exists laps_session_driver_no_idx
+  on public.laps (session_id, driver_id, coalesce(lap_no, lap_number));
+
+-- Stewarding log for append-only audit trail
+create table if not exists public.control_logs (
+  id uuid primary key default gen_random_uuid(),
+  session_id uuid not null references public.sessions(id) on delete cascade,
+  action text not null,
+  payload jsonb default '{}'::jsonb,
+  actor text,
+  created_at timestamptz not null default timezone('utc', now())
+);
+
+create index if not exists control_logs_session_id_idx on public.control_logs (session_id, created_at desc);
+
+-- Penalties applied by stewarding desk
+create table if not exists public.penalties (
+  id uuid primary key default gen_random_uuid(),
+  session_id uuid not null references public.sessions(id) on delete cascade,
+  driver_id uuid not null references public.drivers(id) on delete cascade,
+  category text not null,
+  value_ms int default 0,
+  reason text,
+  issued_by text,
+  created_at timestamptz not null default timezone('utc', now())
+);
+
+create index if not exists penalties_session_driver_idx on public.penalties (session_id, driver_id);
+
+-- Published classification once race is validated
+create table if not exists public.results_final (
+  session_id uuid not null references public.sessions(id) on delete cascade,
+  driver_id uuid not null references public.drivers(id) on delete cascade,
+  final_pos int,
+  status text,
+  penalty_ms int default 0,
+  final_time_ms bigint,
+  validated boolean default false,
+  primary key (session_id, driver_id)
+);
+
+create index if not exists results_final_session_idx on public.results_final (session_id, final_pos);
+
+-- Ensure realtime publishes new stewarding tables
+DO
+BEGIN
+  ALTER PUBLICATION supabase_realtime ADD TABLE public.control_logs;
+EXCEPTION
+  WHEN duplicate_object THEN NULL;
+END
+;
+
+DO
+BEGIN
+  ALTER PUBLICATION supabase_realtime ADD TABLE public.penalties;
+EXCEPTION
+  WHEN duplicate_object THEN NULL;
+END
+;
+
+DO
+BEGIN
+  ALTER PUBLICATION supabase_realtime ADD TABLE public.results_final;
+EXCEPTION
+  WHEN duplicate_object THEN NULL;
+END
+;
+
+-- Race Control RPCs for authoritative session management
+create or replace function public.start_session(p_session_id uuid)
+returns void
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+begin
+  update public.sessions
+     set phase = 'green',
+         banner_state = coalesce(banner_state, 'green'),
+         started_at = timezone('utc', now()),
+         clock_ms = 0
+   where id = p_session_id;
+
+  insert into public.control_logs(session_id, action, payload, actor)
+  values (p_session_id, 'START_SESSION', jsonb_build_object('phase', 'green'), auth.uid()::text);
+end;
+$$;
+
+grant execute on function public.start_session(uuid) to authenticated, service_role;
+
+create or replace function public.pause_session(p_session_id uuid)
+returns void
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  v_now timestamptz := timezone('utc', now());
+  v_previous timestamptz;
+  v_clock bigint;
+begin
+  select started_at, clock_ms into v_previous, v_clock
+    from public.sessions
+   where id = p_session_id
+   for update;
+
+  if v_previous is not null then
+    update public.sessions
+       set banner_state = 'suspended',
+           clock_ms = coalesce(v_clock, 0) + greatest(0, (extract(epoch from (v_now - v_previous)) * 1000)::bigint),
+           started_at = null
+     where id = p_session_id;
+  else
+    update public.sessions
+       set banner_state = 'suspended'
+     where id = p_session_id;
+  end if;
+
+  insert into public.control_logs(session_id, action, payload, actor)
+  values (p_session_id, 'PAUSE_SESSION', jsonb_build_object('banner', 'suspended'), auth.uid()::text);
+end;
+$$;
+
+grant execute on function public.pause_session(uuid) to authenticated, service_role;
+
+create or replace function public.resume_session(p_session_id uuid)
+returns void
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+begin
+  update public.sessions
+     set banner_state = 'green',
+         started_at = timezone('utc', now())
+   where id = p_session_id;
+
+  insert into public.control_logs(session_id, action, payload, actor)
+  values (p_session_id, 'RESUME_SESSION', jsonb_build_object('banner', 'green'), auth.uid()::text);
+end;
+$$;
+
+grant execute on function public.resume_session(uuid) to authenticated, service_role;
+
+create or replace function public.set_flag(p_session_id uuid, p_flag text)
+returns void
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+begin
+  update public.sessions
+     set banner_state = coalesce(nullif(lower(p_flag), ''), banner_state)
+   where id = p_session_id;
+
+  insert into public.control_logs(session_id, action, payload, actor)
+  values (p_session_id, 'FLAG_CHANGE', jsonb_build_object('banner', p_flag), auth.uid()::text);
+end;
+$$;
+
+grant execute on function public.set_flag(uuid, text) to authenticated, service_role;
+
+create or replace function public.finalize_results(p_session_id uuid)
+returns void
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+begin
+  update public.sessions
+     set phase = 'complete',
+         is_final = true
+   where id = p_session_id;
+
+  insert into public.control_logs(session_id, action, payload, actor)
+  values (p_session_id, 'FINALIZE_RESULTS', jsonb_build_object('phase', 'complete'), auth.uid()::text);
+end;
+$$;
+
+grant execute on function public.finalize_results(uuid) to authenticated, service_role;
+
+-- ============================================================================
 -- Diamond Sports Book wallet and markets schema
 create table if not exists public.events (
   id uuid primary key default gen_random_uuid(),
