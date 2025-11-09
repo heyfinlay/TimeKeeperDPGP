@@ -217,6 +217,79 @@ describe('lap services', () => {
     });
   });
 
+  test('logLapAtomic falls back when session_id is ambiguous', async () => {
+    supabase.rpc.mockResolvedValue({
+      data: null,
+      error: { code: '42702', message: 'column reference "session_id" is ambiguous' },
+    });
+
+    const lapsSelectChain = createFilterChain(
+      Promise.resolve({ data: { lap_number: 1 }, error: null }),
+    );
+    const lapsInsertChain = createInsertChain(
+      Promise.resolve({ data: { id: 'lap-ambiguous' }, error: null }),
+    );
+    const driverSelectChain = createFilterChain(
+      Promise.resolve({
+        data: { laps: 1, best_lap_ms: null, total_time_ms: 60000 },
+        error: null,
+      }),
+    );
+    const driverUpdateChain = createUpdateChain(
+      Promise.resolve({ data: null, error: null }),
+    );
+
+    let call = 0;
+    supabase.from.mockImplementation((table) => {
+      if (table === 'laps' && call === 0) {
+        call += 1;
+        return {
+          select: vi.fn(() => lapsSelectChain),
+        };
+      }
+      if (table === 'laps' && call === 1) {
+        call += 1;
+        return lapsInsertChain;
+      }
+      if (table === 'drivers' && call === 2) {
+        call += 1;
+        return {
+          select: vi.fn(() => driverSelectChain),
+        };
+      }
+      if (table === 'drivers' && call === 3) {
+        call += 1;
+        return driverUpdateChain;
+      }
+      throw new Error(`Unexpected table ${table} at call ${call}`);
+    });
+
+    const result = await logLapAtomic({
+      sessionId: 'session-ambiguous',
+      driverId: 'driver-ambiguous',
+      lapTimeMs: 70000,
+    });
+
+    expect(result).toEqual({
+      lap_id: 'lap-ambiguous',
+      session_id: 'session-ambiguous',
+      driver_id: 'driver-ambiguous',
+      laps: 2,
+      last_lap_ms: 70000,
+      best_lap_ms: 70000,
+      total_time_ms: 130000,
+    });
+    expect(driverUpdateChain.update).toHaveBeenCalledWith({
+      laps: 2,
+      last_lap_ms: 70000,
+      best_lap_ms: 70000,
+      total_time_ms: 130000,
+      updated_at: expect.any(String),
+    });
+    expect(driverUpdateChain.__firstEq).toHaveBeenCalledWith('id', 'driver-ambiguous');
+    expect(driverUpdateChain.__secondEq).toHaveBeenCalledWith('session_id', 'session-ambiguous');
+  });
+
   test('invalidateLastLap uses RPC with default mode', async () => {
     supabase.rpc.mockResolvedValue({
       data: [
@@ -382,5 +455,80 @@ describe('lap services', () => {
       best_lap_ms: 65000,
       total_time_ms: 131000,
     });
+  });
+
+  test('invalidateLastLap falls back when session_id is ambiguous', async () => {
+    supabase.rpc.mockResolvedValue({
+      data: null,
+      error: { code: '42702', message: 'column reference "session_id" is ambiguous' },
+    });
+
+    const lastLapChain = createLastLapChain(
+      Promise.resolve({ data: { id: 'lap-555' }, error: null }),
+    );
+    const updateLapChain = createUpdateChain(
+      Promise.resolve({ data: null, error: null }),
+    );
+    const driverSelectChain = createFilterChain(
+      Promise.resolve({ data: { laps: 3 }, error: null }),
+    );
+    const validLapListChain = createListSelectChain(
+      Promise.resolve({
+        data: [
+          { lap_time_ms: 71000, recorded_at: '2024-01-01T00:04:00Z' },
+          { lap_time_ms: 70500, recorded_at: '2024-01-01T00:03:00Z' },
+        ],
+        error: null,
+      }),
+    );
+    const driverUpdateChain = createUpdateChain(
+      Promise.resolve({ data: null, error: null }),
+    );
+
+    let call = 0;
+    supabase.from.mockImplementation((table) => {
+      if (table === 'laps' && call === 0) {
+        call += 1;
+        return lastLapChain;
+      }
+      if (table === 'laps' && call === 1) {
+        call += 1;
+        return updateLapChain;
+      }
+      if (table === 'drivers' && call === 2) {
+        call += 1;
+        return { select: vi.fn(() => driverSelectChain) };
+      }
+      if (table === 'laps' && call === 3) {
+        call += 1;
+        return validLapListChain;
+      }
+      if (table === 'drivers' && call === 4) {
+        call += 1;
+        return driverUpdateChain;
+      }
+      throw new Error(`Unexpected table ${table} at call ${call}`);
+    });
+
+    const result = await invalidateLastLap({ sessionId: 'session-ambiguous', driverId: 'driver-ambiguous' });
+
+    expect(result).toEqual({
+      invalidated_lap_id: 'lap-555',
+      session_id: 'session-ambiguous',
+      driver_id: 'driver-ambiguous',
+      laps: 3,
+      last_lap_ms: 71000,
+      best_lap_ms: 70500,
+      total_time_ms: 141500,
+    });
+    expect(driverUpdateChain.update).toHaveBeenCalledWith({
+      last_lap_ms: 71000,
+      best_lap_ms: 70500,
+      total_time_ms: 141500,
+      laps: 3,
+      updated_at: expect.any(String),
+    });
+    expect(driverUpdateChain.__firstEq).toHaveBeenCalledWith('id', 'driver-ambiguous');
+    expect(driverUpdateChain.__secondEq).toHaveBeenCalledWith('session_id', 'session-ambiguous');
   });
 });
