@@ -65,16 +65,35 @@ const LiveTimingBoard = ({ sessionId: sessionIdProp = null }) => {
   const [error, setError] = useState(null);
   const raceClockRef = useRef({ base: 0, capturedAt: Date.now() });
 
+  // Authoritative clock calculation using database timestamps
   const deriveDisplayTime = useCallback((state) => {
     if (!state) {
       return 0;
     }
-    const baseTime = Number.isFinite(state.raceTime) ? state.raceTime : raceClockRef.current.base ?? 0;
-    if (!state.isTiming || state.isPaused) {
-      return baseTime;
+
+    // If not timing, return the stored race time
+    if (!state.isTiming) {
+      return state.raceTime || 0;
     }
-    const capturedAt = raceClockRef.current.capturedAt ?? Date.now();
-    return baseTime + Math.max(0, Date.now() - capturedAt);
+
+    // If no race start timestamp, fall back to race_time_ms
+    if (!state.raceStartedAt) {
+      return state.raceTime || 0;
+    }
+
+    const now = Date.now();
+    const raceStartMs = new Date(state.raceStartedAt).getTime();
+    const elapsed = now - raceStartMs;
+    const accumulatedPause = state.accumulatedPauseMs || 0;
+
+    // If paused, subtract current pause duration
+    if (state.isPaused && state.pauseStartedAt) {
+      const pauseStartMs = new Date(state.pauseStartedAt).getTime();
+      const currentPauseDuration = now - pauseStartMs;
+      return elapsed - accumulatedPause - currentPauseDuration;
+    }
+
+    return elapsed - accumulatedPause;
   }, []);
 
   const computeDisplayTime = useCallback(
@@ -173,6 +192,7 @@ const LiveTimingBoard = ({ sessionId: sessionIdProp = null }) => {
   const applySessionStateRow = useCallback(
     (row) => {
       const next = sessionRowToState(row);
+      // Keep raceClockRef for backwards compatibility but don't rely on it
       raceClockRef.current = {
         base: Number.isFinite(next.raceTime) ? next.raceTime : 0,
         capturedAt: Date.now(),
