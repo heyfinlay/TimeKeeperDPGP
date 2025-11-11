@@ -7,6 +7,7 @@ import {
   validateWager,
 } from '@/state/parimutuelStore.js';
 import { formatCurrency, formatPercent, formatCountdown } from '@/utils/betting.js';
+import LiveBetsTicker from '@/components/betting/LiveBetsTicker.jsx';
 
 const QUICK_STAKES = [
   { label: '10K', value: 10000 },
@@ -276,7 +277,8 @@ export default function Betslip({ marketId, outcomeId, onClose, onSuccess }) {
   const poolTotal = pool?.total ?? market.pool_total ?? 0;
 
   return (
-    <div className="flex h-full flex-col gap-6 rounded-none bg-shell-900/95 px-6 py-8 text-white sm:rounded-none">
+    <div className="flex h-full flex-col gap-6 overflow-y-auto rounded-none bg-shell-900/95 px-6 py-8 text-white sm:rounded-none">
+      <div className="flex flex-col gap-6">
       <div className="flex items-start justify-between gap-3">
         <div className="flex flex-col gap-2">
           <span className="text-xs uppercase tracking-[0.35em] text-accent-blue">Betslip</span>
@@ -488,6 +490,8 @@ export default function Betslip({ marketId, outcomeId, onClose, onSuccess }) {
       {stake > 0 && stake <= balance ? (
         <p className="text-center text-xs text-slate-500">Estimated payout varies based on final pool size.</p>
       ) : null}
+      </div>
+      <LiveBetsTicker marketId={market.id} />
     </div>
   );
 }
