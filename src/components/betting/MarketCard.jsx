@@ -37,7 +37,7 @@ export default function MarketCard({ market, pool, stats, onSelect, ctaLabel = '
   }, [pool?.total, derivedStats]);
 
   return (
-    <div className="flex h-full flex-col gap-5 rounded-3xl border border-white/5 bg-[#05070F]/80 p-6 shadow-[0_0_40px_rgba(15,23,42,0.45)]">
+    <div className="tk-glass-panel flex h-full flex-col gap-5 rounded-3xl border border-white/5 p-6">
       <header className="flex items-start justify-between gap-3">
         <div className="flex flex-col gap-2">
           <span className="inline-flex items-center gap-2 rounded-full border border-[#9FF7D3]/30 bg-[#9FF7D3]/10 px-3 py-1 text-[0.6rem] uppercase tracking-[0.35em] text-[#9FF7D3]">

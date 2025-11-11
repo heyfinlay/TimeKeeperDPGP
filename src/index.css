@@ -2,6 +2,31 @@
 @tailwind components;
 @tailwind utilities;
 
+:root {
+  --tk-shell-base: #03040a;
+  --tk-shell-gradient: radial-gradient(circle at 18% 12%, rgba(124, 107, 255, 0.42), transparent 55%),
+    radial-gradient(circle at 85% 8%, rgba(159, 247, 211, 0.35), transparent 52%),
+    linear-gradient(180deg, #03040a 0%, #02030a 100%);
+  --tk-glass-surface: rgba(6, 9, 16, 0.82);
+  --tk-glass-border: rgba(255, 255, 255, 0.08);
+  --tk-glass-shadow: 0 0 40px rgba(15, 23, 42, 0.45);
+  --tk-glass-blur: 26px;
+}
+
 body {
-  @apply bg-gray-900;
+  background-color: var(--tk-shell-base);
+}
+
+@layer components {
+  .tk-markets-shell {
+    background: var(--tk-shell-gradient);
+  }
+
+  .tk-glass-panel {
+    background: var(--tk-glass-surface);
+    border: 1px solid var(--tk-glass-border);
+    box-shadow: var(--tk-glass-shadow);
+    backdrop-filter: blur(var(--tk-glass-blur));
+    -webkit-backdrop-filter: blur(var(--tk-glass-blur));
+  }
 }

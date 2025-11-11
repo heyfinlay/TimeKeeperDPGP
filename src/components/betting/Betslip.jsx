@@ -145,7 +145,7 @@ export default function Betslip({ marketId, outcomeId, onClose, onSuccess }) {
 
   if (!market || !outcome) {
     return (
-      <div className="flex flex-col gap-4 rounded-3xl border border-white/10 bg-[#060910]/95 p-6 text-center text-sm text-neutral-300">
+      <div className="tk-glass-panel flex flex-col gap-4 rounded-3xl border border-white/10 p-6 text-center text-sm text-neutral-300">
         <p>Select a market outcome to start building your betslip.</p>
         {typeof onClose === 'function' ? (
           <button
@@ -162,7 +162,7 @@ export default function Betslip({ marketId, outcomeId, onClose, onSuccess }) {
 
   if (showSuccess) {
     return (
-      <div className="flex flex-col items-center gap-4 rounded-3xl border border-green-500/20 bg-green-950/20 p-8 text-center">
+      <div className="tk-glass-panel flex flex-col items-center gap-4 rounded-3xl border border-green-500/20 bg-green-950/20 p-8 text-center">
         <CheckCircle2 className="h-16 w-16 text-green-400" />
         <div className="flex flex-col gap-2">
           <h3 className="text-2xl font-semibold text-white">Wager placed!</h3>
@@ -177,7 +177,7 @@ export default function Betslip({ marketId, outcomeId, onClose, onSuccess }) {
   }
 
   return (
-    <div className="flex flex-col gap-6 rounded-3xl border border-white/10 bg-[#060910]/95 p-6 shadow-xl">
+    <div className="tk-glass-panel flex flex-col gap-6 rounded-3xl border border-white/10 p-6">
       <div className="flex items-start justify-between gap-3">
         <div className="flex flex-col gap-1">
           <span className="text-xs uppercase tracking-[0.35em] text-[#7C6BFF]">Betslip</span>
