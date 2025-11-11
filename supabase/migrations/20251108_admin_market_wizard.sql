@@ -122,8 +122,7 @@ BEGIN
     values (v_market.id, v_label, greatest(0, v_sort_order), v_color, v_driver)
     returning id, label, sort_order, color, driver_id into v_outcome;
 
-    v_created_outcomes := jsonb_array_append(
-      v_created_outcomes,
+    v_created_outcomes := coalesce(v_created_outcomes, '[]'::jsonb) || jsonb_build_array(
       jsonb_build_object(
         'id', v_outcome.id,
         'label', v_outcome.label,
