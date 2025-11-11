@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Activity, Clock, TrendingDown, TrendingUp } from 'lucide-react';
 import { useParimutuelStore, driverStats } from '@/state/parimutuelStore.js';
 import { useAuth } from '@/context/AuthContext.jsx';
-import { formatCurrency, formatPercent, formatOdds, formatRelativeTime } from '@/utils/betting.js';
+import { formatCurrency, formatPercent } from '@/utils/betting.js';
 
 const TABS = [
   { id: 'overview', label: 'Pool Overview' },
@@ -30,6 +30,42 @@ const findMarket = (events, marketId) => {
 
 const findOutcome = (market, outcomeId) =>
   market?.outcomes?.find((candidate) => String(candidate.id) === String(outcomeId)) ?? null;
+
+const formatOdds = (value) => {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric <= 0) {
+    return '—';
+  }
+  return `x${numeric.toFixed(numeric >= 10 ? 1 : 2)}`;
+};
+
+const formatRelativeTime = (timestamp) => {
+  if (!timestamp) {
+    return '—';
+  }
+  const date = new Date(timestamp);
+  const value = date.getTime();
+  if (Number.isNaN(value)) {
+    return '—';
+  }
+  const diffMs = Date.now() - value;
+  if (diffMs < 30000) {
+    return 'Just now';
+  }
+  if (diffMs < 60000) {
+    return '1m ago';
+  }
+  const minutes = Math.round(diffMs / 60000);
+  if (minutes < 60) {
+    return `${minutes}m ago`;
+  }
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) {
+    return `${hours}h ago`;
+  }
+  const days = Math.round(hours / 24);
+  return `${days}d ago`;
+};
 
 const buildSparkline = (history, outcomeId) => {
   if (!Array.isArray(history) || history.length === 0) {
