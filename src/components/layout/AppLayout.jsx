@@ -67,7 +67,7 @@ export default function AppLayout() {
 
   const showWallet = isAuthenticated || !isSupabaseConfigured;
   const formattedBalanceCompact = useMemo(
-    () => formatCurrency(balance, { compact: true, maximumFractionDigits: 1, symbol: '' }),
+    () => formatCurrency(balance, { compact: true, maximumFractionDigits: 1 }),
     [balance],
   );
   const formattedBalanceFull = useMemo(
