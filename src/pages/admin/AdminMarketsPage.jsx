@@ -612,7 +612,7 @@ const AdminMarketsPage = () => {
                     .map((deposit) => (
                       <div
                         key={deposit.id}
-                        className="flex flex-col gap-3 rounded-xl border border-white/5 bg-[#000000]/40 p-4"
+                        className="flex flex-col gap-2 rounded-xl border border-white/5 bg-[#000000]/40 p-4"
                       >
                         <div className="flex items-center justify-between">
                           <div className="flex flex-col">
@@ -631,14 +631,6 @@ const AdminMarketsPage = () => {
                           )}
                           {deposit.reference_code ? <span>Reference: {deposit.reference_code}</span> : null}
                           <span>{new Date(deposit.created_at).toLocaleString()}</span>
-                        </div>
-                        <div className="flex items-center justify-end gap-2">
-                          <button
-                            onClick={() => handleApproveDeposit(deposit.id)}
-                            className="rounded-full border border-[#9FF7D3]/40 bg-[#9FF7D3]/10 px-3 py-1 text-xs text-[#9FF7D3] transition hover:border-[#9FF7D3]/70 hover:text-white"
-                          >
-                            Mark Received
-                          </button>
                         </div>
                       </div>
                     ))
