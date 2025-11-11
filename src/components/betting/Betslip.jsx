@@ -38,9 +38,14 @@ export default function Betslip({ marketId, outcomeId, onClose, onSuccess }) {
 
   const activeMarketId = marketId ?? selectedMarketId;
   const market = useMemo(() => findMarket(events, activeMarketId), [events, activeMarketId]);
-  const outcome = useMemo(
+  const defaultOutcome = useMemo(
     () => (market ? findOutcome(market, outcomeId) ?? market?.outcomes?.[0] ?? null : null),
     [market, outcomeId],
+  );
+  const [selectedOutcomeId, setSelectedOutcomeId] = useState(defaultOutcome?.id ?? null);
+  const outcome = useMemo(
+    () => (market ? findOutcome(market, selectedOutcomeId) ?? defaultOutcome ?? null : null),
+    [market, selectedOutcomeId, defaultOutcome],
   );
   const pool = market ? pools[market.id] : null;
   const stats = useMemo(() => driverStats(market, pool), [market, pool]);
@@ -65,6 +70,10 @@ export default function Betslip({ marketId, outcomeId, onClose, onSuccess }) {
     }, 1000);
     return () => clearInterval(timer);
   }, [market?.closes_at]);
+
+  useEffect(() => {
+    setSelectedOutcomeId(defaultOutcome?.id ?? null);
+  }, [defaultOutcome?.id]);
 
   useEffect(() => {
     setStake(0);
@@ -197,6 +206,34 @@ export default function Betslip({ marketId, outcomeId, onClose, onSuccess }) {
       </div>
 
       <div className="grid gap-3 rounded-2xl border border-white/5 bg-white/5 p-4">
+        <div className="flex flex-col gap-3">
+          <label htmlFor="betslip-outcome" className="text-xs uppercase tracking-[0.3em] text-neutral-500">
+            Outcome
+          </label>
+          <div className="relative">
+            <select
+              id="betslip-outcome"
+              value={outcome?.id ?? ''}
+              onChange={(event) => {
+                const rawValue = event.target.value;
+                const matched = market?.outcomes?.find((item) => String(item.id) === rawValue) ?? null;
+                setSelectedOutcomeId(matched?.id ?? null);
+                setStake(0);
+                setCustomStake('');
+                setLocalError(null);
+              }}
+              disabled={isPlacing || !market?.outcomes?.length}
+              className="w-full appearance-none rounded-xl border border-white/10 bg-white/5 py-3 pl-4 pr-10 text-sm text-white transition focus:border-[#9FF7D3]/40 focus:outline-none focus:ring-2 focus:ring-[#9FF7D3]/20 disabled:opacity-50"
+            >
+              {market?.outcomes?.map((item) => (
+                <option key={item.id} value={item.id} className="bg-[#05040f] text-white">
+                  {item.label}
+                </option>
+              ))}
+            </select>
+            <span className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-neutral-500">⌄</span>
+          </div>
+        </div>
         <div className="flex items-center justify-between text-xs text-neutral-400">
           <span>Pool size</span>
           <span>{formatCurrency(pool?.total ?? market.pool_total ?? 0, { compact: false, maximumFractionDigits: 0 })}</span>
@@ -239,7 +276,7 @@ export default function Betslip({ marketId, outcomeId, onClose, onSuccess }) {
               type="button"
               onClick={() => handleQuickStake(qs.value)}
               disabled={isPlacing}
-              className={`rounded-xl border px-4 py-3 text-sm font-semibold transition ${
+              className={`flex items-center justify-center rounded-xl border px-4 py-3 text-sm font-semibold transition ${
                 stake === qs.value
                   ? 'border-[#9FF7D3] bg-[#9FF7D3]/10 text-[#9FF7D3]'
                   : 'border-white/10 bg-white/5 text-white hover:border-white/20 hover:bg-white/10'
