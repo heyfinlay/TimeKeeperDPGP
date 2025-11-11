@@ -37,10 +37,10 @@ export default function MarketCard({ market, pool, stats, onSelect, ctaLabel = '
   }, [pool?.total, derivedStats]);
 
   return (
-    <div className="tk-glass-panel flex h-full flex-col gap-5 rounded-3xl border border-white/5 p-6">
+    <div className="tk-glass-panel flex h-full flex-col gap-5 rounded-2xl border border-white/5 p-6">
       <header className="flex items-start justify-between gap-3">
         <div className="flex flex-col gap-2">
-          <span className="inline-flex items-center gap-2 rounded-full border border-[#9FF7D3]/30 bg-[#9FF7D3]/10 px-3 py-1 text-[0.6rem] uppercase tracking-[0.35em] text-[#9FF7D3]">
+          <span className="inline-flex items-center gap-2 rounded-lg border border-[#9FF7D3]/30 bg-[#9FF7D3]/10 px-3 py-1 text-[0.6rem] uppercase tracking-[0.3em] text-[#9FF7D3]">
             {market?.type ?? 'Market'}
           </span>
           <h3 className="text-xl font-semibold text-white">{market?.name ?? 'Unknown market'}</h3>
@@ -48,7 +48,7 @@ export default function MarketCard({ market, pool, stats, onSelect, ctaLabel = '
             <p className="text-sm text-neutral-400">{market.description}</p>
           ) : null}
         </div>
-        <div className="flex items-center gap-2 rounded-full bg-white/5 px-3 py-1 text-xs uppercase tracking-[0.2em] text-neutral-300">
+        <div className="flex items-center gap-2 rounded-lg bg-white/5 px-4 py-1 text-xs uppercase tracking-[0.2em] text-neutral-300 whitespace-nowrap">
           <Clock className="h-4 w-4" />
           <span>{normaliseStatus(market?.status)}</span>
         </div>
@@ -77,9 +77,9 @@ export default function MarketCard({ market, pool, stats, onSelect, ctaLabel = '
                   {formatCurrency(entry.total)} · {formatPercent(entry.share)}
                 </span>
               </div>
-              <div className="h-2 w-full rounded-full bg-white/10">
+              <div className="h-2 w-full rounded-md bg-white/10">
                 <div
-                  className="h-2 rounded-full bg-gradient-to-r from-[#7C6BFF] via-[#9FF7D3] to-[#dcd7ff]"
+                  className="h-2 rounded-md bg-gradient-to-r from-[#7C6BFF] via-[#9FF7D3] to-[#dcd7ff]"
                   style={{ width: `${Math.min(100, Math.round(entry.share * 100))}%` }}
                 />
               </div>
@@ -97,7 +97,7 @@ export default function MarketCard({ market, pool, stats, onSelect, ctaLabel = '
           <button
             type="button"
             onClick={onSelect}
-            className="inline-flex items-center gap-2 rounded-full border border-[#9FF7D3]/40 px-3 py-1 text-[0.65rem] uppercase tracking-[0.3em] text-[#9FF7D3] transition hover:border-[#9FF7D3]/70 hover:text-white"
+            className="inline-flex items-center gap-2 rounded-lg border border-[#9FF7D3]/40 px-3 py-1 text-[0.65rem] uppercase tracking-[0.25em] text-[#9FF7D3] transition hover:border-[#9FF7D3]/70 hover:text-white"
           >
             {ctaLabel} <ArrowRight className="h-4 w-4" />
           </button>

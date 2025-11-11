@@ -3,18 +3,18 @@
 @tailwind utilities;
 
 :root {
-  --tk-shell-base: #03040a;
-  --tk-shell-gradient: radial-gradient(circle at 18% 12%, rgba(124, 107, 255, 0.42), transparent 55%),
-    radial-gradient(circle at 85% 8%, rgba(159, 247, 211, 0.35), transparent 52%),
-    linear-gradient(180deg, #03040a 0%, #02030a 100%);
-  --tk-glass-surface: rgba(6, 9, 16, 0.82);
+  --tk-shell-base: #050816;
+  --tk-shell-gradient: radial-gradient(circle at 18% 8%, rgba(124, 107, 255, 0.38) 0%, rgba(9, 13, 30, 0) 55%),
+    radial-gradient(circle at 82% 0%, rgba(159, 247, 211, 0.28) 0%, rgba(7, 14, 24, 0) 52%),
+    radial-gradient(circle at 50% 45%, rgba(11, 14, 30, 0.88) 0%, rgba(6, 10, 24, 0.94) 60%, rgba(5, 8, 22, 1) 100%);
+  --tk-glass-surface: rgba(7, 11, 20, 0.85);
   --tk-glass-border: rgba(255, 255, 255, 0.08);
-  --tk-glass-shadow: 0 0 40px rgba(15, 23, 42, 0.45);
-  --tk-glass-blur: 26px;
+  --tk-glass-shadow: 0 0 60px rgba(8, 12, 24, 0.55);
+  --tk-glass-blur: 22px;
 }
 
 body {
-  background-color: var(--tk-shell-base);
+  background: var(--tk-shell-gradient), var(--tk-shell-base);
 }
 
 @layer components {
