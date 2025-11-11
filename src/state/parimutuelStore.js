@@ -25,6 +25,7 @@ const baseState = {
   selectedEventId: null,
   selectedMarketId: null,
   pools: {},
+  poolHistory: {},
   placement: {
     isPlacing: false,
     marketId: null,
@@ -185,6 +186,62 @@ export const driverStats = (market, pool) => {
     .sort((a, b) => b.total - a.total);
 };
 
+const MAX_POOL_HISTORY = 30;
+
+const capturePoolSnapshot = (market, pool, timestamp = new Date().toISOString()) => {
+  if (!market?.id) {
+    return null;
+  }
+  const stats = driverStats(market, pool);
+  const total = Number(pool?.total ?? market?.pool_total ?? 0);
+  const safeTotal = Number.isFinite(total) ? total : 0;
+  return {
+    timestamp,
+    total: safeTotal,
+    outcomes: stats.reduce((acc, entry) => {
+      acc[entry.outcomeId] = {
+        total: entry.total ?? 0,
+        share: entry.share ?? 0,
+        odds: entry.odds ?? 0,
+        wagerCount: entry.wagerCount ?? 0,
+      };
+      return acc;
+    }, {}),
+  };
+};
+
+const buildInitialPoolHistory = (events, pools, timestamp) => {
+  if (!Array.isArray(events) || events.length === 0) {
+    return {};
+  }
+  const history = {};
+  events.forEach((event) => {
+    event?.markets?.forEach((market) => {
+      const snapshot = capturePoolSnapshot(market, pools?.[market.id], timestamp);
+      if (snapshot) {
+        history[market.id] = { snapshots: [snapshot] };
+      }
+    });
+  });
+  return history;
+};
+
+const appendPoolHistorySnapshot = (history, market, pool, timestamp) => {
+  if (!market?.id) {
+    return history;
+  }
+  const snapshot = capturePoolSnapshot(market, pool, timestamp);
+  if (!snapshot) {
+    return history;
+  }
+  const existing = history?.[market.id]?.snapshots ?? [];
+  const nextSnapshots = [...existing.slice(-(MAX_POOL_HISTORY - 1)), snapshot];
+  return {
+    ...history,
+    [market.id]: { snapshots: nextSnapshots },
+  };
+};
+
 export const settleEvent = (event, winningOutcomeIds = []) => {
   if (!event) {
     return event;
@@ -259,6 +316,7 @@ const reducer = (state, action) => {
     case ActionTypes.LOAD_SUCCESS: {
       const events = action.payload?.events ?? [];
       const pools = buildPoolsFromEvents(events);
+      const timestamp = new Date().toISOString();
       const persistedEventId = state.selectedEventId;
       const persistedMarketId = state.selectedMarketId;
       const nextEvent =
@@ -272,6 +330,7 @@ const reducer = (state, action) => {
         supportsMarkets: action.payload?.supportsMarkets ?? state.supportsMarkets,
         error: null,
         pools,
+        poolHistory: buildInitialPoolHistory(events, pools, timestamp),
         selectedEventId: nextEvent?.id ?? null,
         selectedMarketId: nextMarket?.id ?? fallbackMarket?.id ?? null,
         lastLoadedAt: new Date().toISOString(),
@@ -285,6 +344,7 @@ const reducer = (state, action) => {
         supportsMarkets: action.payload?.supportsMarkets ?? false,
         events: [],
         pools: {},
+        poolHistory: {},
       };
     case ActionTypes.SELECT_EVENT: {
       const event = findEvent(state.events, action.payload?.eventId);
@@ -317,10 +377,21 @@ const reducer = (state, action) => {
     case ActionTypes.PLACE_WAGER_SUCCESS: {
       const { marketId, outcomeId, stake = 0, wager, message } = action.payload ?? {};
       const delta = Number(stake) || 0;
+      const events = updateEventsWithPool(state.events, marketId, outcomeId, delta);
+      const pools = updatePoolsWithDelta(state.pools, marketId, outcomeId, delta);
+      const market = findMarket(events, marketId);
+      const pool = market ? pools?.[market.id] ?? null : null;
+      const nextHistory = appendPoolHistorySnapshot(
+        state.poolHistory,
+        market,
+        pool,
+        new Date().toISOString(),
+      );
       return {
         ...state,
-        events: updateEventsWithPool(state.events, marketId, outcomeId, delta),
-        pools: updatePoolsWithDelta(state.pools, marketId, outcomeId, delta),
+        events,
+        pools,
+        poolHistory: nextHistory,
         placement: {
           isPlacing: false,
           marketId,
@@ -374,6 +445,7 @@ export const createParimutuelState = () => ({
   ...baseState,
   events: [],
   pools: {},
+  poolHistory: {},
   placement: { ...baseState.placement },
 });
 export const parimutuelReducer = reducer;
