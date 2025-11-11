@@ -9,16 +9,18 @@ import {
 import { formatCurrency, formatPercent, formatCountdown } from '@/utils/betting.js';
 
 const QUICK_STAKES = [
-  { label: '1K', value: 1000 },
   { label: '10K', value: 10000 },
+  { label: '25K', value: 25000 },
+  { label: '50K', value: 50000 },
   { label: '100K', value: 100000 },
+  { label: '250K', value: 250000 },
   { label: '1M', value: 1000000 },
 ];
 
 const findMarket = (events, marketId) => {
   for (const event of events) {
     if (!Array.isArray(event?.markets)) continue;
-    const market = event.markets.find((item) => item.id === marketId);
+    const market = event.markets.find((item) => String(item.id) === String(marketId));
     if (market) {
       return market;
     }
@@ -27,7 +29,35 @@ const findMarket = (events, marketId) => {
 };
 
 const findOutcome = (market, outcomeId) =>
-  market?.outcomes?.find((candidate) => candidate.id === outcomeId) ?? null;
+  market?.outcomes?.find((candidate) => String(candidate.id) === String(outcomeId)) ?? null;
+
+const normaliseStatus = (status) => {
+  if (!status) return 'Scheduled';
+  return String(status).replaceAll('_', ' ');
+};
+
+const computeEstimatedReturn = (stake, market, pool, outcome) => {
+  if (!stake || !market || !outcome) {
+    return 0;
+  }
+  const poolTotals = pool ?? {};
+  const totalPool = Number(poolTotals.total ?? market.pool_total ?? 0);
+  if (!Number.isFinite(totalPool) || totalPool <= 0) {
+    return 0;
+  }
+  const rakeBps = Number.isFinite(Number(poolTotals.rakeBps ?? market.rake_bps))
+    ? Number(poolTotals.rakeBps ?? market.rake_bps)
+    : 0;
+  const rakeMultiplier = Math.max(0, 1 - rakeBps / 10000);
+  const netPool = totalPool * rakeMultiplier;
+  const outcomeContribution = Number(
+    poolTotals.outcomes?.[outcome.id]?.total ?? outcome.pool_total ?? 0,
+  );
+  if (!Number.isFinite(outcomeContribution) || outcomeContribution <= 0) {
+    return 0;
+  }
+  return (stake / outcomeContribution) * netPool;
+};
 
 export default function Betslip({ marketId, outcomeId, onClose, onSuccess }) {
   const { balance, refresh } = useWallet();
@@ -38,20 +68,42 @@ export default function Betslip({ marketId, outcomeId, onClose, onSuccess }) {
 
   const activeMarketId = marketId ?? selectedMarketId;
   const market = useMemo(() => findMarket(events, activeMarketId), [events, activeMarketId]);
-  const defaultOutcome = useMemo(
-    () => (market ? findOutcome(market, outcomeId) ?? market?.outcomes?.[0] ?? null : null),
-    [market, outcomeId],
+
+  const marketOptions = useMemo(
+    () =>
+      events.flatMap((event) =>
+        Array.isArray(event?.markets)
+          ? event.markets.map((candidate) => ({
+              eventId: event.id,
+              marketId: candidate.id,
+              value: String(candidate.id),
+              label: `${event.title ?? 'Event'} · ${candidate.name ?? 'Market'}`,
+            }))
+          : [],
+      ),
+    [events],
   );
+
+  const activeMarketOption = marketOptions.find((option) => option.marketId === market?.id) ?? null;
+
+  const pool = market ? pools[market.id] : null;
+  const stats = useMemo(() => driverStats(market, pool), [market, pool]);
+
+  const defaultOutcome = useMemo(() => {
+    if (!market) {
+      return null;
+    }
+    if (outcomeId) {
+      return findOutcome(market, outcomeId) ?? market.outcomes?.[0] ?? null;
+    }
+    const placing = placement?.marketId === market.id ? findOutcome(market, placement?.outcomeId) : null;
+    return placing ?? market.outcomes?.[0] ?? null;
+  }, [market, outcomeId, placement?.marketId, placement?.outcomeId]);
+
   const [selectedOutcomeId, setSelectedOutcomeId] = useState(defaultOutcome?.id ?? null);
   const outcome = useMemo(
     () => (market ? findOutcome(market, selectedOutcomeId) ?? defaultOutcome ?? null : null),
     [market, selectedOutcomeId, defaultOutcome],
-  );
-  const pool = market ? pools[market.id] : null;
-  const stats = useMemo(() => driverStats(market, pool), [market, pool]);
-  const outcomeStats = useMemo(
-    () => (outcome ? stats.find((entry) => entry.outcomeId === outcome.id) ?? null : null),
-    [stats, outcome],
   );
 
   const [stake, setStake] = useState(0);
@@ -60,11 +112,14 @@ export default function Betslip({ marketId, outcomeId, onClose, onSuccess }) {
   const [showSuccess, setShowSuccess] = useState(false);
   const [countdown, setCountdown] = useState(() => formatCountdown(market?.closes_at));
 
-  const isPlacing = placement.isPlacing && placement.marketId === market?.id && placement.outcomeId === outcome?.id;
-  const estimatedReturn = outcomeStats ? (Number(stake) || 0) * (Number(outcomeStats.odds) || 0) : 0;
+  const isPlacing =
+    placement.isPlacing && placement.marketId === market?.id && placement.outcomeId === outcome?.id;
 
   useEffect(() => {
     setCountdown(formatCountdown(market?.closes_at));
+    if (!market?.closes_at) {
+      return undefined;
+    }
     const timer = setInterval(() => {
       setCountdown(formatCountdown(market?.closes_at));
     }, 1000);
@@ -82,6 +137,22 @@ export default function Betslip({ marketId, outcomeId, onClose, onSuccess }) {
     setShowSuccess(false);
   }, [market?.id, outcome?.id]);
 
+  const estimatedReturn = useMemo(
+    () => computeEstimatedReturn(Number(stake) || 0, market, pool, outcome),
+    [stake, market, pool, outcome],
+  );
+
+  const impliedOdds = stake > 0 && estimatedReturn > 0 ? estimatedReturn / stake : 0;
+  const outcomeStats = useMemo(
+    () => (outcome ? stats.find((entry) => entry.outcomeId === outcome.id) ?? null : null),
+    [stats, outcome],
+  );
+
+  const totalWagers = useMemo(
+    () => stats.reduce((sum, entry) => sum + (entry.wagerCount ?? 0), 0),
+    [stats],
+  );
+
   const handleQuickStake = (value) => {
     setStake(value);
     setCustomStake(String(value));
@@ -95,6 +166,22 @@ export default function Betslip({ marketId, outcomeId, onClose, onSuccess }) {
     setLocalError(null);
   };
 
+  const handleSelectOutcome = (value) => {
+    setSelectedOutcomeId(value);
+    setLocalError(null);
+  };
+
+  const handleSelectMarket = (value) => {
+    const matched = marketOptions.find((option) => option.value === value);
+    if (!matched) {
+      return;
+    }
+    actions.selectEvent(matched.eventId);
+    actions.selectMarket(matched.marketId);
+    setSelectedOutcomeId(null);
+    setLocalError(null);
+  };
+
   const handlePlaceWager = async () => {
     if (!market || !outcome) {
       setLocalError('Select a market and outcome.');
@@ -102,7 +189,7 @@ export default function Betslip({ marketId, outcomeId, onClose, onSuccess }) {
     }
 
     if (!stake || stake <= 0) {
-      setLocalError('Please select a stake amount.');
+      setLocalError('Please choose a stake amount.');
       return;
     }
 
@@ -154,7 +241,7 @@ export default function Betslip({ marketId, outcomeId, onClose, onSuccess }) {
 
   if (!market || !outcome) {
     return (
-      <div className="tk-glass-panel flex flex-col gap-4 rounded-2xl border border-white/10 p-6 text-center text-sm text-neutral-300">
+      <div className="flex flex-col gap-4 bg-transparent p-6 text-center text-sm text-neutral-300">
         <p>Select a market outcome to start building your betslip.</p>
         {typeof onClose === 'function' ? (
           <button
@@ -171,11 +258,11 @@ export default function Betslip({ marketId, outcomeId, onClose, onSuccess }) {
 
   if (showSuccess) {
     return (
-      <div className="tk-glass-panel flex flex-col items-center gap-4 rounded-2xl border border-green-500/20 bg-green-950/20 p-8 text-center">
-        <CheckCircle2 className="h-16 w-16 text-green-400" />
+      <div className="flex flex-col items-center gap-4 px-6 py-10 text-center">
+        <CheckCircle2 className="h-16 w-16 text-emerald-400" />
         <div className="flex flex-col gap-2">
           <h3 className="text-2xl font-semibold text-white">Wager placed!</h3>
-          <p className="text-sm text-green-200">
+          <p className="text-sm text-emerald-200">
             {formatCurrency(stake, { compact: false, maximumFractionDigits: 0 })} on{' '}
             <span className="font-semibold">{outcome.label}</span>
           </p>
@@ -185,13 +272,20 @@ export default function Betslip({ marketId, outcomeId, onClose, onSuccess }) {
     );
   }
 
+  const isMarketActive = String(market?.status ?? '').toLowerCase() === 'open';
+  const poolTotal = pool?.total ?? market.pool_total ?? 0;
+
   return (
-    <div className="tk-glass-panel flex flex-col gap-6 rounded-xl border border-white/10 p-6">
+    <div className="flex h-full flex-col gap-6 rounded-none bg-[#050a1a]/95 px-6 py-8 text-white sm:rounded-none">
       <div className="flex items-start justify-between gap-3">
         <div className="flex flex-col gap-1">
           <span className="text-xs uppercase tracking-[0.35em] text-[#7C6BFF]">Betslip</span>
-          <h3 className="text-lg font-semibold text-white">{market.name}</h3>
-          <p className="text-sm text-neutral-400">{outcome.label}</p>
+          <h3 className="truncate text-lg font-semibold" title={market.name}>
+            {market.name}
+          </h3>
+          <p className="text-xs uppercase tracking-[0.25em] text-neutral-500">
+            {normaliseStatus(market.status)} · {stats.length} outcomes · {totalWagers} bets
+          </p>
         </div>
         {typeof onClose === 'function' ? (
           <button
@@ -205,89 +299,118 @@ export default function Betslip({ marketId, outcomeId, onClose, onSuccess }) {
         ) : null}
       </div>
 
-      <div className="grid gap-3 rounded-xl border border-white/5 bg-white/5 p-4">
-        <div className="flex flex-col gap-3">
-          <label htmlFor="betslip-outcome" className="text-xs uppercase tracking-[0.3em] text-neutral-500">
-            Outcome
+      <div className="flex flex-col gap-4 rounded-2xl border border-white/10 bg-white/[0.04] p-4">
+        <div className="flex flex-col gap-2">
+          <label htmlFor="betslip-market" className="text-xs uppercase tracking-[0.3em] text-neutral-500">
+            Market
           </label>
           <div className="relative">
             <select
-              id="betslip-outcome"
-              value={outcome?.id ?? ''}
-              onChange={(event) => {
-                const rawValue = event.target.value;
-                const matched = market?.outcomes?.find((item) => String(item.id) === rawValue) ?? null;
-                setSelectedOutcomeId(matched?.id ?? null);
-                setStake(0);
-                setCustomStake('');
-                setLocalError(null);
-              }}
-              disabled={isPlacing || !market?.outcomes?.length}
-              className="w-full appearance-none rounded-xl border border-white/10 bg-white/5 py-3 pl-4 pr-10 text-sm text-white transition focus:border-[#9FF7D3]/40 focus:outline-none focus:ring-2 focus:ring-[#9FF7D3]/20 disabled:opacity-50"
+              id="betslip-market"
+              value={activeMarketOption?.value ?? ''}
+              onChange={(event) => handleSelectMarket(event.target.value)}
+              disabled={isPlacing || marketOptions.length === 0}
+              className="w-full appearance-none rounded-xl border border-white/10 bg-[#050a1a] py-3 pl-4 pr-10 text-sm text-white transition focus:border-[#9FF7D3]/40 focus:outline-none focus:ring-2 focus:ring-[#9FF7D3]/20 disabled:opacity-50"
             >
-              {market?.outcomes?.map((item) => (
-                <option key={item.id} value={item.id} className="bg-[#05040f] text-white">
-                  {item.label}
+              {marketOptions.map((option) => (
+                <option key={option.marketId} value={option.value} className="bg-[#050a1a] text-white">
+                  {option.label}
                 </option>
               ))}
             </select>
             <span className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-neutral-500">⌄</span>
           </div>
         </div>
-        <div className="flex items-center justify-between text-xs text-neutral-400">
-          <span>Pool size</span>
-          <span>{formatCurrency(pool?.total ?? market.pool_total ?? 0, { compact: false, maximumFractionDigits: 0 })}</span>
-        </div>
-        <div className="flex items-center justify-between text-xs text-neutral-400">
-          <span>Countdown</span>
-          <span>{countdown.label}</span>
-        </div>
+
         <div className="flex flex-col gap-2">
-          <span className="text-xs uppercase tracking-[0.3em] text-neutral-500">Outcome share</span>
+          <span className="text-xs uppercase tracking-[0.3em] text-neutral-500">Outcomes</span>
+          <div className="flex flex-wrap justify-center gap-2">
+            {Array.isArray(market?.outcomes) && market.outcomes.length > 0 ? (
+              market.outcomes.map((item) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={() => handleSelectOutcome(item.id)}
+                  disabled={isPlacing}
+                  aria-pressed={String(selectedOutcomeId) === String(item.id)}
+                  title={item.label}
+                  className={`max-w-[48%] flex-1 truncate rounded-full px-4 py-2 text-sm transition focus:outline-none focus:ring-2 focus:ring-[#9FF7D3]/40 ${
+                    String(selectedOutcomeId) === String(item.id)
+                      ? 'bg-[#9FF7D3]/15 text-[#9FF7D3]'
+                      : 'bg-white/5 text-white hover:bg-white/10'
+                  } disabled:opacity-50`}
+                >
+                  {item.label}
+                </button>
+              ))
+            ) : (
+              <span className="text-xs text-neutral-500">No outcomes available.</span>
+            )}
+          </div>
+        </div>
+
+        <div className="grid gap-2 rounded-xl border border-white/10 bg-[#050a1a]/60 p-3 text-sm text-neutral-300">
+          <div className="flex items-center justify-between">
+            <span>Pool size</span>
+            <span>{formatCurrency(poolTotal, { compact: false, maximumFractionDigits: 0 })}</span>
+          </div>
+          <div className="flex items-center justify-between">
+            <span>Countdown</span>
+            <span>{countdown.label}</span>
+          </div>
           {outcomeStats ? (
-            <div className="flex flex-col gap-2 rounded-lg border border-white/10 bg-white/5 p-3">
-              <div className="flex items-center justify-between text-sm text-neutral-300">
-                <span>{outcome.label}</span>
-                <span>{formatPercent(outcomeStats.share)}</span>
-              </div>
-              <p className="text-xs text-neutral-500">
-                {formatCurrency(outcomeStats.total, { compact: false, maximumFractionDigits: 0 })} wagered ·{' '}
-                {outcomeStats.wagerCount} bets
-              </p>
+            <div className="flex items-center justify-between">
+              <span className="truncate pr-3" title={outcome.label}>
+                {outcome.label}
+              </span>
+              <span>{formatPercent(outcomeStats.share)}</span>
             </div>
           ) : (
-            <p className="text-xs text-neutral-500">No wagers yet on this outcome.</p>
+            <span className="text-xs text-neutral-500">No wagers yet on this outcome.</span>
           )}
         </div>
+
         {estimatedReturn > 0 ? (
-          <div className="flex items-center justify-between rounded-lg border border-[#9FF7D3]/20 bg-[#9FF7D3]/10 px-4 py-3 text-xs text-[#9FF7D3]">
-            <span>Estimated return</span>
-            <span>{formatCurrency(estimatedReturn, { compact: false, maximumFractionDigits: 1 })}</span>
+          <div className="flex flex-col gap-1 rounded-xl border border-[#9FF7D3]/30 bg-[#9FF7D3]/10 px-4 py-3 text-xs text-[#9FF7D3]">
+            <div className="flex items-center justify-between">
+              <span>Estimated return</span>
+              <span>{formatCurrency(estimatedReturn, { compact: false, maximumFractionDigits: 1 })}</span>
+            </div>
+            {impliedOdds > 0 ? (
+              <div className="flex items-center justify-between text-[0.65rem] uppercase tracking-[0.3em] text-[#9FF7D3]/80">
+                <span>Implied odds</span>
+                <span>{impliedOdds.toFixed(2)}x</span>
+              </div>
+            ) : null}
           </div>
         ) : null}
       </div>
 
       <div className="flex flex-col gap-3">
         <label className="text-xs uppercase tracking-[0.3em] text-neutral-500">Quick stake</label>
-        <div className="grid grid-cols-4 gap-2">
-          {QUICK_STAKES.map((qs) => (
-            <button
-              key={qs.value}
-              type="button"
-              onClick={() => handleQuickStake(qs.value)}
-              disabled={isPlacing}
-              className={`flex flex-col items-center justify-center gap-1 rounded-lg border px-3 py-2 text-sm font-semibold transition ${
-                stake === qs.value
-                  ? 'border-[#9FF7D3] bg-[#9FF7D3]/10 text-[#9FF7D3]'
-                  : 'border-white/10 bg-white/5 text-white hover:border-white/20 hover:bg-white/10'
-              } disabled:opacity-50`}
-            >
-              <span className="text-base leading-none">💎</span>
-              <span className="tabular-nums">
-                {formatCurrency(qs.value, { symbol: '', maximumFractionDigits: 0 })}
-              </span>
-            </button>
-          ))}
+        <div className="flex flex-wrap justify-center gap-2">
+          {QUICK_STAKES.map((qs) => {
+            const isActive = stake === qs.value;
+            return (
+              <button
+                key={qs.value}
+                type="button"
+                onClick={() => handleQuickStake(qs.value)}
+                disabled={isPlacing}
+                aria-pressed={isActive}
+                className={`flex min-w-[80px] flex-col items-center justify-center gap-1 rounded-lg border px-3 py-2 text-sm font-semibold transition focus:outline-none focus:ring-2 focus:ring-[#9FF7D3]/40 ${
+                  isActive
+                    ? 'border-[#9FF7D3] bg-[#9FF7D3]/15 text-[#9FF7D3]'
+                    : 'border-white/10 bg-white/5 text-white hover:border-white/20 hover:bg-white/10'
+                } disabled:opacity-50`}
+              >
+                <span className="text-base leading-none">💎</span>
+                <span className="tabular-nums">
+                  {formatCurrency(qs.value, { symbol: '', maximumFractionDigits: 0 })}
+                </span>
+              </button>
+            );
+          })}
         </div>
       </div>
 
@@ -296,7 +419,7 @@ export default function Betslip({ marketId, outcomeId, onClose, onSuccess }) {
           Custom amount
         </label>
         <div className="relative">
-          <span className="absolute left-4 top-1/2 -translate-y-1/2 text-neutral-400">💎</span>
+          <span className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-neutral-400">💎</span>
           <input
             id="custom-stake"
             type="text"
@@ -305,25 +428,25 @@ export default function Betslip({ marketId, outcomeId, onClose, onSuccess }) {
             onChange={handleCustomStakeChange}
             disabled={isPlacing}
             placeholder="Enter amount..."
-            className="w-full rounded-lg border border-white/10 bg-white/5 py-3 pl-10 pr-4 text-white placeholder:text-neutral-600 focus:border-[#9FF7D3]/40 focus:outline-none focus:ring-2 focus:ring-[#9FF7D3]/20 disabled:opacity-50"
+            className="w-full rounded-xl border border-white/10 bg-white/5 py-3 pl-10 pr-4 text-white placeholder:text-neutral-600 focus:border-[#9FF7D3]/40 focus:outline-none focus:ring-2 focus:ring-[#9FF7D3]/20 disabled:opacity-50"
           />
         </div>
       </div>
 
-      <div className="flex items-center justify-between rounded-lg border border-white/5 bg-white/5 px-4 py-3 text-sm">
+      <div className="flex items-center justify-between rounded-xl border border-white/10 bg-white/[0.05] px-4 py-3 text-sm">
         <span className="text-neutral-400">Stake</span>
         <span className="font-semibold text-white">
           {stake ? formatCurrency(stake, { compact: false, maximumFractionDigits: 0 }) : '—'}
         </span>
       </div>
 
-      <div className="flex items-center justify-between rounded-lg border border-white/5 bg-white/5 px-4 py-3 text-sm">
+      <div className="flex items-center justify-between rounded-xl border border-white/10 bg-white/[0.05] px-4 py-3 text-sm">
         <span className="text-neutral-400">Your balance</span>
         <span className="font-semibold text-white">{formatCurrency(balance)}</span>
       </div>
 
       {localError ? (
-        <div className="flex items-center gap-2 rounded-lg border border-red-500/20 bg-red-950/20 px-4 py-3 text-sm text-red-300">
+        <div className="flex items-center gap-2 rounded-xl border border-red-500/30 bg-red-950/40 px-4 py-3 text-sm text-red-200">
           <AlertCircle className="h-4 w-4" />
           <span>{localError}</span>
         </div>
@@ -331,10 +454,10 @@ export default function Betslip({ marketId, outcomeId, onClose, onSuccess }) {
 
       {toast ? (
         <div
-          className={`flex items-center gap-2 rounded-lg border px-4 py-3 text-xs ${
+          className={`flex items-center gap-2 rounded-xl border px-4 py-3 text-xs ${
             toast.type === 'success'
-              ? 'border-emerald-500/30 bg-emerald-950/20 text-emerald-300'
-              : 'border-red-500/30 bg-red-950/20 text-red-300'
+              ? 'border-emerald-500/40 bg-emerald-950/30 text-emerald-200'
+              : 'border-red-500/40 bg-red-950/30 text-red-200'
           }`}
         >
           <span>{toast.message}</span>
@@ -344,8 +467,8 @@ export default function Betslip({ marketId, outcomeId, onClose, onSuccess }) {
       <button
         type="button"
         onClick={handlePlaceWager}
-        disabled={isPlacing || !stake || stake > balance}
-        className="flex items-center justify-center gap-2 rounded-full border border-[#9FF7D3]/50 bg-[#9FF7D3]/10 px-6 py-4 font-semibold uppercase tracking-[0.3em] text-[#9FF7D3] transition hover:border-[#9FF7D3]/70 hover:bg-[#9FF7D3]/20 hover:text-white disabled:opacity-50 disabled:hover:border-[#9FF7D3]/50 disabled:hover:bg-[#9FF7D3]/10 disabled:hover:text-[#9FF7D3]"
+        disabled={isPlacing || !stake || stake > balance || !isMarketActive}
+        className="flex items-center justify-center gap-2 rounded-full border border-[#9FF7D3]/60 bg-[#9FF7D3]/15 px-6 py-4 font-semibold uppercase tracking-[0.3em] text-[#9FF7D3] transition hover:border-[#9FF7D3]/80 hover:bg-[#9FF7D3]/25 hover:text-white disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-neutral-500"
       >
         {isPlacing ? (
           <>
@@ -358,10 +481,13 @@ export default function Betslip({ marketId, outcomeId, onClose, onSuccess }) {
         )}
       </button>
 
+      {!isMarketActive ? (
+        <p className="text-center text-xs text-neutral-500">Market is not accepting wagers right now.</p>
+      ) : null}
+
       {stake > 0 && stake <= balance ? (
         <p className="text-center text-xs text-neutral-500">Estimated payout varies based on final pool size.</p>
       ) : null}
     </div>
   );
 }
-
