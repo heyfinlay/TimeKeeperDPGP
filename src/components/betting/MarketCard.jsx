@@ -89,11 +89,15 @@ export default function MarketCard({ market, pool, stats, onSelect, ctaLabel = '
         ) : (
           derivedStats.slice(0, 4).map((entry) => (
             <div key={entry.outcomeId} className="flex flex-col gap-2">
-              <div className="flex items-center justify-between text-sm text-slate-300">
-                <span>{entry.label}</span>
-                <span className="text-xs text-slate-400">
-                  {formatCurrency(entry.total)} · {formatPercent(entry.share)}
-                </span>
+              <div className="flex items-center justify-between gap-3 text-sm text-slate-300">
+                <span className="font-medium">{entry.label}</span>
+                <div className="flex items-center gap-2 text-xs">
+                  <span className="font-semibold text-accent-emerald">
+                    {entry.odds > 0 ? `${entry.odds.toFixed(2)}x` : '—'}
+                  </span>
+                  <span className="text-slate-500">·</span>
+                  <span className="text-slate-400">{formatPercent(entry.share)}</span>
+                </div>
               </div>
               <div className="h-2 w-full rounded-md bg-shell-800/80">
                 <div

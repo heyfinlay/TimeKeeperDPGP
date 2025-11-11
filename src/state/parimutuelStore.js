@@ -484,23 +484,52 @@ export function ParimutuelProvider({ children }) {
 
     dispatch({ type: ActionTypes.LOAD_START });
     try {
+      // Fetch events with markets and outcomes
       const rows = await supabaseSelect('events', {
         select:
           'id,title,venue,starts_at,status,session_id,markets(id,name,type,rake_bps,status,closes_at,outcomes(id,label,sort_order,color,driver_id))',
         order: { column: 'starts_at', ascending: true },
       });
+
+      // Fetch pool data from materialized views
+      const [marketPools, outcomePools] = await Promise.all([
+        supabaseSelect('market_pools', { select: 'market_id,total_pool,unique_bettors,total_wagers' }),
+        supabaseSelect('outcome_pools', { select: 'outcome_id,total_staked,wager_count' }),
+      ]);
+
+      // Create lookup maps for efficient merging
+      const marketPoolsMap = (marketPools || []).reduce((acc, mp) => {
+        acc[mp.market_id] = mp;
+        return acc;
+      }, {});
+
+      const outcomePoolsMap = (outcomePools || []).reduce((acc, op) => {
+        acc[op.outcome_id] = op;
+        return acc;
+      }, {});
       const events = Array.isArray(rows)
         ? rows.map((event) => ({
             ...event,
             markets: Array.isArray(event?.markets)
-              ? event.markets.map((market) => ({
-                  ...market,
-                  outcomes: Array.isArray(market?.outcomes)
-                    ? market.outcomes.map((outcome) => ({
-                        ...outcome,
-                      }))
-                    : [],
-                }))
+              ? event.markets.map((market) => {
+                  const marketPoolData = marketPoolsMap[market.id];
+                  return {
+                    ...market,
+                    pool_total: marketPoolData?.total_pool ?? 0,
+                    unique_bettors: marketPoolData?.unique_bettors ?? 0,
+                    total_wagers: marketPoolData?.total_wagers ?? 0,
+                    outcomes: Array.isArray(market?.outcomes)
+                      ? market.outcomes.map((outcome) => {
+                          const outcomePoolData = outcomePoolsMap[outcome.id];
+                          return {
+                            ...outcome,
+                            pool_total: outcomePoolData?.total_staked ?? 0,
+                            wager_count: outcomePoolData?.wager_count ?? 0,
+                          };
+                        })
+                      : [],
+                  };
+                })
               : [],
           }))
         : [];
