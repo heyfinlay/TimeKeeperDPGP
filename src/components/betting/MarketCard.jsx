@@ -53,51 +53,51 @@ export default function MarketCard({ market, pool, stats, onSelect, ctaLabel = '
   }, [market?.type]);
 
   return (
-    <div className="tk-glass-panel flex h-full flex-col gap-5 rounded-xl border border-white/5 p-6">
+    <div className="tk-glass-panel interactive-card flex h-full flex-col gap-6 rounded-xl p-6">
       <header className="flex items-start justify-between gap-3">
-        <div className="flex flex-col gap-2">
+        <div className="flex flex-col gap-3">
           {typeLabel ? (
-            <span className="inline-flex items-center gap-2 rounded-md border border-[#9FF7D3]/40 bg-[#9FF7D3]/10 px-3 py-1 text-[0.6rem] uppercase tracking-[0.28em] text-[#9FF7D3]">
+            <span className="inline-flex items-center gap-2 rounded-md border border-accent-emerald/40 bg-accent-emerald/15 px-3 py-1 text-[0.6rem] uppercase tracking-[0.28em] text-accent-emerald">
               {typeLabel}
             </span>
           ) : null}
           <h3 className="text-xl font-semibold text-white">{market?.name ?? 'Unknown market'}</h3>
           {market?.description ? (
-            <p className="text-sm text-neutral-400">{market.description}</p>
+            <p className="text-sm text-slate-400">{market.description}</p>
           ) : null}
         </div>
-        <div className="flex items-center gap-2 rounded-md bg-white/5 px-4 py-1 text-xs uppercase tracking-[0.2em] text-neutral-300 whitespace-nowrap">
+        <div className="flex items-center gap-2 rounded-md border border-accent-blue/25 bg-shell-800/60 px-4 py-1 text-xs uppercase tracking-[0.2em] text-slate-300 whitespace-nowrap">
           <Clock className="h-4 w-4" />
           <span>{normaliseStatus(market?.status)}</span>
         </div>
       </header>
 
-      <div className="flex items-baseline justify-between text-neutral-300">
+      <div className="flex items-baseline justify-between text-slate-300">
         <div className="flex flex-col">
-          <span className="text-xs uppercase tracking-[0.35em] text-neutral-500">Pool size</span>
+          <span className="text-xs uppercase tracking-[0.35em] text-slate-500">Pool size</span>
           <span className="text-2xl font-semibold text-white">{formatCurrency(poolTotal, { compact: false, maximumFractionDigits: 0 })}</span>
         </div>
-        <div className="text-right text-xs text-neutral-500">
-          <p className="font-semibold text-neutral-300">{countdown.label}</p>
+        <div className="text-right text-xs text-slate-500">
+          <p className="font-semibold text-slate-300">{countdown.label}</p>
           <p>{countdown.detail}</p>
         </div>
       </div>
 
       <div className="flex flex-col gap-3">
         {derivedStats.length === 0 ? (
-          <p className="text-sm text-neutral-500">No wagers yet. Be the first to place a bet.</p>
+          <p className="text-sm text-slate-500">No wagers yet. Be the first to place a bet.</p>
         ) : (
           derivedStats.slice(0, 4).map((entry) => (
             <div key={entry.outcomeId} className="flex flex-col gap-2">
-              <div className="flex items-center justify-between text-sm text-neutral-300">
+              <div className="flex items-center justify-between text-sm text-slate-300">
                 <span>{entry.label}</span>
-                <span className="text-xs text-neutral-400">
+                <span className="text-xs text-slate-400">
                   {formatCurrency(entry.total)} · {formatPercent(entry.share)}
                 </span>
               </div>
-              <div className="h-2 w-full rounded-md bg-white/10">
+              <div className="h-2 w-full rounded-md bg-shell-800/80">
                 <div
-                  className="h-2 rounded-md bg-gradient-to-r from-[#7C6BFF] via-[#9FF7D3] to-[#dcd7ff]"
+                  className="h-2 rounded-md bg-gradient-to-r from-accent-blue via-accent-emerald to-accent-ocean"
                   style={{ width: `${Math.min(100, Math.round(entry.share * 100))}%` }}
                 />
               </div>
@@ -106,16 +106,16 @@ export default function MarketCard({ market, pool, stats, onSelect, ctaLabel = '
         )}
       </div>
 
-      <footer className="mt-auto flex items-center justify-between text-xs text-neutral-500">
+      <footer className="mt-auto flex items-center justify-between text-xs text-slate-500">
         <div className="inline-flex items-center gap-2">
-          <BarChart3 className="h-4 w-4 text-[#7C6BFF]" />
+          <BarChart3 className="h-4 w-4 text-accent-blue" />
           <span>Live pool distribution</span>
         </div>
         {typeof onSelect === 'function' ? (
           <button
             type="button"
             onClick={onSelect}
-            className="inline-flex items-center gap-2 rounded-md border border-[#9FF7D3]/50 px-3 py-1 text-[0.65rem] uppercase tracking-[0.25em] text-[#9FF7D3] transition hover:border-[#9FF7D3]/70 hover:text-white"
+            className="interactive-cta inline-flex items-center gap-2 rounded-md border border-accent-emerald/40 px-3 py-1 text-[0.65rem] uppercase tracking-[0.25em] text-accent-emerald hover:border-accent-emerald/60 hover:text-white"
           >
             {ctaLabel} <ArrowRight className="h-4 w-4" />
           </button>

@@ -11,31 +11,31 @@ const NAV_ITEMS = [
     id: 'dashboard',
     label: 'Dashboard',
     buildPath: () => '/dashboard',
-    activeClass: 'bg-[#F5A97F]/20 text-[#F5A97F]',
-    hoverClass: 'hover:border-[#F5A97F]/50 hover:text-[#F5A97F]',
+    activeClass: 'border-accent-emerald/40 bg-accent-emerald/15 text-accent-emerald shadow-accent-glow',
+    hoverClass: 'motion-safe:hover:border-accent-emerald/30 hover:text-accent-emerald',
     requiresAuth: true,
   },
   {
     id: 'live',
     label: 'Live Timing',
     buildPath: (activeSessionId) => (activeSessionId ? `/live/${activeSessionId}` : '/sessions'),
-    activeClass: 'bg-[#7C6BFF]/20 text-[#dcd7ff]',
-    hoverClass: 'hover:border-[#7C6BFF]/50 hover:text-[#7C6BFF]',
+    activeClass: 'border-accent-blue/40 bg-accent-blue/15 text-accent-blue shadow-accent-glow',
+    hoverClass: 'motion-safe:hover:border-accent-blue/30 hover:text-accent-blue',
   },
   {
     id: 'sessions',
     label: 'Sessions',
     buildPath: () => '/sessions',
-    activeClass: 'bg-[#9FF7D3]/20 text-[#9FF7D3]',
-    hoverClass: 'hover:border-[#9FF7D3]/50 hover:text-[#9FF7D3]',
+    activeClass: 'border-accent-emerald/40 bg-accent-emerald/15 text-accent-emerald shadow-accent-glow',
+    hoverClass: 'motion-safe:hover:border-accent-emerald/30 hover:text-accent-emerald',
     requiresAuth: true,
   },
   {
     id: 'markets',
     label: 'Markets',
     buildPath: () => '/admin/markets',
-    activeClass: 'bg-[#F7768E]/20 text-[#F7768E]',
-    hoverClass: 'hover:border-[#F7768E]/50 hover:text-[#F7768E]',
+    activeClass: 'border-accent-ocean/40 bg-accent-ocean/15 text-accent-ocean shadow-accent-glow',
+    hoverClass: 'motion-safe:hover:border-accent-ocean/30 hover:text-accent-ocean',
     requiresAuth: true,
     requiresAdmin: true,
   },
@@ -43,8 +43,8 @@ const NAV_ITEMS = [
     id: 'admin',
     label: 'Admin',
     buildPath: () => '/dashboard/admin',
-    activeClass: 'bg-[#F7768E]/20 text-[#F7768E]',
-    hoverClass: 'hover:border-[#F7768E]/50 hover:text-[#F7768E]',
+    activeClass: 'border-accent-ocean/40 bg-accent-ocean/15 text-accent-ocean shadow-accent-glow',
+    hoverClass: 'motion-safe:hover:border-accent-ocean/30 hover:text-accent-ocean',
     requiresAuth: true,
     requiresAdmin: true,
   },
@@ -91,26 +91,26 @@ export default function AppLayout() {
   });
 
   return (
-    <div className="min-h-screen bg-[#05070F] text-gray-100">
-      <nav className="fixed inset-x-0 top-0 z-50 border-b border-white/5 bg-[#05070F]/90 backdrop-blur">
+    <div className="min-h-screen bg-shell-900 text-slate-100">
+      <nav className="fixed inset-x-0 top-0 z-50 border-b border-accent-emerald/10 bg-shell-900/90 backdrop-blur">
         <div className="mx-auto flex max-w-6xl items-center justify-between gap-6 px-5 py-4">
           <div className="flex items-center gap-4">
             <NavLink
               to="/"
-              className="text-sm font-semibold uppercase tracking-[0.4em] text-[#9FF7D3] transition hover:text-[#7de6c0]"
+              className="focus-ring text-sm font-semibold uppercase tracking-[0.4em] text-accent-emerald transition-colors duration-200 ease-out-back hover:text-accent-blue"
             >
               DBGP
             </NavLink>
           </div>
-          <div className="flex flex-wrap items-center justify-center gap-2 text-xs uppercase tracking-[0.3em] text-neutral-400">
+          <div className="flex flex-wrap items-center justify-center gap-2 text-xs uppercase tracking-[0.3em] text-slate-400">
             {visibleNavItems.map(({ id, to, label, activeClass, hoverClass }) => (
               <NavLink
                 key={id}
                 to={to}
                 className={({ isActive }) =>
-                  `rounded-full border border-transparent px-4 py-2 transition ${hoverClass} ${
-                    isActive ? activeClass : ''
-                  }`
+                  `focus-ring inline-flex items-center justify-center rounded-full border border-transparent px-4 py-2 text-[0.65rem] font-semibold tracking-[0.3em] transition-all duration-200 ease-out-back motion-safe:hover:-translate-y-0.5 motion-safe:hover:scale-102 motion-safe:active:scale-100 ${
+                    isActive ? activeClass : 'text-slate-300'
+                  } ${hoverClass}`
                 }
               >
                 {label}
@@ -121,23 +121,23 @@ export default function AppLayout() {
             <div className="relative" ref={walletMenuRef}>
               <button
                 onClick={() => setIsWalletMenuOpen(!isWalletMenuOpen)}
-                className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs font-semibold uppercase tracking-[0.35em] text-[#9FF7D3] transition hover:border-[#9FF7D3]/50 hover:bg-white/10"
+                className="interactive-cta inline-flex items-center gap-2 rounded-full border border-accent-emerald/30 bg-shell-800/60 px-3 py-1 text-xs font-semibold uppercase tracking-[0.35em] text-accent-emerald hover:border-accent-emerald/60 hover:text-white"
               >
                 <span>$</span>
                 {walletLabel}
                 <ChevronDown className={`h-3 w-3 transition-transform ${isWalletMenuOpen ? 'rotate-180' : ''}`} />
               </button>
               {isWalletMenuOpen && (
-                <div className="absolute right-0 top-full mt-2 w-56 rounded-2xl border border-white/10 bg-[#05070F]/95 p-3 shadow-[0_0_50px_rgba(15,23,42,0.6)] backdrop-blur">
+                <div className="absolute right-0 top-full mt-2 w-56 rounded-2xl border border-accent-emerald/15 bg-shell-900/95 p-3 shadow-shell-card backdrop-blur">
                   <div className="flex flex-col gap-2">
-                    <div className="rounded-xl border border-white/5 bg-white/5 px-4 py-3">
-                      <p className="text-[0.6rem] uppercase tracking-[0.35em] text-neutral-500">Balance</p>
+                    <div className="rounded-xl border border-accent-emerald/15 bg-shell-800/70 px-4 py-3">
+                      <p className="text-[0.6rem] uppercase tracking-[0.35em] text-slate-400">Balance</p>
                       <p className="mt-1 text-xl font-semibold text-white">${formattedBalance}</p>
                     </div>
                     <Link
                       to="/account/setup"
                       onClick={() => setIsWalletMenuOpen(false)}
-                      className="inline-flex items-center justify-center gap-2 rounded-full border border-[#F5A97F]/30 bg-[#F5A97F]/10 px-4 py-2 text-xs uppercase tracking-[0.35em] text-[#F5A97F] transition hover:border-[#F5A97F]/60 hover:text-white"
+                      className="interactive-cta inline-flex items-center justify-center gap-2 rounded-full border border-accent-blue/40 bg-accent-blue/15 px-4 py-2 text-xs uppercase tracking-[0.35em] text-accent-blue hover:text-white"
                     >
                       Request Top-Up
                     </Link>

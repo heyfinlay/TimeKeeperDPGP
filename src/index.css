@@ -3,20 +3,21 @@
 @tailwind utilities;
 
 :root {
-  --tk-shell-base: #071024;
-  --tk-shell-gradient: radial-gradient(circle at 18% 6%, rgba(124, 107, 255, 0.42) 0%, rgba(13, 21, 44, 0) 52%),
-    radial-gradient(circle at 82% 4%, rgba(159, 247, 211, 0.3) 0%, rgba(11, 19, 38, 0) 55%),
-    radial-gradient(circle at 50% 58%, rgba(11, 17, 36, 0.94) 0%, rgba(8, 14, 30, 0.96) 62%, rgba(7, 12, 28, 0.98) 100%);
-  --tk-glass-surface: rgba(10, 15, 28, 0.88);
-  --tk-glass-border: rgba(159, 247, 211, 0.14);
-  --tk-glass-shadow: 0 30px 80px rgba(4, 9, 22, 0.45);
+  --tk-shell-base: #05070f;
+  --tk-shell-gradient: radial-gradient(circle at 18% 6%, rgba(110, 168, 255, 0.35) 0%, rgba(13, 21, 44, 0) 50%),
+    radial-gradient(circle at 82% 4%, rgba(95, 242, 199, 0.28) 0%, rgba(11, 19, 38, 0) 54%),
+    radial-gradient(circle at 50% 58%, rgba(8, 14, 30, 0.96) 0%, rgba(6, 11, 24, 0.98) 60%, rgba(5, 9, 19, 0.99) 100%);
+  --tk-glass-surface: rgba(9, 16, 33, 0.82);
+  --tk-glass-border: rgba(95, 242, 199, 0.16);
+  --tk-glass-shadow: 0 30px 80px rgba(3, 7, 18, 0.55);
   --tk-glass-blur: 28px;
 }
 
 body {
   background: var(--tk-shell-gradient), var(--tk-shell-base);
   background-color: var(--tk-shell-base);
-  color: #fff;
+  color: #f8fafc;
+  color-scheme: dark;
 }
 
 @layer components {
@@ -30,5 +31,30 @@ body {
     box-shadow: var(--tk-glass-shadow);
     backdrop-filter: blur(var(--tk-glass-blur));
     -webkit-backdrop-filter: blur(var(--tk-glass-blur));
+    transition: border-color 0.4s ease, box-shadow 0.4s ease, transform 0.4s ease;
+  }
+}
+
+@layer utilities {
+  .focus-ring {
+    @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-emerald/70 focus-visible:ring-offset-2 focus-visible:ring-offset-shell;
+  }
+
+  .interactive-card {
+    @apply transition-all duration-300 ease-out-back motion-safe:hover:-translate-y-1 motion-safe:hover:scale-102 motion-safe:hover:shadow-accent-glow focus-within:ring-2 focus-within:ring-accent-emerald/40 focus-within:ring-offset-2 focus-within:ring-offset-shell;
+  }
+
+  .interactive-cta {
+    @apply focus-ring transition-transform duration-200 ease-out-back motion-safe:hover:-translate-y-0.5 motion-safe:hover:scale-102 motion-safe:hover:shadow-accent-glow motion-safe:active:scale-100;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .interactive-card,
+  .interactive-cta {
+    transition-duration: 0.01ms !important;
+    transition-property: none !important;
+    transform: none !important;
+    box-shadow: var(--tk-glass-shadow);
   }
 }
