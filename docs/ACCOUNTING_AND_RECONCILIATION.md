@@ -46,9 +46,14 @@ CREATE TABLE wallet_transactions (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id uuid NOT NULL REFERENCES auth.users(id),
   kind text NOT NULL CHECK (kind IN ('deposit', 'bonus', 'correction', 'wager', 'payout', 'refund', 'withdrawal')),
-  amount bigint NOT NULL, -- Can be negative (debits) or positive (credits)
-  meta jsonb, -- Contextual data
-  created_at timestamptz NOT NULL DEFAULT now()
+  amount bigint NOT NULL,
+  direction text NOT NULL CHECK (direction IN ('debit', 'credit')),
+  meta jsonb,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT wallet_transactions_amount_direction_check CHECK (
+    (direction = 'debit' AND amount <= 0) OR
+    (direction = 'credit' AND amount >= 0)
+  )
 );
 
 CREATE TABLE wallet_accounts (

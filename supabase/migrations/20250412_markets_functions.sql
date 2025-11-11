@@ -84,11 +84,12 @@ begin
   where user_id = v_user_id;
 
   -- Record transaction
-  insert into public.wallet_transactions (user_id, kind, amount, meta)
+  insert into public.wallet_transactions (user_id, kind, amount, direction, meta)
   values (
     v_user_id,
     'wager',
     -p_stake,
+    'debit',
     jsonb_build_object(
       'market_id', p_market_id,
       'outcome_id', p_outcome_id
@@ -244,11 +245,12 @@ begin
         do update set balance = wallet_accounts.balance + v_wager.stake;
 
         -- Record transaction
-        insert into public.wallet_transactions (user_id, kind, amount, meta)
+        insert into public.wallet_transactions (user_id, kind, amount, direction, meta)
         values (
           v_wager.user_id,
           'refund',
           v_wager.stake,
+          'credit',
           jsonb_build_object('market_id', p_market_id, 'wager_id', v_wager.id, 'reason', 'no_winners')
         );
 
@@ -299,11 +301,12 @@ begin
     do update set balance = wallet_accounts.balance + v_payout;
 
     -- Record transaction
-    insert into public.wallet_transactions (user_id, kind, amount, meta)
+    insert into public.wallet_transactions (user_id, kind, amount, direction, meta)
     values (
       v_wager.user_id,
       'payout',
       v_payout,
+      'credit',
       jsonb_build_object(
         'market_id', p_market_id,
         'wager_id', v_wager.id,
@@ -447,11 +450,12 @@ begin
   end if;
 
   -- Record transaction
-  insert into public.wallet_transactions (user_id, kind, amount, meta)
+  insert into public.wallet_transactions (user_id, kind, amount, direction, meta)
   values (
     p_user_id,
     p_kind,
     p_amount,
+    case when p_amount >= 0 then 'credit' else 'debit' end,
     jsonb_build_object(
       'memo', p_memo,
       'admin_id', auth.uid(),

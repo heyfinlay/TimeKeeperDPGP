@@ -94,11 +94,12 @@ begin
   do update set balance = wallet_accounts.balance + v_withdrawal.amount;
 
   -- Record refund transaction
-  insert into public.wallet_transactions (user_id, kind, amount, meta)
+  insert into public.wallet_transactions (user_id, kind, amount, direction, meta)
   values (
     v_withdrawal.user_id,
     'refund',
     v_withdrawal.amount,
+    'credit',
     jsonb_build_object(
       'withdrawal_id', p_withdrawal_id,
       'reason', p_reason,
@@ -174,11 +175,12 @@ begin
   where user_id = v_user_id;
 
   -- Record withdrawal transaction
-  insert into public.wallet_transactions (user_id, kind, amount, meta)
+  insert into public.wallet_transactions (user_id, kind, amount, direction, meta)
   values (
     v_user_id,
     'withdrawal_reserve',
     -p_amount,
+    'debit',
     jsonb_build_object('status', 'queued')
   );
 

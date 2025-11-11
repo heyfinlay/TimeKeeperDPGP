@@ -36,9 +36,45 @@ create table if not exists public.wallet_transactions (
   user_id uuid not null references auth.users(id) on delete cascade,
   kind text not null,
   amount bigint not null,
+  direction text not null default 'debit',
   meta jsonb,
-  created_at timestamptz not null default now()
+  created_at timestamptz not null default now(),
+  constraint wallet_transactions_direction_check
+    check (direction in ('debit', 'credit')),
+  constraint wallet_transactions_amount_direction_check
+    check (
+      (direction = 'debit' and amount <= 0)
+      or (direction = 'credit' and amount >= 0)
+    )
 );
+
+create or replace function public.wallet_transactions_enforce_direction()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if new.direction not in ('debit', 'credit') then
+    raise exception 'Invalid transaction direction: %', new.direction;
+  end if;
+
+  if new.direction = 'debit' and new.amount > 0 then
+    raise exception 'Debit transactions must have a non-positive amount';
+  end if;
+
+  if new.direction = 'credit' and new.amount < 0 then
+    raise exception 'Credit transactions must have a non-negative amount';
+  end if;
+
+  return new;
+end;
+$$;
+
+create trigger wallet_transactions_enforce_direction
+  before insert or update on public.wallet_transactions
+  for each row
+  execute function public.wallet_transactions_enforce_direction();
 
 create table if not exists public.wagers (
   id uuid primary key default gen_random_uuid(),
