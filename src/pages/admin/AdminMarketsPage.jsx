@@ -221,6 +221,25 @@ const AdminMarketsPage = () => {
     }
   };
 
+  // Approve deposit handler
+  const handleApproveDeposit = async (depositId) => {
+    const reference = prompt('Receipt or reference code (optional):');
+    try {
+      const { data, error } = await supabase.rpc('approve_deposit', {
+        p_deposit_id: depositId,
+        p_reference: reference && reference.trim() ? reference.trim() : null,
+      });
+      if (error) throw error;
+      if (!data?.success) {
+        throw new Error(data?.message || 'Deposit was not approved.');
+      }
+      await fetchData();
+    } catch (err) {
+      console.error('Failed to approve deposit:', err);
+      alert(`Failed to approve deposit: ${err.message}`);
+    }
+  };
+
   const getEventById = (eventId) => events.find(e => e.id === eventId);
   const getOutcomesByMarketId = (marketId) => outcomes.filter(o => o.market_id === marketId);
   const getWagersByMarketId = (marketId) => wagers.filter(w => w.market_id === marketId);

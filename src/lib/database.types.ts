@@ -1044,6 +1044,10 @@ export type Database = {
         }
         Returns: string
       }
+      approve_deposit: {
+        Args: { p_deposit_id: string; p_reference?: string | null }
+        Returns: Json
+      }
       approve_withdrawal: { Args: { p_withdrawal_id: string }; Returns: Json }
       close_market: { Args: { p_market_id: string }; Returns: Json }
       create_session_atomic: { Args: { p_session: Json }; Returns: string }
