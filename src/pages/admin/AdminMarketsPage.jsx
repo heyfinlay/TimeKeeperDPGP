@@ -51,6 +51,7 @@ const AdminMarketsPage = () => {
   const [selectedMarket, setSelectedMarket] = useState(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [modalMode, setModalMode] = useState(null); // 'close', 'settle'
+  const [approvingDepositId, setApprovingDepositId] = useState(null);
   const { actions: parimutuelActions } = useParimutuelStore();
   const loadParimutuelEvents = parimutuelActions?.loadEvents;
 
