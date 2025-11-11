@@ -36,19 +36,37 @@ export default function MarketCard({ market, pool, stats, onSelect, ctaLabel = '
     return derivedStats.reduce((sum, entry) => sum + (entry.total ?? 0), 0);
   }, [pool?.total, derivedStats]);
 
+  const typeLabel = useMemo(() => {
+    const rawType = market?.type;
+    if (!rawType) {
+      return null;
+    }
+    const readable = String(rawType).replaceAll('_', ' ').trim();
+    if (!readable) {
+      return null;
+    }
+    if (readable.toLowerCase() === 'parimutuel') {
+      return 'Pool';
+    }
+    const lower = readable.toLowerCase();
+    return lower.replace(/\b([a-z])/g, (char) => char.toUpperCase());
+  }, [market?.type]);
+
   return (
-    <div className="tk-glass-panel flex h-full flex-col gap-5 rounded-2xl border border-white/5 p-6">
+    <div className="tk-glass-panel flex h-full flex-col gap-5 rounded-xl border border-white/5 p-6">
       <header className="flex items-start justify-between gap-3">
         <div className="flex flex-col gap-2">
-          <span className="inline-flex items-center gap-2 rounded-lg border border-[#9FF7D3]/30 bg-[#9FF7D3]/10 px-3 py-1 text-[0.6rem] uppercase tracking-[0.3em] text-[#9FF7D3]">
-            {market?.type ?? 'Market'}
-          </span>
+          {typeLabel ? (
+            <span className="inline-flex items-center gap-2 rounded-md border border-[#9FF7D3]/40 bg-[#9FF7D3]/10 px-3 py-1 text-[0.6rem] uppercase tracking-[0.28em] text-[#9FF7D3]">
+              {typeLabel}
+            </span>
+          ) : null}
           <h3 className="text-xl font-semibold text-white">{market?.name ?? 'Unknown market'}</h3>
           {market?.description ? (
             <p className="text-sm text-neutral-400">{market.description}</p>
           ) : null}
         </div>
-        <div className="flex items-center gap-2 rounded-lg bg-white/5 px-4 py-1 text-xs uppercase tracking-[0.2em] text-neutral-300 whitespace-nowrap">
+        <div className="flex items-center gap-2 rounded-md bg-white/5 px-4 py-1 text-xs uppercase tracking-[0.2em] text-neutral-300 whitespace-nowrap">
           <Clock className="h-4 w-4" />
           <span>{normaliseStatus(market?.status)}</span>
         </div>
@@ -97,7 +115,7 @@ export default function MarketCard({ market, pool, stats, onSelect, ctaLabel = '
           <button
             type="button"
             onClick={onSelect}
-            className="inline-flex items-center gap-2 rounded-lg border border-[#9FF7D3]/40 px-3 py-1 text-[0.65rem] uppercase tracking-[0.25em] text-[#9FF7D3] transition hover:border-[#9FF7D3]/70 hover:text-white"
+            className="inline-flex items-center gap-2 rounded-md border border-[#9FF7D3]/50 px-3 py-1 text-[0.65rem] uppercase tracking-[0.25em] text-[#9FF7D3] transition hover:border-[#9FF7D3]/70 hover:text-white"
           >
             {ctaLabel} <ArrowRight className="h-4 w-4" />
           </button>

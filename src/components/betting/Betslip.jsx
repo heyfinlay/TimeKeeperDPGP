@@ -84,7 +84,7 @@ export default function Betslip({ marketId, outcomeId, onClose, onSuccess }) {
 
   const handleQuickStake = (value) => {
     setStake(value);
-    setCustomStake('');
+    setCustomStake(String(value));
     setLocalError(null);
   };
 
@@ -186,7 +186,7 @@ export default function Betslip({ marketId, outcomeId, onClose, onSuccess }) {
   }
 
   return (
-    <div className="tk-glass-panel flex flex-col gap-6 rounded-2xl border border-white/10 p-6">
+    <div className="tk-glass-panel flex flex-col gap-6 rounded-xl border border-white/10 p-6">
       <div className="flex items-start justify-between gap-3">
         <div className="flex flex-col gap-1">
           <span className="text-xs uppercase tracking-[0.35em] text-[#7C6BFF]">Betslip</span>
@@ -205,7 +205,7 @@ export default function Betslip({ marketId, outcomeId, onClose, onSuccess }) {
         ) : null}
       </div>
 
-      <div className="grid gap-3 rounded-2xl border border-white/5 bg-white/5 p-4">
+      <div className="grid gap-3 rounded-xl border border-white/5 bg-white/5 p-4">
         <div className="flex flex-col gap-3">
           <label htmlFor="betslip-outcome" className="text-xs uppercase tracking-[0.3em] text-neutral-500">
             Outcome
@@ -245,7 +245,7 @@ export default function Betslip({ marketId, outcomeId, onClose, onSuccess }) {
         <div className="flex flex-col gap-2">
           <span className="text-xs uppercase tracking-[0.3em] text-neutral-500">Outcome share</span>
           {outcomeStats ? (
-            <div className="flex flex-col gap-2 rounded-xl border border-white/10 bg-white/5 p-3">
+            <div className="flex flex-col gap-2 rounded-lg border border-white/10 bg-white/5 p-3">
               <div className="flex items-center justify-between text-sm text-neutral-300">
                 <span>{outcome.label}</span>
                 <span>{formatPercent(outcomeStats.share)}</span>
@@ -260,7 +260,7 @@ export default function Betslip({ marketId, outcomeId, onClose, onSuccess }) {
           )}
         </div>
         {estimatedReturn > 0 ? (
-          <div className="flex items-center justify-between rounded-xl border border-[#9FF7D3]/20 bg-[#9FF7D3]/10 px-4 py-3 text-xs text-[#9FF7D3]">
+          <div className="flex items-center justify-between rounded-lg border border-[#9FF7D3]/20 bg-[#9FF7D3]/10 px-4 py-3 text-xs text-[#9FF7D3]">
             <span>Estimated return</span>
             <span>{formatCurrency(estimatedReturn, { compact: false, maximumFractionDigits: 1 })}</span>
           </div>
@@ -276,13 +276,16 @@ export default function Betslip({ marketId, outcomeId, onClose, onSuccess }) {
               type="button"
               onClick={() => handleQuickStake(qs.value)}
               disabled={isPlacing}
-              className={`flex items-center justify-center rounded-xl border px-4 py-3 text-sm font-semibold transition ${
+              className={`flex flex-col items-center justify-center gap-1 rounded-lg border px-3 py-2 text-sm font-semibold transition ${
                 stake === qs.value
                   ? 'border-[#9FF7D3] bg-[#9FF7D3]/10 text-[#9FF7D3]'
                   : 'border-white/10 bg-white/5 text-white hover:border-white/20 hover:bg-white/10'
               } disabled:opacity-50`}
             >
-              {formatCurrency(qs.value)}
+              <span className="text-base leading-none">💎</span>
+              <span className="tabular-nums">
+                {formatCurrency(qs.value, { symbol: '', maximumFractionDigits: 0 })}
+              </span>
             </button>
           ))}
         </div>
@@ -302,18 +305,25 @@ export default function Betslip({ marketId, outcomeId, onClose, onSuccess }) {
             onChange={handleCustomStakeChange}
             disabled={isPlacing}
             placeholder="Enter amount..."
-            className="w-full rounded-xl border border-white/10 bg-white/5 py-3 pl-10 pr-4 text-white placeholder:text-neutral-600 focus:border-[#9FF7D3]/40 focus:outline-none focus:ring-2 focus:ring-[#9FF7D3]/20 disabled:opacity-50"
+            className="w-full rounded-lg border border-white/10 bg-white/5 py-3 pl-10 pr-4 text-white placeholder:text-neutral-600 focus:border-[#9FF7D3]/40 focus:outline-none focus:ring-2 focus:ring-[#9FF7D3]/20 disabled:opacity-50"
           />
         </div>
       </div>
 
-      <div className="flex items-center justify-between rounded-xl border border-white/5 bg-white/5 px-4 py-3 text-sm">
+      <div className="flex items-center justify-between rounded-lg border border-white/5 bg-white/5 px-4 py-3 text-sm">
+        <span className="text-neutral-400">Stake</span>
+        <span className="font-semibold text-white">
+          {stake ? formatCurrency(stake, { compact: false, maximumFractionDigits: 0 }) : '—'}
+        </span>
+      </div>
+
+      <div className="flex items-center justify-between rounded-lg border border-white/5 bg-white/5 px-4 py-3 text-sm">
         <span className="text-neutral-400">Your balance</span>
         <span className="font-semibold text-white">{formatCurrency(balance)}</span>
       </div>
 
       {localError ? (
-        <div className="flex items-center gap-2 rounded-xl border border-red-500/20 bg-red-950/20 px-4 py-3 text-sm text-red-300">
+        <div className="flex items-center gap-2 rounded-lg border border-red-500/20 bg-red-950/20 px-4 py-3 text-sm text-red-300">
           <AlertCircle className="h-4 w-4" />
           <span>{localError}</span>
         </div>
@@ -321,7 +331,7 @@ export default function Betslip({ marketId, outcomeId, onClose, onSuccess }) {
 
       {toast ? (
         <div
-          className={`flex items-center gap-2 rounded-xl border px-4 py-3 text-xs ${
+          className={`flex items-center gap-2 rounded-lg border px-4 py-3 text-xs ${
             toast.type === 'success'
               ? 'border-emerald-500/30 bg-emerald-950/20 text-emerald-300'
               : 'border-red-500/30 bg-red-950/20 text-red-300'
@@ -335,7 +345,7 @@ export default function Betslip({ marketId, outcomeId, onClose, onSuccess }) {
         type="button"
         onClick={handlePlaceWager}
         disabled={isPlacing || !stake || stake > balance}
-        className="flex items-center justify-center gap-2 rounded-full border border-[#9FF7D3]/40 bg-[#9FF7D3]/10 px-6 py-4 font-semibold uppercase tracking-[0.35em] text-[#9FF7D3] transition hover:border-[#9FF7D3]/70 hover:bg-[#9FF7D3]/20 hover:text-white disabled:opacity-50 disabled:hover:border-[#9FF7D3]/40 disabled:hover:bg-[#9FF7D3]/10 disabled:hover:text-[#9FF7D3]"
+        className="flex items-center justify-center gap-2 rounded-full border border-[#9FF7D3]/50 bg-[#9FF7D3]/10 px-6 py-4 font-semibold uppercase tracking-[0.3em] text-[#9FF7D3] transition hover:border-[#9FF7D3]/70 hover:bg-[#9FF7D3]/20 hover:text-white disabled:opacity-50 disabled:hover:border-[#9FF7D3]/50 disabled:hover:bg-[#9FF7D3]/10 disabled:hover:text-[#9FF7D3]"
       >
         {isPlacing ? (
           <>
