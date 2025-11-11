@@ -167,11 +167,12 @@ begin
   where user_id = v_user_id;
 
   -- Record transaction
-  insert into public.wallet_transactions (user_id, kind, amount, meta)
+  insert into public.wallet_transactions (user_id, kind, amount, direction, meta)
   values (
     v_user_id,
     'wager',
     -p_stake,
+    'debit',
     jsonb_build_object(
       'market_id', p_market_id,
       'outcome_id', p_outcome_id,

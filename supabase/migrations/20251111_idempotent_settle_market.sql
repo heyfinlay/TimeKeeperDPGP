@@ -209,11 +209,12 @@ begin
                       updated_at = now();
 
         -- Record transaction
-        insert into public.wallet_transactions (user_id, kind, amount, meta)
+        insert into public.wallet_transactions (user_id, kind, amount, direction, meta)
         values (
           v_wager.user_id,
           'refund',
           v_wager.stake,
+          'credit',
           jsonb_build_object(
             'market_id', p_market_id,
             'wager_id', v_wager.id,
@@ -305,11 +306,12 @@ begin
                   updated_at = now();
 
     -- Record transaction
-    insert into public.wallet_transactions (user_id, kind, amount, meta)
+    insert into public.wallet_transactions (user_id, kind, amount, direction, meta)
     values (
       v_wager.user_id,
       'payout',
       v_payout,
+      'credit',
       jsonb_build_object(
         'market_id', p_market_id,
         'wager_id', v_wager.id,
