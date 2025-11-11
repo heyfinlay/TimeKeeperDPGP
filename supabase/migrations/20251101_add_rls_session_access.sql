@@ -1,4 +1,6 @@
-create or replace function session_has_access(session_id uuid)
+drop function if exists session_has_access(uuid);
+
+create function session_has_access(session_id uuid)
 returns boolean
 security definer
 language sql as $$

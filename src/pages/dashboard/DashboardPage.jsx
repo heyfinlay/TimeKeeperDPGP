@@ -498,7 +498,7 @@ const DashboardPage = () => {
                 </div>
                 <div className="flex flex-col gap-3">
                   {wagers
-                    .filter((w) => w.status === 'pending')
+                    .filter((w) => w.status === 'pending' || w.status === 'accepted')
                     .slice(0, 5)
                     .map((wager) => (
                       <div
@@ -524,7 +524,7 @@ const DashboardPage = () => {
                         </span>
                       </div>
                     ))}
-                  {wagers.filter((w) => w.status === 'pending').length === 0 && (
+                  {wagers.filter((w) => w.status === 'pending' || w.status === 'accepted').length === 0 && (
                     <p className="text-sm text-neutral-500">No active bets</p>
                   )}
                 </div>
@@ -538,7 +538,7 @@ const DashboardPage = () => {
                 </div>
                 <div className="flex flex-col gap-3">
                   {wagers
-                    .filter((w) => w.status !== 'pending')
+                    .filter((w) => w.status !== 'pending' && w.status !== 'accepted')
                     .slice(0, 5)
                     .map((wager) => {
                       const isWon = wager.status === 'won';
@@ -585,7 +585,7 @@ const DashboardPage = () => {
                         </div>
                       );
                     })}
-                  {wagers.filter((w) => w.status !== 'pending').length === 0 && (
+                  {wagers.filter((w) => w.status !== 'pending' && w.status !== 'accepted').length === 0 && (
                     <p className="text-sm text-neutral-500">No settled bets</p>
                   )}
                 </div>
