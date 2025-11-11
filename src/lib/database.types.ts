@@ -925,6 +925,36 @@ export type Database = {
         }
         Relationships: []
       }
+      deposits: {
+        Row: {
+          amount: number
+          created_at: string
+          ic_phone_number: string | null
+          id: string
+          reference_code: string | null
+          status: string
+          user_id: string
+        }
+        Insert: {
+          amount: number
+          created_at?: string
+          ic_phone_number?: string | null
+          id?: string
+          reference_code?: string | null
+          status?: string
+          user_id: string
+        }
+        Update: {
+          amount?: number
+          created_at?: string
+          ic_phone_number?: string | null
+          id?: string
+          reference_code?: string | null
+          status?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       withdrawals: {
         Row: {
           amount: number
@@ -1081,7 +1111,14 @@ export type Database = {
         Args: { p_role?: string; p_session_id: string; p_user_id: string }
         Returns: undefined
       }
-      request_withdrawal: { Args: { p_amount: number }; Returns: Json }
+      request_withdrawal: {
+        Args: { p_amount: number }
+        Returns: Json
+      }
+      request_deposit: {
+        Args: { p_amount: number; p_phone?: string | null; p_reference?: string | null }
+        Returns: Json
+      }
       resume_race_rpc: { Args: { p_session_id: string }; Returns: undefined }
       session_has_access: {
         Args: { target_session_id: string }

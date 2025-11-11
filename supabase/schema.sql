@@ -61,6 +61,16 @@ create table if not exists public.withdrawals (
   created_at timestamptz not null default now()
 );
 
+create table if not exists public.deposits (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  amount bigint not null check (amount > 0),
+  ic_phone_number text,
+  reference_code text,
+  status text not null default 'queued',
+  created_at timestamptz not null default now()
+);
+
 create index if not exists markets_event_id_idx on public.markets (event_id);
 create index if not exists outcomes_market_id_idx on public.outcomes (market_id);
 create index if not exists events_session_id_idx on public.events (session_id);
@@ -68,6 +78,7 @@ create index if not exists outcomes_driver_id_idx on public.outcomes (driver_id)
 create index if not exists wagers_user_id_idx on public.wagers (user_id);
 create index if not exists wagers_market_id_idx on public.wagers (market_id);
 create index if not exists wallet_transactions_user_id_idx on public.wallet_transactions (user_id);
+create index if not exists deposits_user_id_idx on public.deposits (user_id);
 
 -- Ensure realtime publications include tables
 DO
@@ -121,6 +132,14 @@ END
 DO
 BEGIN
   ALTER PUBLICATION supabase_realtime ADD TABLE public.withdrawals;
+EXCEPTION
+  WHEN duplicate_object THEN NULL;
+END
+;
+
+DO
+BEGIN
+  ALTER PUBLICATION supabase_realtime ADD TABLE public.deposits;
 EXCEPTION
   WHEN duplicate_object THEN NULL;
 END
