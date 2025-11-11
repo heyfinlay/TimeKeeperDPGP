@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { ArrowRight, Layers, Timer, TrendingUp } from 'lucide-react';
 import BetslipDrawer from '@/components/betting/BetslipDrawer.jsx';
+import PoolAnalytics from '@/components/betting/PoolAnalytics.jsx';
 import { driverStats, useParimutuelStore } from '@/state/parimutuelStore.js';
 import { formatCountdown, formatCurrency, formatPercent } from '@/utils/betting.js';
 
@@ -405,50 +406,6 @@ function ActiveMarketCard({
   );
 }
 
-function LiveFeedPanel({ pool, stats, recentActivity }) {
-  const totalBets = stats.reduce((sum, entry) => sum + (entry.wagerCount ?? 0), 0);
-  return (
-    <section className="tk-glass-panel flex flex-col gap-4 rounded-2xl p-5 md:p-6">
-      <header className="flex flex-col gap-1">
-        <span className="text-xs uppercase tracking-[0.35em] text-[#7C6BFF]">Recent pool action</span>
-        <div className="flex items-center justify-between text-sm text-neutral-300">
-          <span>{formatCurrency(pool?.total ?? 0, { compact: false, maximumFractionDigits: 0 })} in pool</span>
-          <span>{totalBets} bets</span>
-        </div>
-      </header>
-      <ul className="flex flex-col gap-3">
-        {recentActivity.length === 0 ? (
-          <li className="rounded-xl border border-white/10 bg-white/[0.03] px-4 py-3 text-sm text-neutral-500">
-            No wagers yet. Be the first to drop a Diamond.
-          </li>
-        ) : (
-          recentActivity.map((item) => (
-            <li
-              key={item.id}
-              className="rounded-xl border border-white/10 bg-white/[0.04] px-4 py-3 text-sm text-neutral-200"
-            >
-              <div className="flex items-center justify-between gap-3">
-                <span className="truncate font-semibold text-white" title={item.alias}>
-                  {item.alias}
-                </span>
-                <span className="text-xs text-neutral-500">{item.detail}</span>
-              </div>
-              <div className="mt-1 flex items-center justify-between text-sm">
-                <span className="truncate text-neutral-300" title={item.outcome}>
-                  {item.outcome}
-                </span>
-                <span className="font-semibold text-white">
-                  {formatCurrency(item.stake, { compact: false, maximumFractionDigits: 0 })}
-                </span>
-              </div>
-            </li>
-          ))
-        )}
-      </ul>
-    </section>
-  );
-}
-
 function HighlightsSection() {
   return (
     <section className="hidden md:grid md:grid-cols-2 md:gap-4">
@@ -470,7 +427,7 @@ function HighlightsSection() {
 
 export default function MarketsLanding() {
   const {
-    state: { status, events, supportsMarkets, pools, selectedEventId, selectedMarketId, placement },
+    state: { status, events, supportsMarkets, pools, selectedEventId, selectedMarketId },
     actions,
   } = useParimutuelStore();
 
@@ -531,35 +488,6 @@ export default function MarketsLanding() {
 
   const activePool = activeMarket ? pools[activeMarket.id] ?? null : null;
   const stats = useMemo(() => driverStats(activeMarket, activePool), [activeMarket, activePool]);
-
-  const recentActivity = useMemo(() => {
-    if (!activeMarket) {
-      return [];
-    }
-    const items = [];
-    if (placement?.lastWager && placement.lastWager.marketId === activeMarket.id) {
-      const matchedOutcome = activeMarket.outcomes?.find(
-        (item) => item.id === placement.lastWager.outcomeId,
-      );
-      items.push({
-        id: placement.lastWager.id ?? `local-${placement.lastWager.outcomeId}`,
-        alias: placement.lastWager.alias ?? 'You',
-        outcome: matchedOutcome?.label ?? 'Outcome',
-        stake: placement.lastWager.stake ?? 0,
-        detail: 'Just now',
-      });
-    }
-    stats.slice(0, 6).forEach((entry, index) => {
-      items.push({
-        id: `stat-${entry.outcomeId}-${index}`,
-        alias: `${entry.wagerCount ?? 0} bettors`,
-        outcome: entry.label,
-        stake: entry.total ?? 0,
-        detail: 'Live share',
-      });
-    });
-    return items.slice(0, 8);
-  }, [activeMarket, stats, placement?.lastWager]);
 
   const handleSelectEvent = (eventId) => {
     const resolvedEvent = events.find((item) => String(item.id) === String(eventId)) ?? null;
@@ -649,7 +577,7 @@ export default function MarketsLanding() {
             >
               Open betslip <ArrowRight className="h-4 w-4" />
             </button>
-            <LiveFeedPanel pool={activePool} stats={stats} recentActivity={recentActivity} />
+            <PoolAnalytics marketId={activeMarket?.id} />
           </div>
         </div>
       </div>
