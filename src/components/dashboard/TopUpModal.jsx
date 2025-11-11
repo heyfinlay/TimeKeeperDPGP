@@ -4,20 +4,21 @@ import { Loader2, X } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext.jsx';
 import { supabase } from '@/lib/supabaseClient.js';
 import { saveProfile } from '@/lib/profile.js';
-import { createDepositRequest } from '@/lib/wallet.js';
+import { requestDeposit } from '@/lib/wallet.js';
 
-const TopUpModal = ({ isOpen, onClose }) => {
+const MAX_DEPOSIT_AMOUNT = 100000;
+
+const TopUpModal = ({ isOpen, onClose, onSuccess, onError }) => {
   const { user, profile, syncProfile, isSupabaseConfigured } = useAuth();
   const [isLoadingProfile, setIsLoadingProfile] = useState(false);
   const [profileSnapshot, setProfileSnapshot] = useState(null);
   const [phone, setPhone] = useState('');
-  const [missingPhone, setMissingPhone] = useState(false);
-  const [isSavingPhone, setIsSavingPhone] = useState(false);
-  const [phoneError, setPhoneError] = useState(null);
   const [amount, setAmount] = useState('');
   const [reference, setReference] = useState('');
-  const [statusMessage, setStatusMessage] = useState(null);
-  const [statusVariant, setStatusVariant] = useState('neutral');
+  const [formErrors, setFormErrors] = useState({});
+  const [formNotice, setFormNotice] = useState(null);
+  const [formNoticeVariant, setFormNoticeVariant] = useState('neutral');
+  const [isSavingPhone, setIsSavingPhone] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const displayName = useMemo(
@@ -30,13 +31,12 @@ const TopUpModal = ({ isOpen, onClose }) => {
       return;
     }
 
-    setStatusMessage(null);
-    setStatusVariant('neutral');
-    setPhoneError(null);
+    setFormErrors({});
+    setFormNotice(null);
+    setFormNoticeVariant('neutral');
 
     const initialPhone = profile?.ic_phone_number ?? '';
     setPhone(initialPhone);
-    setMissingPhone(!(initialPhone && initialPhone.trim()));
     setProfileSnapshot(
       profile
         ? { display_name: profile.display_name ?? '', ic_phone_number: profile.ic_phone_number ?? null }
@@ -60,15 +60,14 @@ const TopUpModal = ({ isOpen, onClose }) => {
         if (!isActive) return;
         if (error) {
           console.error('Unable to load profile for top-up modal', error);
-          setStatusMessage('Unable to load the latest profile details. You can still submit a top-up.');
-          setStatusVariant('warning');
+          setFormNotice('Unable to load the latest profile details. You can still submit a top-up.');
+          setFormNoticeVariant('warning');
           return;
         }
 
         const phoneValue = data?.ic_phone_number ?? initialPhone ?? '';
         setProfileSnapshot(data ?? null);
         setPhone(phoneValue);
-        setMissingPhone(!(phoneValue && phoneValue.trim()));
       })
       .finally(() => {
         if (isActive) {
@@ -79,13 +78,7 @@ const TopUpModal = ({ isOpen, onClose }) => {
     return () => {
       isActive = false;
     };
-  }, [
-    isOpen,
-    isSupabaseConfigured,
-    profile?.display_name,
-    profile?.ic_phone_number,
-    user?.id,
-  ]);
+  }, [isOpen, isSupabaseConfigured, profile?.display_name, profile?.ic_phone_number, user?.id]);
 
   const handleOverlayClick = (event) => {
     if (event.target === event.currentTarget) {
@@ -95,12 +88,16 @@ const TopUpModal = ({ isOpen, onClose }) => {
 
   const handleSavePhone = async () => {
     const trimmedPhone = phone.trim();
+    const trimmedDisplayName = displayName.trim();
+    setFormErrors((prev) => ({ ...prev, phone: null }));
+
     if (!trimmedPhone) {
-      setPhoneError('Please enter your IC phone number before saving.');
+      setFormErrors((prev) => ({ ...prev, phone: 'Please enter your IC phone number before saving.' }));
       return;
     }
-    if (!displayName.trim()) {
-      setPhoneError('Add a display name to your profile before saving a phone number.');
+
+    if (!trimmedDisplayName) {
+      setFormErrors((prev) => ({ ...prev, phone: 'Add a display name to your profile before saving a phone number.' }));
       return;
     }
 
@@ -108,22 +105,20 @@ const TopUpModal = ({ isOpen, onClose }) => {
       setPhone(trimmedPhone);
       setProfileSnapshot((current) => ({
         ...(current ?? {}),
-        display_name: displayName,
+        display_name: trimmedDisplayName,
         ic_phone_number: trimmedPhone,
       }));
-      setMissingPhone(false);
-      setStatusVariant('warning');
-      setStatusMessage('Supabase is not configured, so the phone number is stored only for this session.');
+      setFormNoticeVariant('warning');
+      setFormNotice('Supabase is not configured, so the phone number is stored only for this session.');
       return;
     }
 
     setIsSavingPhone(true);
-    setPhoneError(null);
 
     try {
       const updated = await saveProfile(
         {
-          display_name: displayName,
+          display_name: trimmedDisplayName,
           ic_phone_number: trimmedPhone,
         },
         { userId: user?.id, supabase },
@@ -134,18 +129,16 @@ const TopUpModal = ({ isOpen, onClose }) => {
         syncProfile?.(updated);
         const savedPhone = updated.ic_phone_number ?? trimmedPhone;
         setPhone(savedPhone);
-        setMissingPhone(!(savedPhone && savedPhone.trim()));
-      } else {
-        setMissingPhone(!trimmedPhone);
       }
 
-      setStatusVariant('success');
-      setStatusMessage('IC phone number saved. You can now continue your top-up.');
+      setFormNoticeVariant('success');
+      setFormNotice('IC phone number saved. You can now continue your top-up.');
     } catch (error) {
       console.error('Failed to save IC phone number', error);
-      setPhoneError(error?.message ?? 'Unable to save your IC phone number right now.');
-      setStatusVariant('error');
-      setStatusMessage('We could not save your IC phone number. Please try again.');
+      const message = error?.message ?? 'Unable to save your IC phone number right now. Please try again.';
+      setFormErrors((prev) => ({ ...prev, phone: message }));
+      setFormNoticeVariant('error');
+      setFormNotice('We could not save your IC phone number. Please try again.');
     } finally {
       setIsSavingPhone(false);
     }
@@ -153,46 +146,54 @@ const TopUpModal = ({ isOpen, onClose }) => {
 
   const handleSubmitTopUp = async (event) => {
     event.preventDefault();
-    if (missingPhone) {
-      setStatusVariant('error');
-      setStatusMessage('Please add your IC phone number before submitting a top-up request.');
-      return;
-    }
-
     const trimmedAmount = amount.trim();
-    const numericAmount = Number(trimmedAmount);
-    if (!trimmedAmount || !Number.isFinite(numericAmount) || numericAmount <= 0) {
-      setStatusVariant('error');
-      setStatusMessage('Enter a valid top-up amount before submitting.');
-      return;
-    }
-
     const trimmedPhone = phone.trim();
     const trimmedReference = reference.trim();
+    const numericAmount = Number(trimmedAmount);
 
+    const nextErrors = {};
+    if (!trimmedAmount) {
+      nextErrors.amount = 'Enter an amount before submitting.';
+    } else if (!Number.isFinite(numericAmount) || numericAmount <= 0) {
+      nextErrors.amount = 'Amount must be greater than zero.';
+    } else if (numericAmount > MAX_DEPOSIT_AMOUNT) {
+      nextErrors.amount = `Amount cannot exceed ${MAX_DEPOSIT_AMOUNT.toLocaleString('en-US')} diamonds.`;
+    }
+
+    if (!trimmedPhone) {
+      nextErrors.phone = 'Please provide your IC phone number so we can confirm your deposit.';
+    }
+
+    if (Object.keys(nextErrors).length > 0) {
+      setFormErrors(nextErrors);
+      return;
+    }
+
+    setFormErrors({});
+    setFormNotice(null);
     setIsSubmitting(true);
-    setStatusVariant('neutral');
-    setStatusMessage('Submitting your deposit request…');
 
     try {
-      const result = await createDepositRequest({
+      const result = await requestDeposit({
         amount: numericAmount,
         icPhoneNumber: trimmedPhone,
         reference: trimmedReference || null,
       });
 
+      const successMessage = result?.offline
+        ? 'Supabase is not configured, so this deposit request was recorded locally only.'
+        : 'Deposit requested. A steward will contact you shortly with instructions and a drop-off location.';
+
+      onSuccess?.(successMessage, { offline: Boolean(result?.offline) });
       setAmount('');
       setReference('');
-      setStatusVariant(result?.offline ? 'warning' : 'success');
-      setStatusMessage(
-        result?.offline
-          ? 'Supabase is not configured, so this deposit request was recorded locally only.'
-          : 'Deposit request submitted. Our finance stewards will contact you shortly with deposit instructions and the drop-off location.',
-      );
+      onClose?.();
     } catch (error) {
       console.error('Failed to submit deposit request', error);
-      setStatusVariant('error');
-      setStatusMessage(error?.message ?? 'Unable to submit your deposit request right now. Please try again.');
+      const message = error?.message ?? 'Unable to submit your deposit request right now. Please try again.';
+      setFormNotice(message);
+      setFormNoticeVariant('error');
+      onError?.(message);
     } finally {
       setIsSubmitting(false);
     }
@@ -231,51 +232,19 @@ const TopUpModal = ({ isOpen, onClose }) => {
           </button>
         </header>
 
-        {statusMessage ? (
+        {formNotice ? (
           <div
             className={`mb-4 rounded-md border px-3 py-2 text-sm ${
-              statusVariant === 'success'
+              formNoticeVariant === 'success'
                 ? 'border-emerald-400/40 bg-emerald-500/10 text-emerald-200'
-                : statusVariant === 'error'
+                : formNoticeVariant === 'error'
                 ? 'border-red-400/40 bg-red-500/10 text-red-200'
-                : statusVariant === 'warning'
+                : formNoticeVariant === 'warning'
                 ? 'border-amber-400/60 bg-amber-500/10 text-amber-200'
                 : 'border-white/10 bg-white/5 text-neutral-200'
             }`}
           >
-            {statusMessage}
-          </div>
-        ) : null}
-
-        {missingPhone ? (
-          <div className="mb-4 rounded-md border border-amber-300 bg-amber-100 p-3 text-amber-900">
-            <p className="text-sm">
-              You haven’t added your IC phone number. Please add it so we can verify your top-up.
-            </p>
-            <div className="mt-2 flex flex-col gap-2 sm:flex-row">
-              <input
-                value={phone}
-                onChange={(event) => setPhone(event.target.value)}
-                placeholder="+61 4xx xxx xxx"
-                inputMode="tel"
-                className="flex-1 rounded-md border border-amber-300/80 bg-white px-3 py-2 text-sm text-amber-900 outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-300"
-              />
-              <button
-                type="button"
-                onClick={handleSavePhone}
-                disabled={isSavingPhone}
-                className="inline-flex items-center justify-center gap-2 rounded-md bg-amber-500 px-4 py-2 text-sm font-semibold text-amber-950 transition hover:bg-amber-400 disabled:cursor-not-allowed disabled:opacity-70"
-              >
-                {isSavingPhone ? (
-                  <>
-                    <Loader2 className="h-4 w-4 animate-spin" /> Saving
-                  </>
-                ) : (
-                  'Save'
-                )}
-              </button>
-            </div>
-            {phoneError ? <p className="mt-2 text-xs text-amber-700">{phoneError}</p> : null}
+            {formNotice}
           </div>
         ) : null}
 
@@ -291,13 +260,42 @@ const TopUpModal = ({ isOpen, onClose }) => {
             <input
               type="number"
               min="0"
-              step="0.01"
+              step="1"
               value={amount}
               onChange={(event) => setAmount(event.target.value)}
               placeholder="50"
               className="rounded-md border border-white/10 bg-[#0B1120]/60 px-3 py-2 text-sm text-white outline-none focus:border-[#9FF7D3]/70 focus:ring-2 focus:ring-[#9FF7D3]/30"
             />
+            {formErrors.amount ? <p className="text-xs text-rose-300">{formErrors.amount}</p> : null}
           </label>
+
+          <div className="flex flex-col gap-2 text-sm">
+            <span className="text-xs font-semibold uppercase tracking-[0.3em] text-neutral-400">IC Phone</span>
+            <div className="flex flex-col gap-2 sm:flex-row">
+              <input
+                value={phone}
+                onChange={(event) => setPhone(event.target.value)}
+                placeholder="+61 4xx xxx xxx"
+                inputMode="tel"
+                className="flex-1 rounded-md border border-white/10 bg-[#0B1120]/60 px-3 py-2 text-sm text-white outline-none focus:border-[#7C6BFF]/70 focus:ring-2 focus:ring-[#7C6BFF]/30"
+              />
+              <button
+                type="button"
+                onClick={handleSavePhone}
+                disabled={isSavingPhone}
+                className="inline-flex items-center justify-center gap-2 rounded-md border border-white/10 px-4 py-2 text-xs font-semibold uppercase tracking-[0.3em] text-neutral-200 transition hover:border-white/30 hover:text-white disabled:cursor-not-allowed disabled:opacity-70"
+              >
+                {isSavingPhone ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin" /> Saving
+                  </>
+                ) : (
+                  'Save to profile'
+                )}
+              </button>
+            </div>
+            {formErrors.phone ? <p className="text-xs text-rose-300">{formErrors.phone}</p> : null}
+          </div>
 
           <label className="flex flex-col gap-2 text-sm">
             <span className="text-xs font-semibold uppercase tracking-[0.3em] text-neutral-400">Reference</span>
@@ -311,11 +309,11 @@ const TopUpModal = ({ isOpen, onClose }) => {
 
           <button
             type="submit"
-            disabled={isSubmitting || missingPhone}
+            disabled={isSubmitting}
             className="inline-flex items-center justify-center gap-2 rounded-full bg-[#9FF7D3] px-6 py-2 text-sm font-semibold uppercase tracking-[0.3em] text-[#041313] transition hover:bg-[#7de6c0] disabled:cursor-not-allowed disabled:opacity-70"
           >
             {isSubmitting ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-            {isSubmitting ? 'Submitting' : missingPhone ? 'Add IC phone to continue' : 'Submit top-up'}
+            {isSubmitting ? 'Submitting' : 'Submit top-up'}
           </button>
         </form>
       </div>
@@ -325,4 +323,3 @@ const TopUpModal = ({ isOpen, onClose }) => {
 };
 
 export default TopUpModal;
-

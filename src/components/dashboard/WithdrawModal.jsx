@@ -2,14 +2,14 @@ import { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Loader2, X } from 'lucide-react';
 import { useWallet } from '@/context/WalletContext.jsx';
-import { formatCurrency } from '@/utils/betting.js';
-import { requestWithdrawal } from '@/lib/wallet.js';
+import { formatWalletBalance, requestWithdrawal } from '@/lib/wallet.js';
 
-const WithdrawModal = ({ isOpen, onClose }) => {
+const WithdrawModal = ({ isOpen, onClose, onSuccess, onError }) => {
   const { balance, refresh } = useWallet();
   const [amount, setAmount] = useState('');
-  const [statusMessage, setStatusMessage] = useState(null);
-  const [statusVariant, setStatusVariant] = useState('neutral');
+  const [formErrors, setFormErrors] = useState({});
+  const [formNotice, setFormNotice] = useState(null);
+  const [formNoticeVariant, setFormNoticeVariant] = useState('neutral');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   useEffect(() => {
@@ -17,14 +17,17 @@ const WithdrawModal = ({ isOpen, onClose }) => {
       return;
     }
     setAmount('');
-    setStatusMessage(null);
-    setStatusVariant('neutral');
+    setFormErrors({});
+    setFormNotice(null);
+    setFormNoticeVariant('neutral');
   }, [isOpen]);
 
-  const formattedBalance = useMemo(
-    () => formatCurrency(balance, { compact: false, maximumFractionDigits: 0 }),
-    [balance],
-  );
+  const formattedBalance = useMemo(() => {
+    if (!Number.isFinite(Number(balance))) {
+      return '0';
+    }
+    return formatWalletBalance(balance, { compact: false });
+  }, [balance]);
 
   const handleOverlayClick = (event) => {
     if (event.target === event.currentTarget) {
@@ -36,39 +39,43 @@ const WithdrawModal = ({ isOpen, onClose }) => {
     event.preventDefault();
     const trimmedAmount = amount.trim();
     const numericAmount = Number(trimmedAmount);
+    const nextErrors = {};
 
-    if (!trimmedAmount || !Number.isFinite(numericAmount) || numericAmount <= 0) {
-      setStatusVariant('error');
-      setStatusMessage('Enter a valid withdrawal amount before submitting.');
+    if (!trimmedAmount) {
+      nextErrors.amount = 'Enter an amount before submitting.';
+    } else if (!Number.isFinite(numericAmount) || numericAmount <= 0) {
+      nextErrors.amount = 'Amount must be greater than zero.';
+    } else if (Number.isFinite(balance) && numericAmount > balance) {
+      nextErrors.amount = 'Withdrawal amount cannot exceed your available balance.';
+    }
+
+    if (Object.keys(nextErrors).length > 0) {
+      setFormErrors(nextErrors);
       return;
     }
 
-    if (Number.isFinite(balance) && numericAmount > balance) {
-      setStatusVariant('error');
-      setStatusMessage('Withdrawal amount cannot exceed your available balance.');
-      return;
-    }
-
+    setFormErrors({});
+    setFormNotice(null);
     setIsSubmitting(true);
-    setStatusVariant('neutral');
-    setStatusMessage('Submitting your withdrawal request…');
 
     try {
       const result = await requestWithdrawal({ amount: numericAmount });
+      const successMessage = result?.offline
+        ? 'Supabase is not configured, so this withdrawal request was recorded locally only.'
+        : "Withdrawal submitted. You'll receive pickup details shortly.";
+
+      onSuccess?.(successMessage, { offline: Boolean(result?.offline) });
       setAmount('');
-      setStatusVariant(result?.offline ? 'warning' : 'success');
-      setStatusMessage(
-        result?.offline
-          ? 'Supabase is not configured, so this withdrawal request was recorded locally only.'
-          : 'Withdrawal request submitted. Our finance team will reach out shortly with pickup details.',
-      );
       if (!result?.offline && typeof refresh === 'function') {
         await refresh();
       }
+      onClose?.();
     } catch (error) {
       console.error('Failed to submit withdrawal request', error);
-      setStatusVariant('error');
-      setStatusMessage(error?.message ?? 'Unable to submit your withdrawal request right now. Please try again.');
+      const message = error?.message ?? 'Unable to submit your withdrawal request right now. Please try again.';
+      setFormNotice(message);
+      setFormNoticeVariant('error');
+      onError?.(message);
     } finally {
       setIsSubmitting(false);
     }
@@ -109,22 +116,22 @@ const WithdrawModal = ({ isOpen, onClose }) => {
 
         <div className="mb-4 rounded-xl border border-white/10 bg-white/5 px-4 py-3">
           <p className="text-xs font-semibold uppercase tracking-[0.3em] text-neutral-400">Available balance</p>
-          <p className="mt-1 text-lg font-semibold text-white">{formattedBalance}</p>
+          <p className="mt-1 text-lg font-semibold text-white">💎 {formattedBalance}</p>
         </div>
 
-        {statusMessage ? (
+        {formNotice ? (
           <div
             className={`mb-4 rounded-md border px-3 py-2 text-sm ${
-              statusVariant === 'success'
+              formNoticeVariant === 'success'
                 ? 'border-emerald-400/40 bg-emerald-500/10 text-emerald-200'
-                : statusVariant === 'error'
+                : formNoticeVariant === 'error'
                 ? 'border-red-400/40 bg-red-500/10 text-red-200'
-                : statusVariant === 'warning'
+                : formNoticeVariant === 'warning'
                 ? 'border-amber-400/60 bg-amber-500/10 text-amber-200'
                 : 'border-white/10 bg-white/5 text-neutral-200'
             }`}
           >
-            {statusMessage}
+            {formNotice}
           </div>
         ) : null}
 
@@ -140,6 +147,7 @@ const WithdrawModal = ({ isOpen, onClose }) => {
               placeholder="250"
               className="rounded-md border border-white/10 bg-[#0B1120]/60 px-3 py-2 text-sm text-white outline-none focus:border-[#9FF7D3]/70 focus:ring-2 focus:ring-[#9FF7D3]/30"
             />
+            {formErrors.amount ? <p className="text-xs text-rose-300">{formErrors.amount}</p> : null}
           </label>
 
           <button
@@ -158,4 +166,3 @@ const WithdrawModal = ({ isOpen, onClose }) => {
 };
 
 export default WithdrawModal;
-

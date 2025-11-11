@@ -21,6 +21,7 @@ import { supabase } from '../../lib/supabaseClient';
 import { useAuth } from '../../context/AuthContext';
 import AdminMarketWizard from '@/components/admin/markets/AdminMarketWizard.jsx';
 import { useParimutuelStore } from '@/state/parimutuelStore.js';
+import { handleApproveDeposit, formatWalletBalance } from '@/lib/wallet.js';
 
 const TABS = {
   MARKETS: 'markets',
@@ -33,6 +34,21 @@ const MARKET_STATUS_CONFIG = {
   open: { label: 'Open', color: 'green', icon: CheckCircle },
   closed: { label: 'Closed', color: 'red', icon: XCircle },
   settling: { label: 'Settling', color: 'blue', icon: Clock },
+};
+
+const REQUEST_STATUS_CONFIG = {
+  queued: {
+    label: 'Queued',
+    badge: 'border-amber-400/40 bg-amber-500/10 text-amber-200',
+  },
+  approved: {
+    label: 'Approved',
+    badge: 'border-emerald-400/40 bg-emerald-500/10 text-emerald-200',
+  },
+  rejected: {
+    label: 'Rejected',
+    badge: 'border-rose-400/40 bg-rose-500/10 text-rose-200',
+  },
 };
 
 const AdminMarketsPage = () => {
@@ -52,6 +68,11 @@ const AdminMarketsPage = () => {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [modalMode, setModalMode] = useState(null); // 'close', 'settle'
   const [approvingDepositId, setApprovingDepositId] = useState(null);
+  const [processingWithdrawalId, setProcessingWithdrawalId] = useState(null);
+  const [depositStatusFilter, setDepositStatusFilter] = useState('queued');
+  const [withdrawalStatusFilter, setWithdrawalStatusFilter] = useState('queued');
+  const [receiptCodes, setReceiptCodes] = useState({});
+  const [toast, setToast] = useState(null);
   const { actions: parimutuelActions } = useParimutuelStore();
   const loadParimutuelEvents = parimutuelActions?.loadEvents;
 
@@ -143,6 +164,14 @@ const AdminMarketsPage = () => {
     };
   }, [fetchData]);
 
+  useEffect(() => {
+    if (!toast) {
+      return;
+    }
+    const timer = setTimeout(() => setToast(null), 4000);
+    return () => clearTimeout(timer);
+  }, [toast]);
+
   // Market analytics
   const marketAnalytics = useMemo(() => {
     const totalWagered = wagers.reduce((sum, w) => sum + (w.stake || 0), 0);
@@ -160,6 +189,16 @@ const AdminMarketsPage = () => {
       totalMarketsCount: markets.length,
     };
   }, [wagers, withdrawals, deposits, markets]);
+
+  const filteredWithdrawals = useMemo(
+    () => withdrawals.filter((withdrawal) => withdrawal.status === withdrawalStatusFilter),
+    [withdrawals, withdrawalStatusFilter],
+  );
+
+  const filteredDeposits = useMemo(
+    () => deposits.filter((deposit) => deposit.status === depositStatusFilter),
+    [deposits, depositStatusFilter],
+  );
 
   // Close market handler
   const handleCloseMarket = async (marketId) => {
@@ -195,14 +234,23 @@ const AdminMarketsPage = () => {
   // Approve withdrawal handler
   const handleApproveWithdrawal = async (withdrawalId) => {
     try {
+      setProcessingWithdrawalId(withdrawalId);
       const { error } = await supabase.rpc('approve_withdrawal', {
         p_withdrawal_id: withdrawalId,
       });
       if (error) throw error;
+      setWithdrawals((prev) =>
+        prev.map((withdrawal) =>
+          withdrawal.id === withdrawalId ? { ...withdrawal, status: 'approved' } : withdrawal,
+        ),
+      );
+      setToast({ type: 'success', message: 'Withdrawal approved.' });
       await fetchData();
     } catch (err) {
       console.error('Failed to approve withdrawal:', err);
-      alert(`Failed to approve withdrawal: ${err.message}`);
+      setToast({ type: 'error', message: err.message || 'Something went wrong. Please try again.' });
+    } finally {
+      setProcessingWithdrawalId(null);
     }
   };
 
@@ -210,34 +258,61 @@ const AdminMarketsPage = () => {
   const handleRejectWithdrawal = async (withdrawalId) => {
     const reason = prompt('Reason for rejection (optional):');
     try {
+      setProcessingWithdrawalId(withdrawalId);
       const { error } = await supabase.rpc('reject_withdrawal', {
         p_withdrawal_id: withdrawalId,
         p_reason: reason || null,
       });
       if (error) throw error;
+      setWithdrawals((prev) =>
+        prev.map((withdrawal) =>
+          withdrawal.id === withdrawalId
+            ? { ...withdrawal, status: 'rejected', rejection_reason: reason || null }
+            : withdrawal,
+        ),
+      );
+      setToast({ type: 'success', message: 'Withdrawal rejected.' });
       await fetchData();
     } catch (err) {
       console.error('Failed to reject withdrawal:', err);
-      alert(`Failed to reject withdrawal: ${err.message}`);
+      setToast({ type: 'error', message: err.message || 'Something went wrong. Please try again.' });
+    } finally {
+      setProcessingWithdrawalId(null);
     }
   };
 
-  // Approve deposit handler
-  const handleApproveDeposit = async (depositId) => {
-    const reference = prompt('Receipt or reference code (optional):');
+  const handleMarkDepositReceived = async (deposit) => {
+    if (!deposit) {
+      return;
+    }
+    const receiptCode = (receiptCodes[deposit.id] ?? '').trim();
+    const amountLabel = formatWalletBalance(deposit.amount, { compact: false });
+    const confirmMessage = `Credit ◆${amountLabel} to ${deposit.user_id.slice(0, 8)}? This updates their wallet immediately.`;
+    if (!window.confirm(confirmMessage)) {
+      return;
+    }
     try {
-      const { data, error } = await supabase.rpc('approve_deposit', {
-        p_deposit_id: depositId,
-        p_reference: reference && reference.trim() ? reference.trim() : null,
-      });
-      if (error) throw error;
-      if (!data?.success) {
-        throw new Error(data?.message || 'Deposit was not approved.');
-      }
+      setApprovingDepositId(deposit.id);
+      await handleApproveDeposit({ depositId: deposit.id, receiptCode });
+      setDeposits((prev) =>
+        prev.map((item) =>
+          item.id === deposit.id
+            ? {
+                ...item,
+                status: 'approved',
+                reference_code: receiptCode || item.reference_code,
+              }
+            : item,
+        ),
+      );
+      setReceiptCodes((prev) => ({ ...prev, [deposit.id]: '' }));
+      setToast({ type: 'success', message: 'Deposit marked received. Wallet updated.' });
       await fetchData();
     } catch (err) {
       console.error('Failed to approve deposit:', err);
-      alert(`Failed to approve deposit: ${err.message}`);
+      setToast({ type: 'error', message: err.message || 'Something went wrong. Please try again.' });
+    } finally {
+      setApprovingDepositId(null);
     }
   };
 
@@ -287,6 +362,17 @@ const AdminMarketsPage = () => {
 
   return (
     <div className="flex flex-col gap-8">
+      {toast ? (
+        <div
+          className={`fixed bottom-6 right-6 z-50 max-w-sm rounded-xl border px-4 py-3 text-sm shadow-shell-card ${
+            toast.type === 'success'
+              ? 'border-emerald-400/40 bg-emerald-500/10 text-emerald-100'
+              : 'border-rose-400/40 bg-rose-500/10 text-rose-100'
+          }`}
+        >
+          {toast.message}
+        </div>
+      ) : null}
       {/* Header */}
       <section className="flex flex-col gap-4">
         <div className="flex items-start justify-between">
@@ -553,76 +639,165 @@ const AdminMarketsPage = () => {
               </div>
             </div>
 
-            {/* Pending Withdrawals */}
+            {/* Withdrawals */}
             <div className="flex flex-col gap-4 rounded-2xl border border-white/5 bg-[#05070F]/80 p-6">
-              <h3 className="text-lg font-semibold text-white">Pending Withdrawals</h3>
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <h3 className="text-lg font-semibold text-white">Withdrawals</h3>
+                <div className="flex gap-2">
+                  {['queued', 'approved', 'rejected'].map((status) => {
+                    const statusConfig = REQUEST_STATUS_CONFIG[status];
+                    const isActive = withdrawalStatusFilter === status;
+                    return (
+                      <button
+                        key={status}
+                        onClick={() => setWithdrawalStatusFilter(status)}
+                        className={`rounded-full border px-3 py-1 text-xs font-semibold uppercase tracking-[0.3em] transition ${
+                          isActive
+                            ? 'border-[#9FF7D3]/60 bg-[#9FF7D3]/15 text-[#9FF7D3]'
+                            : 'border-white/10 text-neutral-400 hover:border-white/30 hover:text-white'
+                        }`}
+                      >
+                        {statusConfig?.label ?? status}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
               <div className="flex flex-col gap-3">
-                {withdrawals.filter(w => w.status === 'queued').length === 0 ? (
-                  <p className="text-sm text-neutral-500">No pending withdrawals</p>
+                {filteredWithdrawals.length === 0 ? (
+                  <p className="text-sm text-neutral-500">No withdrawals in this state.</p>
                 ) : (
-                  withdrawals
-                    .filter(w => w.status === 'queued')
-                    .slice(0, 10)
-                    .map((withdrawal) => (
+                  filteredWithdrawals.slice(0, 20).map((withdrawal) => {
+                    const statusConfig =
+                      REQUEST_STATUS_CONFIG[withdrawal.status] ?? REQUEST_STATUS_CONFIG.queued;
+                    const isQueued = withdrawal.status === 'queued';
+                    return (
                       <div
                         key={withdrawal.id}
-                        className="flex items-center justify-between rounded-xl border border-white/5 bg-[#000000]/40 p-4"
+                        className="flex flex-col gap-3 rounded-xl border border-white/5 bg-[#000000]/40 p-4"
                       >
-                        <div className="flex flex-col gap-1">
-                          <span className="text-sm font-medium text-white">Withdrawal Request</span>
-                          <span className="text-xs text-neutral-500">
-                            User: {withdrawal.user_id.slice(0, 8)}...
-                          </span>
-                          <span className="text-xs text-neutral-500">
-                            {new Date(withdrawal.created_at).toLocaleString()}
-                          </span>
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="flex flex-col gap-1">
+                            <span className="text-sm font-medium text-white">Withdrawal Request</span>
+                            <span className="text-xs text-neutral-500">
+                              User: {withdrawal.user_id.slice(0, 8)}...
+                            </span>
+                            <span className="text-xs text-neutral-500">
+                              {new Date(withdrawal.created_at).toLocaleString()}
+                            </span>
+                          </div>
+                          <div className="flex flex-col items-end gap-2">
+                            <span className="text-sm font-semibold text-white">
+                              💎 {(withdrawal.amount / 1000).toFixed(1)}K
+                            </span>
+                            <span
+                              className={`inline-flex items-center rounded-full border px-3 py-1 text-[0.65rem] font-semibold uppercase tracking-[0.3em] ${statusConfig.badge}`}
+                            >
+                              {statusConfig.label}
+                            </span>
+                          </div>
                         </div>
-                        <div className="flex items-center gap-2">
-                          <span className="text-sm font-semibold text-white">
-                            💎 {(withdrawal.amount / 1000).toFixed(1)}K
-                          </span>
-                          <button
-                            onClick={() => handleApproveWithdrawal(withdrawal.id)}
-                            className="rounded-full border border-green-500/40 bg-green-500/10 px-3 py-1 text-xs text-green-300 transition hover:border-green-500/70"
-                          >
-                            Approve
-                          </button>
-                          <button
-                            onClick={() => handleRejectWithdrawal(withdrawal.id)}
-                            className="rounded-full border border-rose-500/40 bg-rose-500/10 px-2 py-1 text-xs text-rose-300 transition hover:border-rose-500/70"
-                          >
-                            <X className="h-3 w-3" />
-                          </button>
-                        </div>
+                        {isQueued ? (
+                          <div className="flex flex-wrap items-center gap-2">
+                            <button
+                              onClick={() => handleApproveWithdrawal(withdrawal.id)}
+                              disabled={processingWithdrawalId === withdrawal.id}
+                              className="inline-flex items-center gap-2 rounded-full border border-green-500/40 bg-green-500/10 px-3 py-1 text-xs font-semibold uppercase tracking-[0.3em] text-green-300 transition hover:border-green-500/70 disabled:cursor-not-allowed disabled:opacity-60"
+                            >
+                              {processingWithdrawalId === withdrawal.id ? (
+                                <>
+                                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                  Processing
+                                </>
+                              ) : (
+                                'Approve'
+                              )}
+                            </button>
+                            <button
+                              onClick={() => handleRejectWithdrawal(withdrawal.id)}
+                              disabled={processingWithdrawalId === withdrawal.id}
+                              className="inline-flex items-center gap-2 rounded-full border border-rose-500/40 bg-rose-500/10 px-3 py-1 text-xs font-semibold uppercase tracking-[0.3em] text-rose-300 transition hover:border-rose-500/70 disabled:cursor-not-allowed disabled:opacity-60"
+                            >
+                              {processingWithdrawalId === withdrawal.id ? (
+                                <>
+                                  <Loader2 className="h-3 w-3 animate-spin" />
+                                  Processing
+                                </>
+                              ) : (
+                                <>
+                                  <X className="h-3 w-3" />
+                                  Reject
+                                </>
+                              )}
+                            </button>
+                          </div>
+                        ) : withdrawal.rejection_reason ? (
+                          <p className="text-xs text-neutral-400">
+                            Reason: {withdrawal.rejection_reason}
+                          </p>
+                        ) : null}
                       </div>
-                    ))
+                    );
+                  })
                 )}
               </div>
             </div>
 
-            {/* Pending Deposits */}
+            {/* Deposits */}
             <div className="flex flex-col gap-4 rounded-2xl border border-white/5 bg-[#05070F]/80 p-6">
-              <h3 className="text-lg font-semibold text-white">Pending Deposits</h3>
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <h3 className="text-lg font-semibold text-white">Deposits</h3>
+                <div className="flex gap-2">
+                  {['queued', 'approved', 'rejected'].map((status) => {
+                    const statusConfig = REQUEST_STATUS_CONFIG[status];
+                    const isActive = depositStatusFilter === status;
+                    return (
+                      <button
+                        key={status}
+                        onClick={() => setDepositStatusFilter(status)}
+                        className={`rounded-full border px-3 py-1 text-xs font-semibold uppercase tracking-[0.3em] transition ${
+                          isActive
+                            ? 'border-[#9FF7D3]/60 bg-[#9FF7D3]/15 text-[#9FF7D3]'
+                            : 'border-white/10 text-neutral-400 hover:border-white/30 hover:text-white'
+                        }`}
+                      >
+                        {statusConfig?.label ?? status}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
               <div className="flex flex-col gap-3">
-                {deposits.filter((deposit) => deposit.status === 'queued').length === 0 ? (
-                  <p className="text-sm text-neutral-500">No pending deposits</p>
+                {filteredDeposits.length === 0 ? (
+                  <p className="text-sm text-neutral-500">No deposits in this state.</p>
                 ) : (
-                  deposits
-                    .filter((deposit) => deposit.status === 'queued')
-                    .slice(0, 10)
-                    .map((deposit) => (
+                  filteredDeposits.slice(0, 20).map((deposit) => {
+                    const statusConfig =
+                      REQUEST_STATUS_CONFIG[deposit.status] ?? REQUEST_STATUS_CONFIG.queued;
+                    const isQueued = deposit.status === 'queued';
+                    const receiptValue = receiptCodes[deposit.id] ?? '';
+                    return (
                       <div
                         key={deposit.id}
-                        className="flex flex-col gap-2 rounded-xl border border-white/5 bg-[#000000]/40 p-4"
+                        className="flex flex-col gap-3 rounded-xl border border-white/5 bg-[#000000]/40 p-4"
                       >
-                        <div className="flex items-center justify-between">
-                          <div className="flex flex-col">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="flex flex-col gap-1">
                             <span className="text-sm font-medium text-white">Deposit Request</span>
-                            <span className="text-xs text-neutral-500">User: {deposit.user_id.slice(0, 8)}...</span>
+                            <span className="text-xs text-neutral-500">
+                              User: {deposit.user_id.slice(0, 8)}...
+                            </span>
                           </div>
-                          <span className="text-sm font-semibold text-white">
-                            💎 {(deposit.amount / 1000).toFixed(1)}K
-                          </span>
+                          <div className="flex flex-col items-end gap-2">
+                            <span className="text-sm font-semibold text-white">
+                              💎 {(deposit.amount / 1000).toFixed(1)}K
+                            </span>
+                            <span
+                              className={`inline-flex items-center rounded-full border px-3 py-1 text-[0.65rem] font-semibold uppercase tracking-[0.3em] ${statusConfig.badge}`}
+                            >
+                              {statusConfig.label}
+                            </span>
+                          </div>
                         </div>
                         <div className="flex flex-col gap-1 text-xs text-neutral-400">
                           {deposit.ic_phone_number ? (
@@ -630,11 +805,43 @@ const AdminMarketsPage = () => {
                           ) : (
                             <span className="text-amber-300">IC phone not provided</span>
                           )}
-                          {deposit.reference_code ? <span>Reference: {deposit.reference_code}</span> : null}
+                          {deposit.reference_code ? (
+                            <span>Reference: {deposit.reference_code}</span>
+                          ) : null}
                           <span>{new Date(deposit.created_at).toLocaleString()}</span>
                         </div>
+                        {isQueued ? (
+                          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                            <input
+                              value={receiptValue}
+                              onChange={(event) =>
+                                setReceiptCodes((prev) => ({
+                                  ...prev,
+                                  [deposit.id]: event.target.value,
+                                }))
+                              }
+                              placeholder="Receipt code (optional)"
+                              className="w-full rounded-md border border-white/10 bg-[#0B1120]/60 px-3 py-2 text-sm text-white outline-none focus:border-[#9FF7D3]/70 focus:ring-2 focus:ring-[#9FF7D3]/30"
+                            />
+                            <button
+                              onClick={() => handleMarkDepositReceived(deposit)}
+                              disabled={approvingDepositId === deposit.id}
+                              className="inline-flex items-center justify-center gap-2 rounded-full border border-[#9FF7D3]/40 bg-[#9FF7D3]/15 px-4 py-2 text-xs font-semibold uppercase tracking-[0.3em] text-[#9FF7D3] transition hover:border-[#9FF7D3]/70 hover:text-white disabled:cursor-not-allowed disabled:opacity-60"
+                            >
+                              {approvingDepositId === deposit.id ? (
+                                <>
+                                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                  Processing
+                                </>
+                              ) : (
+                                'Mark Received'
+                              )}
+                            </button>
+                          </div>
+                        ) : null}
                       </div>
-                    ))
+                    );
+                  })
                 )}
               </div>
             </div>
