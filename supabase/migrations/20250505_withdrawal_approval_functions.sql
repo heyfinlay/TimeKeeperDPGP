@@ -198,3 +198,47 @@ end;
 $$;
 
 grant execute on function public.request_withdrawal(bigint) to authenticated;
+
+-- request_deposit: User submits a deposit request with contact details
+create or replace function public.request_deposit(
+  p_amount bigint,
+  p_phone text default null,
+  p_reference text default null
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_user_id uuid;
+  v_deposit_id uuid;
+  v_phone text;
+  v_reference text;
+begin
+  v_user_id := auth.uid();
+  if v_user_id is null then
+    raise exception 'Not authenticated';
+  end if;
+
+  if p_amount <= 0 then
+    raise exception 'Deposit amount must be positive';
+  end if;
+
+  v_phone := nullif(trim(coalesce(p_phone, '')), '');
+  v_reference := nullif(trim(coalesce(p_reference, '')), '');
+
+  insert into public.deposits (user_id, amount, ic_phone_number, reference_code, status)
+  values (v_user_id, p_amount, v_phone, v_reference, 'queued')
+  returning id into v_deposit_id;
+
+  return jsonb_build_object(
+    'success', true,
+    'deposit_id', v_deposit_id,
+    'amount', p_amount,
+    'status', 'queued'
+  );
+end;
+$$;
+
+grant execute on function public.request_deposit(bigint, text, text) to authenticated;

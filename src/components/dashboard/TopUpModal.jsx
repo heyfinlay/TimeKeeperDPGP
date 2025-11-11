@@ -4,6 +4,7 @@ import { Loader2, X } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext.jsx';
 import { supabase } from '@/lib/supabaseClient.js';
 import { saveProfile } from '@/lib/profile.js';
+import { createDepositRequest } from '@/lib/wallet.js';
 
 const TopUpModal = ({ isOpen, onClose }) => {
   const { user, profile, syncProfile, isSupabaseConfigured } = useAuth();
@@ -159,23 +160,42 @@ const TopUpModal = ({ isOpen, onClose }) => {
     }
 
     const trimmedAmount = amount.trim();
-    if (!trimmedAmount || Number(trimmedAmount) <= 0) {
+    const numericAmount = Number(trimmedAmount);
+    if (!trimmedAmount || !Number.isFinite(numericAmount) || numericAmount <= 0) {
       setStatusVariant('error');
       setStatusMessage('Enter a valid top-up amount before submitting.');
       return;
     }
 
+    const trimmedPhone = phone.trim();
+    const trimmedReference = reference.trim();
+
     setIsSubmitting(true);
     setStatusVariant('neutral');
-    setStatusMessage('Submitting your top-up request…');
+    setStatusMessage('Submitting your deposit request…');
 
-    await new Promise((resolve) => setTimeout(resolve, 400));
+    try {
+      const result = await createDepositRequest({
+        amount: numericAmount,
+        icPhoneNumber: trimmedPhone,
+        reference: trimmedReference || null,
+      });
 
-    setIsSubmitting(false);
-    setAmount('');
-    setReference('');
-    setStatusVariant('success');
-    setStatusMessage(`Top-up request submitted for $${Number(trimmedAmount).toFixed(2)}. We will verify it shortly.`);
+      setAmount('');
+      setReference('');
+      setStatusVariant(result?.offline ? 'warning' : 'success');
+      setStatusMessage(
+        result?.offline
+          ? 'Supabase is not configured, so this deposit request was recorded locally only.'
+          : 'Deposit request submitted. Our finance stewards will contact you shortly with deposit instructions and the drop-off location.',
+      );
+    } catch (error) {
+      console.error('Failed to submit deposit request', error);
+      setStatusVariant('error');
+      setStatusMessage(error?.message ?? 'Unable to submit your deposit request right now. Please try again.');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   if (!isOpen) {
