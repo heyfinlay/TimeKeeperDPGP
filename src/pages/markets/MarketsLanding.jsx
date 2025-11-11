@@ -4,8 +4,7 @@ import { ArrowRight, Layers, Timer, TrendingUp } from 'lucide-react';
 import BetslipDrawer from '@/components/betting/BetslipDrawer.jsx';
 import PoolAnalytics from '@/components/betting/PoolAnalytics.jsx';
 import { driverStats, useParimutuelStore } from '@/state/parimutuelStore.js';
-import { formatCountdown, formatCurrency, formatOdds, formatPercent } from '@/utils/betting.js';
-import { resolveOutcomeIdentity } from '@/utils/outcomes.js';
+import { formatCountdown, formatCurrency, formatPercent } from '@/utils/betting.js';
 
 const HIGHLIGHTS = [
   {
@@ -302,17 +301,6 @@ function ActiveMarketCard({
 }) {
   const countdown = useCountdown(market?.closes_at);
   const marketOptions = Array.isArray(event?.markets) ? event.markets : [];
-  const totalPool = Number(pool?.total ?? market?.pool_total ?? 0);
-  const rakeBps = Number.isFinite(Number(pool?.rakeBps ?? market?.rake_bps))
-    ? Number(pool?.rakeBps ?? market?.rake_bps)
-    : 0;
-  const rakeRatio = Math.min(Math.max(rakeBps / 10000, 0), 1);
-  const payoutRate = Math.max(0, 1 - rakeRatio);
-  const netPool = Math.max(0, totalPool * payoutRate);
-  const totalBets = useMemo(
-    () => stats.reduce((sum, entry) => sum + (entry.wagerCount ?? 0), 0),
-    [stats],
-  );
   return (
     <section className="tk-glass-panel interactive-card flex flex-col gap-6 rounded-2xl p-6">
       <header className="flex flex-wrap items-start justify-between gap-4">
@@ -348,85 +336,51 @@ function ActiveMarketCard({
           </div>
         </div>
       </header>
-      <div className="grid gap-3 text-sm text-slate-300 sm:grid-cols-3">
-        <div className="flex flex-col gap-2 rounded-2xl border border-accent-emerald/15 bg-shell-800/60 px-4 py-3">
+      <div className="flex flex-wrap items-center gap-4 text-sm text-slate-300">
+        <div className="flex min-w-[120px] flex-col gap-1">
           <span className="text-xs uppercase tracking-[0.3em] text-slate-500">Time left</span>
-          <div className="flex items-baseline gap-2">
-            <span className="text-2xl font-semibold text-white">{countdown.label}</span>
-            <span className="text-xs text-slate-500">{countdown.detail}</span>
-          </div>
+          <span className="font-semibold text-white">{countdown.label}</span>
+          <span className="text-xs text-slate-500">{countdown.detail}</span>
         </div>
-        <div className="flex flex-col gap-2 rounded-2xl border border-accent-emerald/15 bg-shell-800/60 px-4 py-3">
+        <div className="flex min-w-[120px] flex-col gap-1">
           <span className="text-xs uppercase tracking-[0.3em] text-slate-500">Pool size</span>
-          <span className="text-2xl font-semibold text-white">
-            {formatCurrency(totalPool, { compact: false, maximumFractionDigits: 0 })}
+          <span className="font-semibold text-white">
+            {formatCurrency(pool?.total ?? market?.pool_total ?? 0, { compact: false, maximumFractionDigits: 0 })}
           </span>
-          <span className="text-xs text-slate-500">
-            Net {formatCurrency(netPool, { compact: false, maximumFractionDigits: 0 })} after rake
-          </span>
-        </div>
-        <div className="flex flex-col gap-2 rounded-2xl border border-accent-emerald/15 bg-shell-800/60 px-4 py-3">
-          <span className="text-xs uppercase tracking-[0.3em] text-slate-500">Live return rate</span>
-          <span className="text-2xl font-semibold text-accent-emerald">
-            {formatPercent(payoutRate, { maximumFractionDigits: 1 })}
-          </span>
-          <div className="flex flex-col gap-1 text-xs text-slate-500">
-            <span>
-              House take{' '}
-              {formatPercent(rakeBps / 100, { inputFormat: 'percentage', maximumFractionDigits: 1 })}
-            </span>
-            <span>{totalBets} bets live</span>
-          </div>
         </div>
       </div>
       <div className="flex flex-col gap-3">
         {stats.length === 0 ? (
           <p className="rounded-2xl border border-dashed border-accent-emerald/15 bg-shell-800/40 px-4 py-6 text-center text-sm text-slate-500">
-            No wagers yet. Odds appear the moment the first Diamond is staked.
+            No wagers yet. Tap an outcome to be the first in the pool.
           </p>
         ) : (
-          stats.map((entry, index) => {
+          stats.map((entry) => {
             const matchedOutcome = market?.outcomes?.find((item) => item.id === entry.outcomeId);
-            const themedOutcome = matchedOutcome ?? { label: entry.label, color: '#5FF2C7' };
-            const identity = resolveOutcomeIdentity(
-              { ...themedOutcome, label: entry.label },
-              { fallbackIndex: index },
-            );
-            const badgeStyle = {
-              backgroundImage: `linear-gradient(135deg, ${identity.primaryColor}, ${identity.secondaryColor})`,
-            };
+            const swatch = matchedOutcome?.color ?? '#5FF2C7';
             return (
               <button
                 key={entry.outcomeId}
-                type="button"
-                onClick={() => onSelectOutcome(entry)}
-                className="focus-ring group flex items-center gap-4 rounded-2xl border border-accent-emerald/15 bg-shell-800/60 px-4 py-4 text-left transition-all duration-200 ease-out-back motion-safe:hover:-translate-y-[1px] motion-safe:hover:border-accent-emerald/40 motion-safe:hover:bg-accent-emerald/10"
-              >
-                <span
-                  className="flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-xl text-sm font-semibold uppercase tracking-wide text-white shadow-lg shadow-black/30"
-                  style={badgeStyle}
-                  aria-hidden="true"
-                >
-                  {identity.abbreviation}
-                </span>
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-semibold text-white" title={entry.label}>
-                    {entry.label}
-                  </p>
-                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-400">
-                    <span>{formatPercent(entry.share)}</span>
-                    <span className="hidden sm:inline">•</span>
-                    <span>{entry.wagerCount ?? 0} bets</span>
-                  </div>
-                </div>
-                <div className="flex flex-col items-end gap-1 text-right">
-                  <span className="text-lg font-semibold text-accent-emerald">
-                    {formatOdds(entry.odds)}
-                  </span>
-                  <span className="text-xs text-slate-500">
-                    {formatCurrency(entry.total, { compact: false, maximumFractionDigits: 0 })} handle
-                  </span>
-                </div>
+            type="button"
+            onClick={() => onSelectOutcome(entry)}
+            className="focus-ring flex items-center justify-between gap-4 rounded-2xl border border-accent-emerald/15 bg-shell-800/60 px-4 py-3 text-left transition-colors duration-200 ease-out-back motion-safe:hover:scale-102 motion-safe:hover:border-accent-emerald/40 motion-safe:hover:bg-accent-emerald/10"
+          >
+            <span className="flex min-w-0 items-center gap-3">
+              <span
+                className="h-3 w-3 flex-shrink-0 rounded-full"
+                style={{ backgroundColor: swatch }}
+                aria-hidden="true"
+              />
+              <span className="truncate text-sm font-medium text-white" title={entry.label}>
+                {entry.label}
+              </span>
+            </span>
+            <span className="flex flex-col items-end gap-1 text-sm text-slate-200">
+              <span className="font-semibold text-white">{formatPercent(entry.share)}</span>
+              <span className="text-xs text-slate-500">
+                {formatCurrency(entry.total, { compact: false, maximumFractionDigits: 0 })}
+              </span>
+            </span>
               </button>
             );
           })
