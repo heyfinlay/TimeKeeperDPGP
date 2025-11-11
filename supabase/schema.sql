@@ -61,6 +61,93 @@ create table if not exists public.withdrawals (
   created_at timestamptz not null default now()
 );
 
+create table if not exists public.deposits (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  amount bigint not null check (amount > 0),
+  ic_phone_number text,
+  reference_code text,
+  status text not null default 'queued',
+  created_at timestamptz not null default now()
+);
+
+-- Admin confirms queued deposits and credits wallets
+create or replace function public.approve_deposit(
+  p_deposit_id uuid,
+  p_reference text default null
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_deposit record;
+  v_reference text;
+begin
+  if not public.is_admin() then
+    raise exception 'Admin access required';
+  end if;
+
+  select * into v_deposit
+  from public.deposits
+  where id = p_deposit_id
+  for update;
+
+  if v_deposit.id is null then
+    raise exception 'Deposit not found';
+  end if;
+
+  if v_deposit.status <> 'queued' then
+    raise exception 'Deposit is not queued (current status: %)', v_deposit.status;
+  end if;
+
+  v_reference := coalesce(nullif(trim(coalesce(p_reference, '')), ''), v_deposit.reference_code);
+
+  insert into public.wallet_accounts (user_id, balance)
+  values (v_deposit.user_id, v_deposit.amount)
+  on conflict (user_id)
+  do update set balance = wallet_accounts.balance + excluded.balance;
+
+  insert into public.wallet_transactions (user_id, kind, amount, meta)
+  values (
+    v_deposit.user_id,
+    'deposit',
+    v_deposit.amount,
+    jsonb_build_object(
+      'deposit_id', p_deposit_id,
+      'admin_id', auth.uid(),
+      'ic_phone_number', v_deposit.ic_phone_number,
+      'reference_code', v_reference
+    )
+  );
+
+  update public.deposits
+  set status = 'completed',
+      reference_code = v_reference
+  where id = p_deposit_id;
+
+  perform public.log_admin_action(
+    'approve_deposit',
+    null,
+    jsonb_build_object(
+      'deposit_id', p_deposit_id,
+      'user_id', v_deposit.user_id,
+      'amount', v_deposit.amount,
+      'reference_code', v_reference
+    )
+  );
+
+  return jsonb_build_object(
+    'success', true,
+    'deposit_id', p_deposit_id,
+    'status', 'completed'
+  );
+end;
+$$;
+
+grant execute on function public.approve_deposit(uuid, text) to authenticated;
+
 create index if not exists markets_event_id_idx on public.markets (event_id);
 create index if not exists outcomes_market_id_idx on public.outcomes (market_id);
 create index if not exists events_session_id_idx on public.events (session_id);
@@ -68,6 +155,7 @@ create index if not exists outcomes_driver_id_idx on public.outcomes (driver_id)
 create index if not exists wagers_user_id_idx on public.wagers (user_id);
 create index if not exists wagers_market_id_idx on public.wagers (market_id);
 create index if not exists wallet_transactions_user_id_idx on public.wallet_transactions (user_id);
+create index if not exists deposits_user_id_idx on public.deposits (user_id);
 
 -- Ensure realtime publications include tables
 DO
@@ -121,6 +209,14 @@ END
 DO
 BEGIN
   ALTER PUBLICATION supabase_realtime ADD TABLE public.withdrawals;
+EXCEPTION
+  WHEN duplicate_object THEN NULL;
+END
+;
+
+DO
+BEGIN
+  ALTER PUBLICATION supabase_realtime ADD TABLE public.deposits;
 EXCEPTION
   WHEN duplicate_object THEN NULL;
 END

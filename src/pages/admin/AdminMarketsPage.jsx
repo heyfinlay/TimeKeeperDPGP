@@ -4,6 +4,7 @@ import {
   ArrowRight,
   BarChart3,
   CheckCircle,
+  ChevronDown,
   Clock,
   DollarSign,
   Eye,
@@ -42,6 +43,7 @@ const AdminMarketsPage = () => {
   const [outcomes, setOutcomes] = useState([]);
   const [wagers, setWagers] = useState([]);
   const [withdrawals, setWithdrawals] = useState([]);
+  const [deposits, setDeposits] = useState([]);
   const [walletAccounts, setWalletAccounts] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -63,6 +65,7 @@ const AdminMarketsPage = () => {
         { data: outcomesData, error: outcomesError },
         { data: wagersData, error: wagersError },
         { data: withdrawalsData, error: withdrawalsError },
+        { data: depositsData, error: depositsError },
         { data: walletsData, error: walletsError },
       ] = await Promise.all([
         supabase.from('events').select('*').order('starts_at', { ascending: false }),
@@ -70,6 +73,7 @@ const AdminMarketsPage = () => {
         supabase.from('outcomes').select('*').order('sort_order', { ascending: true }),
         supabase.from('wagers').select('*, markets(name), outcomes(label)').order('placed_at', { ascending: false }),
         supabase.from('withdrawals').select('*').order('created_at', { ascending: false }),
+        supabase.from('deposits').select('*').order('created_at', { ascending: false }),
         supabase.from('wallet_accounts').select('*'),
       ]);
 
@@ -78,6 +82,7 @@ const AdminMarketsPage = () => {
       if (outcomesError) throw outcomesError;
       if (wagersError) throw wagersError;
       if (withdrawalsError) throw withdrawalsError;
+      if (depositsError) throw depositsError;
       if (walletsError) throw walletsError;
 
       setEvents(eventsData || []);
@@ -85,6 +90,7 @@ const AdminMarketsPage = () => {
       setOutcomes(outcomesData || []);
       setWagers(wagersData || []);
       setWithdrawals(withdrawalsData || []);
+      setDeposits(depositsData || []);
       setWalletAccounts(walletsData || []);
     } catch (err) {
       console.error('Failed to fetch admin markets data:', err);
@@ -114,6 +120,13 @@ const AdminMarketsPage = () => {
       })
       .subscribe();
 
+    const depositsChannel = supabase
+      .channel('admin-deposits-realtime')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'deposits' }, () => {
+        fetchData();
+      })
+      .subscribe();
+
     const marketsChannel = supabase
       .channel('admin-markets-realtime')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'markets' }, () => {
@@ -124,6 +137,7 @@ const AdminMarketsPage = () => {
     return () => {
       supabase.removeChannel(wagersChannel);
       supabase.removeChannel(withdrawalsChannel);
+      supabase.removeChannel(depositsChannel);
       supabase.removeChannel(marketsChannel);
     };
   }, [fetchData]);
@@ -133,16 +147,18 @@ const AdminMarketsPage = () => {
     const totalWagered = wagers.reduce((sum, w) => sum + (w.stake || 0), 0);
     const pendingWagers = wagers.filter(w => w.status === 'pending');
     const pendingWithdrawals = withdrawals.filter(w => w.status === 'queued');
+    const pendingDeposits = deposits.filter((deposit) => deposit.status === 'queued');
     const activeMarkets = markets.filter(m => m.status === 'open');
 
     return {
       totalWagered,
       pendingWagersCount: pendingWagers.length,
       pendingWithdrawalsCount: pendingWithdrawals.length,
+      pendingDepositsCount: pendingDeposits.length,
       activeMarketsCount: activeMarkets.length,
       totalMarketsCount: markets.length,
     };
-  }, [wagers, withdrawals, markets]);
+  }, [wagers, withdrawals, deposits, markets]);
 
   // Close market handler
   const handleCloseMarket = async (marketId) => {
@@ -202,6 +218,25 @@ const AdminMarketsPage = () => {
     } catch (err) {
       console.error('Failed to reject withdrawal:', err);
       alert(`Failed to reject withdrawal: ${err.message}`);
+    }
+  };
+
+  // Approve deposit handler
+  const handleApproveDeposit = async (depositId) => {
+    const reference = prompt('Receipt or reference code (optional):');
+    try {
+      const { data, error } = await supabase.rpc('approve_deposit', {
+        p_deposit_id: depositId,
+        p_reference: reference && reference.trim() ? reference.trim() : null,
+      });
+      if (error) throw error;
+      if (!data?.success) {
+        throw new Error(data?.message || 'Deposit was not approved.');
+      }
+      await fetchData();
+    } catch (err) {
+      console.error('Failed to approve deposit:', err);
+      alert(`Failed to approve deposit: ${err.message}`);
     }
   };
 
@@ -270,7 +305,7 @@ const AdminMarketsPage = () => {
         </div>
 
         {/* Quick Stats */}
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
           <div className="flex flex-col gap-2 rounded-2xl border border-white/5 bg-[#05070F]/80 p-4">
             <div className="flex items-center gap-2 text-[#9FF7D3]">
               <BarChart3 className="h-5 w-5" />
@@ -307,6 +342,14 @@ const AdminMarketsPage = () => {
             </div>
             <span className="text-2xl font-semibold text-white">{marketAnalytics.pendingWithdrawalsCount}</span>
             <span className="text-xs text-neutral-500">pending approval</span>
+          </div>
+          <div className="flex flex-col gap-2 rounded-2xl border border-white/5 bg-[#05070F]/80 p-4">
+            <div className="flex items-center gap-2 text-[#9FF7D3]">
+              <ChevronDown className="h-5 w-5" />
+              <span className="text-xs uppercase tracking-[0.3em]">Deposits</span>
+            </div>
+            <span className="text-2xl font-semibold text-white">{marketAnalytics.pendingDepositsCount}</span>
+            <span className="text-xs text-neutral-500">awaiting follow-up</span>
           </div>
         </div>
       </section>
@@ -477,7 +520,7 @@ const AdminMarketsPage = () => {
         )}
 
         {activeTab === TABS.PENDING_ACTIONS && (
-          <div className="grid gap-6 lg:grid-cols-2">
+          <div className="grid gap-6 lg:grid-cols-3">
             {/* Pending Wagers */}
             <div className="flex flex-col gap-4 rounded-2xl border border-white/5 bg-[#05070F]/80 p-6">
               <h3 className="text-lg font-semibold text-white">Pending Wagers</h3>
@@ -548,6 +591,53 @@ const AdminMarketsPage = () => {
                             className="rounded-full border border-rose-500/40 bg-rose-500/10 px-2 py-1 text-xs text-rose-300 transition hover:border-rose-500/70"
                           >
                             <X className="h-3 w-3" />
+                          </button>
+                        </div>
+                      </div>
+                    ))
+                )}
+              </div>
+            </div>
+
+            {/* Pending Deposits */}
+            <div className="flex flex-col gap-4 rounded-2xl border border-white/5 bg-[#05070F]/80 p-6">
+              <h3 className="text-lg font-semibold text-white">Pending Deposits</h3>
+              <div className="flex flex-col gap-3">
+                {deposits.filter((deposit) => deposit.status === 'queued').length === 0 ? (
+                  <p className="text-sm text-neutral-500">No pending deposits</p>
+                ) : (
+                  deposits
+                    .filter((deposit) => deposit.status === 'queued')
+                    .slice(0, 10)
+                    .map((deposit) => (
+                      <div
+                        key={deposit.id}
+                        className="flex flex-col gap-3 rounded-xl border border-white/5 bg-[#000000]/40 p-4"
+                      >
+                        <div className="flex items-center justify-between">
+                          <div className="flex flex-col">
+                            <span className="text-sm font-medium text-white">Deposit Request</span>
+                            <span className="text-xs text-neutral-500">User: {deposit.user_id.slice(0, 8)}...</span>
+                          </div>
+                          <span className="text-sm font-semibold text-white">
+                            💎 {(deposit.amount / 1000).toFixed(1)}K
+                          </span>
+                        </div>
+                        <div className="flex flex-col gap-1 text-xs text-neutral-400">
+                          {deposit.ic_phone_number ? (
+                            <span>IC Phone: {deposit.ic_phone_number}</span>
+                          ) : (
+                            <span className="text-amber-300">IC phone not provided</span>
+                          )}
+                          {deposit.reference_code ? <span>Reference: {deposit.reference_code}</span> : null}
+                          <span>{new Date(deposit.created_at).toLocaleString()}</span>
+                        </div>
+                        <div className="flex items-center justify-end gap-2">
+                          <button
+                            onClick={() => handleApproveDeposit(deposit.id)}
+                            className="rounded-full border border-[#9FF7D3]/40 bg-[#9FF7D3]/10 px-3 py-1 text-xs text-[#9FF7D3] transition hover:border-[#9FF7D3]/70 hover:text-white"
+                          >
+                            Mark Received
                           </button>
                         </div>
                       </div>

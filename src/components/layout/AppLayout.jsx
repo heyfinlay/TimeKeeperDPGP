@@ -1,10 +1,13 @@
 import { useMemo, useState, useRef, useEffect } from 'react';
-import { NavLink, Outlet, Link } from 'react-router-dom';
+import { NavLink, Outlet } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext.jsx';
 import { useEventSession } from '@/context/SessionContext.jsx';
 import { useAdminAccess } from '@/components/auth/AuthGuard.jsx';
 import { useWallet } from '@/context/WalletContext.jsx';
 import { ChevronDown } from 'lucide-react';
+import TopUpModal from '@/components/dashboard/TopUpModal.jsx';
+import WithdrawModal from '@/components/dashboard/WithdrawModal.jsx';
+import { formatCurrency } from '@/utils/betting.js';
 
 const NAV_ITEMS = [
   {
@@ -58,12 +61,24 @@ export default function AppLayout() {
   const hasControlAccess = typeof canControl === 'boolean' ? canControl : isAdmin;
   const { balance, isLoading: isWalletLoading, supportsWallets } = useWallet();
   const [isWalletMenuOpen, setIsWalletMenuOpen] = useState(false);
+  const [isTopUpOpen, setIsTopUpOpen] = useState(false);
+  const [isWithdrawOpen, setIsWithdrawOpen] = useState(false);
   const walletMenuRef = useRef(null);
 
   const showWallet = isAuthenticated || !isSupabaseConfigured;
-  const balanceFormatter = useMemo(() => new Intl.NumberFormat('en-US'), []);
-  const formattedBalance = balanceFormatter.format(Number.isFinite(balance) ? balance : 0);
-  const walletLabel = isWalletLoading ? 'Loading' : supportsWallets ? formattedBalance : 'Unavailable';
+  const formattedBalanceCompact = useMemo(
+    () => formatCurrency(balance, { compact: true, maximumFractionDigits: 1, symbol: '' }),
+    [balance],
+  );
+  const formattedBalanceFull = useMemo(
+    () => formatCurrency(balance, { compact: false, maximumFractionDigits: 0 }),
+    [balance],
+  );
+  const walletLabel = isWalletLoading
+    ? 'Loading…'
+    : supportsWallets
+    ? formattedBalanceCompact
+    : 'Unavailable';
 
   // Close wallet menu when clicking outside
   useEffect(() => {
@@ -123,7 +138,9 @@ export default function AppLayout() {
                 onClick={() => setIsWalletMenuOpen(!isWalletMenuOpen)}
                 className="interactive-cta inline-flex items-center gap-2 rounded-full border border-accent-emerald/30 bg-shell-800/60 px-3 py-1 text-xs font-semibold uppercase tracking-[0.35em] text-accent-emerald hover:border-accent-emerald/60 hover:text-white"
               >
-                <span>$</span>
+                <span role="img" aria-hidden="true">
+                  💎
+                </span>
                 {walletLabel}
                 <ChevronDown className={`h-3 w-3 transition-transform ${isWalletMenuOpen ? 'rotate-180' : ''}`} />
               </button>
@@ -132,15 +149,31 @@ export default function AppLayout() {
                   <div className="flex flex-col gap-2">
                     <div className="rounded-xl border border-accent-emerald/15 bg-shell-800/70 px-4 py-3">
                       <p className="text-[0.6rem] uppercase tracking-[0.35em] text-slate-400">Balance</p>
-                      <p className="mt-1 text-xl font-semibold text-white">${formattedBalance}</p>
+                      <p className="mt-1 text-xl font-semibold text-white">{formattedBalanceFull}</p>
                     </div>
-                    <Link
-                      to="/account/setup"
-                      onClick={() => setIsWalletMenuOpen(false)}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsWalletMenuOpen(false);
+                        setIsTopUpOpen(true);
+                      }}
                       className="interactive-cta inline-flex items-center justify-center gap-2 rounded-full border border-accent-blue/40 bg-accent-blue/15 px-4 py-2 text-xs uppercase tracking-[0.35em] text-accent-blue hover:text-white"
                     >
-                      Request Top-Up
-                    </Link>
+                      Request Deposit
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsWalletMenuOpen(false);
+                        setIsWithdrawOpen(true);
+                      }}
+                      className="interactive-cta inline-flex items-center justify-center gap-2 rounded-full border border-rose-400/40 bg-rose-500/10 px-4 py-2 text-xs uppercase tracking-[0.35em] text-rose-300 hover:text-white"
+                    >
+                      Request Withdrawal
+                    </button>
+                    <p className="mt-1 text-[0.55rem] leading-relaxed text-slate-500">
+                      Finance stewards will reach out after each request with handoff details.
+                    </p>
                   </div>
                 </div>
               )}
@@ -151,6 +184,8 @@ export default function AppLayout() {
       <main className="relative mx-auto flex min-h-screen w-full max-w-6xl flex-col px-4 pb-16 pt-28 sm:px-6">
         <Outlet />
       </main>
+      <TopUpModal isOpen={isTopUpOpen} onClose={() => setIsTopUpOpen(false)} />
+      <WithdrawModal isOpen={isWithdrawOpen} onClose={() => setIsWithdrawOpen(false)} />
     </div>
   );
 }
