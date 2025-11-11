@@ -333,12 +333,13 @@ export const subscribeToTable = (
     .filter(Boolean)
     .join('-');
 
-  const { maxRetries = 5, retryDelayBaseMs = 500 } = options ?? {};
+  const { maxRetries = 5, retryDelayBaseMs = 500, onCircuitBreak } = options ?? {};
 
   let currentChannel = null;
   let disposed = false;
   let retries = 0;
   let retryTimer = null;
+  let circuitBroken = false;
 
   const teardownChannel = () => {
     if (currentChannel) {
@@ -355,9 +356,17 @@ export const subscribeToTable = (
     if (disposed) return;
     teardownChannel();
     if (retries >= maxRetries) {
+      circuitBroken = true;
       console.error(
         `[Supabase realtime] ${channelName} retry limit reached after ${reason}. Manual reload required.`,
       );
+      if (typeof onCircuitBreak === 'function') {
+        try {
+          onCircuitBreak({ channelName, reason, retries });
+        } catch (cbError) {
+          console.error('Circuit break callback failed', cbError);
+        }
+      }
       return;
     }
     const delay = Math.min(30000, retryDelayBaseMs * 2 ** retries);
@@ -414,9 +423,24 @@ export const subscribeToTable = (
     });
   };
 
+  const manualRetry = () => {
+    if (disposed) {
+      console.warn(`[Supabase realtime] ${channelName} cannot retry - subscription disposed`);
+      return;
+    }
+    circuitBroken = false;
+    retries = 0;
+    if (retryTimer) {
+      clearTimeout(retryTimer);
+      retryTimer = null;
+    }
+    console.info(`[Supabase realtime] ${channelName} manual retry initiated`);
+    subscribe();
+  };
+
   subscribe();
 
-  return () => {
+  const unsubscribe = () => {
     disposed = true;
     if (retryTimer) {
       clearTimeout(retryTimer);
@@ -424,6 +448,15 @@ export const subscribeToTable = (
     }
     teardownChannel();
   };
+
+  unsubscribe.retry = manualRetry;
+  unsubscribe.getStatus = () => ({
+    circuitBroken,
+    retries,
+    channelName,
+  });
+
+  return unsubscribe;
 };
 
 export const supabaseEnvironment = {

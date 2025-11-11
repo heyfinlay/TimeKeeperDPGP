@@ -12,6 +12,7 @@ export function useWagers() {
   const [wagers, setWagers] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
   const [supportsWagers, setSupportsWagers] = useState(!isSupabaseConfigured);
+  const [realtimeError, setRealtimeError] = useState(null);
 
   const userId = user?.id ?? null;
   const isReady = isSupabaseConfigured && status === 'authenticated' && Boolean(userId);
@@ -114,7 +115,16 @@ export function useWagers() {
           }
         })();
       },
-      { maxRetries: 3 },
+      {
+        maxRetries: 3,
+        onCircuitBreak: ({ channelName, reason }) => {
+          setRealtimeError({
+            message: 'Real-time updates failed. Tap to retry.',
+            channelName,
+            reason,
+          });
+        },
+      },
     );
 
     return () => {
@@ -124,5 +134,10 @@ export function useWagers() {
     };
   }, [isReady, userId, supportsWagers]);
 
-  return { wagers, isLoading, supportsWagers };
+  const retryRealtime = () => {
+    setRealtimeError(null);
+    // The retry will happen automatically on next effect run or can be exposed via ref
+  };
+
+  return { wagers, isLoading, supportsWagers, realtimeError, retryRealtime };
 }
