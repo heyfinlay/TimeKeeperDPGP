@@ -218,16 +218,16 @@ export default function PoolAnalytics({ marketId = null, className = '', isManag
     [recentBets, stats],
   );
 
-  const containerClasses = `tk-glass-panel flex flex-col gap-5 rounded-2xl p-5 md:p-6 ${className}`.trim();
+  const containerClasses = `tk-glass-panel interactive-card flex flex-col gap-6 rounded-2xl p-6 ${className}`.trim();
 
   if (!market) {
     return (
       <section className={containerClasses}>
-        <header className="flex flex-col gap-1">
-          <span className="text-xs uppercase tracking-[0.35em] text-[#7C6BFF]">Pool analytics</span>
+        <header className="flex flex-col gap-2">
+          <span className="text-xs uppercase tracking-[0.35em] text-accent-blue">Pool analytics</span>
           <h2 className="text-lg font-semibold text-white">Select a market to view analytics</h2>
         </header>
-        <p className="text-sm text-neutral-400">
+        <p className="text-sm text-slate-400">
           Choose a market to explore live odds, pool distribution, and your recent wagers.
         </p>
       </section>
@@ -236,13 +236,13 @@ export default function PoolAnalytics({ marketId = null, className = '', isManag
 
   return (
     <section className={containerClasses}>
-      <header className="flex flex-col gap-4">
-        <div className="flex flex-col gap-1">
-          <span className="text-xs uppercase tracking-[0.35em] text-[#7C6BFF]">Pool analytics</span>
-          <div className="flex flex-col gap-2 text-sm text-neutral-300 md:flex-row md:items-center md:justify-between">
+      <header className="flex flex-col gap-5">
+        <div className="flex flex-col gap-2">
+          <span className="text-xs uppercase tracking-[0.35em] text-accent-blue">Pool analytics</span>
+          <div className="flex flex-col gap-2 text-sm text-slate-300 md:flex-row md:items-center md:justify-between">
             <div className="flex flex-col">
               <h2 className="text-lg font-semibold text-white">{market.name ?? 'Market'}</h2>
-              <p className="text-xs text-neutral-400">
+              <p className="text-xs text-slate-400">
                 {formatCurrency(pool?.total ?? market.pool_total ?? 0, {
                   compact: false,
                   maximumFractionDigits: 0,
@@ -256,10 +256,10 @@ export default function PoolAnalytics({ marketId = null, className = '', isManag
                   key={tab.id}
                   type="button"
                   onClick={() => setActiveTab(tab.id)}
-                  className={`rounded-full px-3 py-1 text-xs font-semibold transition ${
+                  className={`interactive-cta rounded-full px-3 py-1 text-xs font-semibold ${
                     activeTab === tab.id
-                      ? 'bg-white text-neutral-900'
-                      : 'border border-white/20 bg-white/[0.04] text-neutral-300 hover:bg-white/[0.08]'
+                      ? 'border-accent-emerald/60 bg-accent-emerald/20 text-neutral-900'
+                      : 'border border-accent-emerald/20 bg-shell-800/60 text-slate-300 hover:border-accent-emerald/40 hover:text-white'
                   }`}
                 >
                   {tab.label}
@@ -268,7 +268,7 @@ export default function PoolAnalytics({ marketId = null, className = '', isManag
             </div>
           </div>
         </div>
-        <div className="flex items-center gap-2 text-xs text-neutral-500">
+        <div className="flex items-center gap-2 text-xs text-slate-500">
           <Clock className="h-3.5 w-3.5" />
           Updated {formatRelativeTime(latestSnapshot?.timestamp)}
         </div>
@@ -277,7 +277,7 @@ export default function PoolAnalytics({ marketId = null, className = '', isManag
       {activeTab === 'overview' ? (
         <div className="flex flex-col gap-3">
           {stats.length === 0 ? (
-            <p className="rounded-xl border border-white/10 bg-white/[0.04] px-4 py-3 text-sm text-neutral-400">
+            <p className="rounded-xl border border-accent-emerald/15 bg-shell-800/60 px-4 py-3 text-sm text-slate-400">
               No outcomes available for this market yet.
             </p>
           ) : (
@@ -292,29 +292,29 @@ export default function PoolAnalytics({ marketId = null, className = '', isManag
               return (
                 <article
                   key={entry.outcomeId}
-                  className="rounded-xl border border-white/10 bg-white/[0.04] p-4"
+                  className="rounded-xl border border-accent-emerald/15 bg-shell-800/60 p-4 transition-colors duration-200 ease-out-back focus-within:ring-2 focus-within:ring-accent-emerald/40 focus-within:ring-offset-2 focus-within:ring-offset-shell-900"
                 >
                   <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
                     <div className="flex flex-col">
                       <h3 className="text-sm font-semibold text-white">{entry.label}</h3>
-                      <p className="text-xs text-neutral-400">Live odds {formatOdds(entry.odds)}</p>
+                      <p className="text-xs text-slate-400">Live odds {formatOdds(entry.odds)}</p>
                     </div>
                     <DeltaChip delta={deltaShare} />
                   </div>
-                  <div className="mt-3 grid gap-3 text-sm text-neutral-300 md:grid-cols-3">
+                  <div className="mt-3 grid gap-3 text-sm text-slate-300 md:grid-cols-3">
                     <div className="flex flex-col">
-                      <span className="text-xs uppercase tracking-wide text-neutral-500">Share</span>
+                      <span className="text-xs uppercase tracking-wide text-slate-500">Share</span>
                       <span className="font-semibold text-white">
                         {formatPercent(entry.share, { maximumFractionDigits: 1 })}
                       </span>
                     </div>
                     <div className="flex flex-col">
-                      <span className="text-xs uppercase tracking-wide text-neutral-500">Handle</span>
+                      <span className="text-xs uppercase tracking-wide text-slate-500">Handle</span>
                       <span className="font-semibold text-white">
                         {formatCurrency(entry.total, { compact: false, maximumFractionDigits: 0 })}
                       </span>
                       {showAdminMetrics ? (
-                        <span className="text-xs text-neutral-400">
+                        <span className="text-xs text-slate-400">
                           {deltaHandle === 0
                             ? 'No change since open'
                             : `${deltaHandle > 0 ? '+' : '-'}${formatCurrency(Math.abs(deltaHandle), {
@@ -325,9 +325,9 @@ export default function PoolAnalytics({ marketId = null, className = '', isManag
                       ) : null}
                     </div>
                     <div className="flex flex-col">
-                      <span className="text-xs uppercase tracking-wide text-neutral-500">Trend</span>
+                      <span className="text-xs uppercase tracking-wide text-slate-500">Trend</span>
                       <span className="font-mono text-base text-white">{sparkline ?? '—'}</span>
-                      <span className="text-xs text-neutral-400">
+                      <span className="text-xs text-slate-400">
                         {entry.wagerCount ?? 0} wagers
                       </span>
                     </div>
@@ -340,23 +340,23 @@ export default function PoolAnalytics({ marketId = null, className = '', isManag
       ) : (
         <div className="flex flex-col gap-3">
           {betsForDisplay.length === 0 ? (
-            <p className="rounded-xl border border-dashed border-white/10 bg-white/[0.02] px-4 py-3 text-sm text-neutral-400">
+            <p className="rounded-xl border border-dashed border-accent-emerald/15 bg-shell-800/40 px-4 py-3 text-sm text-slate-400">
               You have not placed any wagers on this market yet.
             </p>
           ) : (
             betsForDisplay.map((bet) => (
               <article
                 key={bet.id}
-                className="rounded-xl border border-white/10 bg-white/[0.04] p-4"
+                className="rounded-xl border border-accent-emerald/15 bg-shell-800/60 p-4"
               >
                 <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
                   <div>
                     <h3 className="text-sm font-semibold text-white">{bet.label}</h3>
-                    <p className="text-xs text-neutral-400">Placed {formatRelativeTime(bet.timestamp)}</p>
+                    <p className="text-xs text-slate-400">Placed {formatRelativeTime(bet.timestamp)}</p>
                   </div>
                   <div className="flex items-center gap-3 text-sm text-white">
                     <span>{formatCurrency(bet.stake, { compact: false, maximumFractionDigits: 0 })}</span>
-                    <span className="text-xs uppercase tracking-wide text-neutral-400">
+                    <span className="text-xs uppercase tracking-wide text-slate-400">
                       {formatPercent(bet.share, { maximumFractionDigits: 1 })} share · {formatOdds(bet.odds)}
                     </span>
                   </div>

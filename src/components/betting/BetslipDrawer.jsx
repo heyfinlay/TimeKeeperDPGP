@@ -104,7 +104,7 @@ export default function BetslipDrawer({ open, onClose, marketId, outcomeId, onSu
         aria-modal="true"
         aria-label="Betslip drawer"
         tabIndex={-1}
-        className="relative z-10 flex h-full w-full max-w-full flex-col overflow-y-auto border-l border-white/10 bg-[#050a1a]/95 text-white shadow-[0_0_40px_rgba(5,10,26,0.65)] transition-transform duration-200 ease-out sm:max-w-md"
+        className="relative z-10 flex h-full w-full max-w-full flex-col overflow-y-auto border-l border-accent-emerald/15 bg-shell-900/95 text-white shadow-shell-card transition-transform duration-200 ease-out sm:max-w-md"
       >
         <Betslip marketId={marketId} outcomeId={outcomeId} onClose={onClose} onSuccess={onSuccess} />
       </div>

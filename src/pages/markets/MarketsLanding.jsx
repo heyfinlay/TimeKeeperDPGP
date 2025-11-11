@@ -132,52 +132,52 @@ function PoolDistributionModal({ open, onClose, market, stats, pool }) {
         aria-modal="true"
         aria-label="Pool distribution"
         tabIndex={-1}
-        className="relative z-10 w-full max-w-lg rounded-2xl border border-white/10 bg-[#050a1a]/95 p-6 text-white shadow-[0_20px_60px_rgba(5,10,26,0.6)]"
+        className="relative z-10 w-full max-w-lg rounded-2xl border border-accent-emerald/15 bg-shell-900/95 p-6 text-white shadow-shell-card"
       >
         <div className="mb-4 flex items-start justify-between gap-4">
           <div className="flex flex-col gap-1">
-            <span className="text-xs uppercase tracking-[0.35em] text-[#7C6BFF]">Live pool distribution</span>
+            <span className="text-xs uppercase tracking-[0.35em] text-accent-blue">Live pool distribution</span>
             <h3 className="text-xl font-semibold" title={market?.name}>
               {market?.name ?? 'Market'}
             </h3>
-            <p className="text-xs uppercase tracking-[0.25em] text-neutral-500">
+            <p className="text-xs uppercase tracking-[0.25em] text-slate-500">
               {normaliseStatus(market?.status)} · {stats.length} outcomes
             </p>
           </div>
           <button
             type="button"
             onClick={onClose}
-            className="rounded-full p-2 text-neutral-400 transition hover:bg-white/5 hover:text-white"
+            className="focus-ring rounded-full p-2 text-slate-400 transition-colors duration-200 ease-out-back hover:bg-shell-800/70 hover:text-white"
             aria-label="Close pool distribution"
           >
             ×
           </button>
         </div>
-        <div className="flex items-center justify-between rounded-xl border border-white/10 bg-white/[0.05] px-4 py-3 text-sm text-neutral-300">
+        <div className="flex items-center justify-between rounded-xl border border-accent-emerald/15 bg-shell-800/60 px-4 py-3 text-sm text-slate-300">
           <span>Pool size</span>
           <span>{formatCurrency(pool?.total ?? market?.pool_total ?? 0, { compact: false, maximumFractionDigits: 0 })}</span>
         </div>
         <ul className="mt-4 flex flex-col gap-3">
           {stats.length === 0 ? (
-            <li className="rounded-xl border border-white/10 bg-white/[0.03] p-3 text-sm text-neutral-500">
+            <li className="rounded-xl border border-accent-emerald/15 bg-shell-800/60 p-3 text-sm text-slate-500">
               No wagers yet. Pool distribution updates as soon as Diamonds land.
             </li>
           ) : (
             stats.map((entry) => (
-              <li key={entry.outcomeId} className="rounded-xl border border-white/10 bg-white/[0.03] p-3">
-                <div className="flex items-center justify-between text-sm text-neutral-200">
+              <li key={entry.outcomeId} className="rounded-xl border border-accent-emerald/15 bg-shell-800/60 p-3">
+                <div className="flex items-center justify-between text-sm text-slate-200">
                   <span className="truncate pr-3" title={entry.label}>
                     {entry.label}
                   </span>
                   <span>{formatPercent(entry.share)}</span>
                 </div>
-                <div className="mt-2 h-2 rounded-full bg-white/10">
+                <div className="mt-2 h-2 rounded-full bg-shell-900/70">
                   <div
-                    className="h-2 rounded-full bg-gradient-to-r from-[#7C6BFF] via-[#9FF7D3] to-[#dcd7ff]"
+                    className="h-2 rounded-full bg-gradient-to-r from-accent-blue via-accent-emerald to-accent-ocean"
                     style={{ width: `${Math.min(100, Math.round(entry.share * 100))}%` }}
                   />
                 </div>
-                <p className="mt-2 text-xs text-neutral-500">
+                <p className="mt-2 text-xs text-slate-500">
                   {formatCurrency(entry.total, { compact: false, maximumFractionDigits: 0 })} wagered · {entry.wagerCount}{' '}
                   bets
                 </p>
@@ -194,30 +194,30 @@ function PoolDistributionModal({ open, onClose, market, stats, pool }) {
 function PageHeader({ onOpenBetslip, hasMarket }) {
   return (
     <header className="flex flex-col gap-6">
-      <div className="flex flex-col gap-2">
-        <span className="text-xs uppercase tracking-[0.35em] text-[#9FF7D3]">Diamond Sports Book</span>
+      <div className="flex flex-col gap-3">
+        <span className="text-xs uppercase tracking-[0.35em] text-accent-emerald">Diamond Sports Book</span>
         <h1 className="text-3xl font-semibold text-white sm:text-4xl">Markets & Tote</h1>
-        <p className="text-sm text-neutral-300 sm:text-base">
+        <p className="text-sm text-slate-300 sm:text-base">
           Follow live tote pools, track odds pulses, and pop open the betslip when you are ready to stake.
         </p>
       </div>
       <div className="flex flex-wrap items-center gap-3">
         <button
           type="button"
-          className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/[0.04] px-4 py-2 text-xs uppercase tracking-[0.3em] text-neutral-200 transition hover:border-white/30 hover:bg-white/10"
+          className="interactive-cta inline-flex items-center gap-2 rounded-full border border-accent-blue/25 bg-shell-800/60 px-4 py-2 text-xs uppercase tracking-[0.3em] text-slate-200 hover:text-white"
         >
-          <Timer className="h-4 w-4 text-[#9FF7D3]" /> Realtime telemetry feed
+          <Timer className="h-4 w-4 text-accent-blue" /> Realtime telemetry feed
         </button>
         <button
           type="button"
           onClick={onOpenBetslip}
           disabled={!hasMarket}
-          className="inline-flex items-center gap-2 rounded-full border border-[#9FF7D3]/50 bg-[#9FF7D3]/15 px-4 py-2 text-xs uppercase tracking-[0.3em] text-[#9FF7D3] transition hover:border-[#9FF7D3]/70 hover:bg-[#9FF7D3]/25 hover:text-white disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-neutral-500"
+          className="interactive-cta inline-flex items-center gap-2 rounded-full border border-accent-emerald/50 bg-accent-emerald/15 px-4 py-2 text-xs uppercase tracking-[0.3em] text-accent-emerald hover:border-accent-emerald/70 hover:bg-accent-emerald/20 hover:text-white disabled:cursor-not-allowed disabled:border-slate-600/40 disabled:bg-slate-800/60 disabled:text-slate-500"
         >
           Open betslip <ArrowRight className="h-4 w-4" />
         </button>
       </div>
-      <p className="text-[0.7rem] uppercase tracking-[0.3em] text-neutral-500">
+      <p className="text-[0.7rem] uppercase tracking-[0.3em] text-slate-500">
         All wagers settle in Diamonds (in-game currency). Parody product only.
       </p>
     </header>
@@ -228,18 +228,18 @@ function EventSummaryCard({ events, activeEventId, onSelectEvent, onOpenBetslip,
   const activeEvent = events.find((event) => event.id === activeEventId) ?? null;
   const countdown = useCountdown(activeEvent?.starts_at);
   return (
-    <section className="tk-glass-panel flex flex-col gap-5 rounded-2xl p-5 md:p-6">
-      <header className="flex flex-col gap-3">
+    <section className="tk-glass-panel interactive-card flex flex-col gap-6 rounded-2xl p-6">
+      <header className="flex flex-col gap-4">
         <div className="flex items-center justify-between gap-3">
-          <span className="text-xs uppercase tracking-[0.35em] text-[#7C6BFF]">Event summary</span>
+          <span className="text-xs uppercase tracking-[0.35em] text-accent-blue">Event summary</span>
           {supportsMarkets ? null : (
-            <span className="rounded-full border border-amber-500/40 bg-amber-500/10 px-3 py-1 text-[0.65rem] uppercase tracking-[0.3em] text-amber-200">
+            <span className="rounded-full border border-amber-500/40 bg-amber-500/15 px-3 py-1 text-[0.65rem] uppercase tracking-[0.3em] text-amber-200">
               Offline
             </span>
           )}
         </div>
-        <div className="flex flex-col gap-2">
-          <label htmlFor="markets-event" className="text-xs uppercase tracking-[0.3em] text-neutral-500">
+        <div className="flex flex-col gap-3">
+          <label htmlFor="markets-event" className="text-xs uppercase tracking-[0.3em] text-slate-500">
             Event
           </label>
           <div className="relative">
@@ -247,31 +247,31 @@ function EventSummaryCard({ events, activeEventId, onSelectEvent, onOpenBetslip,
               id="markets-event"
               value={activeEvent?.id ?? ''}
               onChange={(event) => onSelectEvent(event.target.value)}
-              className="w-full appearance-none rounded-xl border border-white/10 bg-white/[0.04] py-3 pl-4 pr-10 text-sm text-white transition focus:border-[#9FF7D3]/40 focus:outline-none focus:ring-2 focus:ring-[#9FF7D3]/20"
+              className="focus-ring w-full appearance-none rounded-xl border border-accent-emerald/15 bg-shell-800/60 py-3 pl-4 pr-10 text-sm text-white transition-colors duration-200 ease-out-back hover:border-accent-emerald/30"
             >
               {events.map((event) => (
-                <option key={event.id} value={event.id} className="bg-[#050a1a] text-white">
+                <option key={event.id} value={event.id} className="bg-shell-900 text-white">
                   {event.title}
                 </option>
               ))}
             </select>
-            <span className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-neutral-500">⌄</span>
+            <span className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-slate-500">⌄</span>
           </div>
         </div>
       </header>
-      <div className="flex flex-wrap items-center gap-4 text-sm text-neutral-300">
+      <div className="flex flex-wrap items-center gap-4 text-sm text-slate-300">
         <div className="flex min-w-[120px] flex-col gap-1">
-          <span className="text-xs uppercase tracking-[0.3em] text-neutral-500">Starts</span>
+          <span className="text-xs uppercase tracking-[0.3em] text-slate-500">Starts</span>
           <span className="font-semibold text-white">{countdown.label}</span>
-          <span className="text-xs text-neutral-500">{countdown.detail}</span>
+          <span className="text-xs text-slate-500">{countdown.detail}</span>
         </div>
         <div className="flex min-w-[120px] flex-col gap-1">
-          <span className="text-xs uppercase tracking-[0.3em] text-neutral-500">Markets</span>
+          <span className="text-xs uppercase tracking-[0.3em] text-slate-500">Markets</span>
           <span className="font-semibold text-white">{activeEvent?.markets?.length ?? 0}</span>
         </div>
         {activeEvent?.venue ? (
           <div className="flex min-w-[160px] flex-col gap-1">
-            <span className="text-xs uppercase tracking-[0.3em] text-neutral-500">Venue</span>
+            <span className="text-xs uppercase tracking-[0.3em] text-slate-500">Venue</span>
             <span className="truncate font-semibold text-white" title={activeEvent.venue}>
               {activeEvent.venue}
             </span>
@@ -281,7 +281,7 @@ function EventSummaryCard({ events, activeEventId, onSelectEvent, onOpenBetslip,
       <button
         type="button"
         onClick={onOpenBetslip}
-        className="inline-flex items-center justify-center gap-2 rounded-full border border-[#9FF7D3]/50 bg-[#9FF7D3]/15 px-4 py-3 text-xs uppercase tracking-[0.3em] text-[#9FF7D3] transition hover:border-[#9FF7D3]/70 hover:bg-[#9FF7D3]/25 hover:text-white"
+        className="interactive-cta inline-flex items-center justify-center gap-2 rounded-full border border-accent-emerald/50 bg-accent-emerald/15 px-4 py-3 text-xs uppercase tracking-[0.3em] text-accent-emerald hover:border-accent-emerald/70 hover:bg-accent-emerald/20 hover:text-white"
       >
         Build betslip <ArrowRight className="h-4 w-4" />
       </button>
@@ -302,12 +302,12 @@ function ActiveMarketCard({
   const countdown = useCountdown(market?.closes_at);
   const marketOptions = Array.isArray(event?.markets) ? event.markets : [];
   return (
-    <section className="tk-glass-panel flex flex-col gap-5 rounded-2xl p-5 md:p-6">
+    <section className="tk-glass-panel interactive-card flex flex-col gap-6 rounded-2xl p-6">
       <header className="flex flex-wrap items-start justify-between gap-4">
-        <div className="flex flex-col gap-2">
-          <div className="flex items-center gap-2 text-xs uppercase tracking-[0.35em] text-[#7C6BFF]">
+        <div className="flex flex-col gap-3">
+          <div className="flex items-center gap-2 text-xs uppercase tracking-[0.35em] text-accent-blue">
             <span>Active market</span>
-            <span className="rounded-full bg-[#7C6BFF]/10 px-3 py-1 text-[0.65rem] text-[#7C6BFF]">
+            <span className="rounded-full bg-accent-blue/15 px-3 py-1 text-[0.65rem] text-accent-blue">
               {normaliseStatus(market?.status)}
             </span>
           </div>
@@ -315,8 +315,8 @@ function ActiveMarketCard({
             {market?.name ?? 'Select a market'}
           </h2>
         </div>
-        <div className="flex flex-col gap-2">
-          <label htmlFor="markets-market" className="text-xs uppercase tracking-[0.3em] text-neutral-500">
+        <div className="flex flex-col gap-3">
+          <label htmlFor="markets-market" className="text-xs uppercase tracking-[0.3em] text-slate-500">
             Switch market
           </label>
           <div className="relative min-w-[200px]">
@@ -324,26 +324,26 @@ function ActiveMarketCard({
               id="markets-market"
               value={market?.id ?? ''}
               onChange={(event) => onSelectMarket(event.target.value)}
-              className="w-full appearance-none rounded-xl border border-white/10 bg-white/[0.04] py-3 pl-4 pr-10 text-sm text-white transition focus:border-[#9FF7D3]/40 focus:outline-none focus:ring-2 focus:ring-[#9FF7D3]/20"
+              className="focus-ring w-full appearance-none rounded-xl border border-accent-emerald/15 bg-shell-800/60 py-3 pl-4 pr-10 text-sm text-white transition-colors duration-200 ease-out-back hover:border-accent-emerald/30"
             >
               {marketOptions.map((item) => (
-                <option key={item.id} value={item.id} className="bg-[#050a1a] text-white">
+                <option key={item.id} value={item.id} className="bg-shell-900 text-white">
                   {item.name}
                 </option>
               ))}
             </select>
-            <span className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-neutral-500">⌄</span>
+            <span className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-slate-500">⌄</span>
           </div>
         </div>
       </header>
-      <div className="flex flex-wrap items-center gap-4 text-sm text-neutral-300">
+      <div className="flex flex-wrap items-center gap-4 text-sm text-slate-300">
         <div className="flex min-w-[120px] flex-col gap-1">
-          <span className="text-xs uppercase tracking-[0.3em] text-neutral-500">Time left</span>
+          <span className="text-xs uppercase tracking-[0.3em] text-slate-500">Time left</span>
           <span className="font-semibold text-white">{countdown.label}</span>
-          <span className="text-xs text-neutral-500">{countdown.detail}</span>
+          <span className="text-xs text-slate-500">{countdown.detail}</span>
         </div>
         <div className="flex min-w-[120px] flex-col gap-1">
-          <span className="text-xs uppercase tracking-[0.3em] text-neutral-500">Pool size</span>
+          <span className="text-xs uppercase tracking-[0.3em] text-slate-500">Pool size</span>
           <span className="font-semibold text-white">
             {formatCurrency(pool?.total ?? market?.pool_total ?? 0, { compact: false, maximumFractionDigits: 0 })}
           </span>
@@ -351,19 +351,19 @@ function ActiveMarketCard({
       </div>
       <div className="flex flex-col gap-3">
         {stats.length === 0 ? (
-          <p className="rounded-2xl border border-dashed border-white/10 bg-white/[0.02] px-4 py-6 text-center text-sm text-neutral-500">
+          <p className="rounded-2xl border border-dashed border-accent-emerald/15 bg-shell-800/40 px-4 py-6 text-center text-sm text-slate-500">
             No wagers yet. Tap an outcome to be the first in the pool.
           </p>
         ) : (
           stats.map((entry) => {
             const matchedOutcome = market?.outcomes?.find((item) => item.id === entry.outcomeId);
-            const swatch = matchedOutcome?.color ?? '#9FF7D3';
+            const swatch = matchedOutcome?.color ?? '#5FF2C7';
             return (
               <button
                 key={entry.outcomeId}
             type="button"
             onClick={() => onSelectOutcome(entry)}
-            className="flex items-center justify-between gap-4 rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3 text-left transition hover:border-[#9FF7D3]/40 hover:bg-[#9FF7D3]/10"
+            className="focus-ring flex items-center justify-between gap-4 rounded-2xl border border-accent-emerald/15 bg-shell-800/60 px-4 py-3 text-left transition-colors duration-200 ease-out-back motion-safe:hover:scale-102 motion-safe:hover:border-accent-emerald/40 motion-safe:hover:bg-accent-emerald/10"
           >
             <span className="flex min-w-0 items-center gap-3">
               <span
@@ -375,9 +375,9 @@ function ActiveMarketCard({
                 {entry.label}
               </span>
             </span>
-            <span className="flex flex-col items-end gap-1 text-sm text-neutral-300">
+            <span className="flex flex-col items-end gap-1 text-sm text-slate-200">
               <span className="font-semibold text-white">{formatPercent(entry.share)}</span>
-              <span className="text-xs text-neutral-500">
+              <span className="text-xs text-slate-500">
                 {formatCurrency(entry.total, { compact: false, maximumFractionDigits: 0 })}
               </span>
             </span>
@@ -386,18 +386,18 @@ function ActiveMarketCard({
           })
         )}
       </div>
-      <div className="flex flex-wrap items-center justify-between gap-3 text-sm text-neutral-300">
+      <div className="flex flex-wrap items-center justify-between gap-3 text-sm text-slate-300">
         <button
           type="button"
           onClick={onOpenPool}
-          className="inline-flex items-center gap-2 text-xs uppercase tracking-[0.3em] text-[#9FF7D3] transition hover:text-white"
+          className="interactive-cta inline-flex items-center gap-2 rounded-full border border-transparent px-3 py-1 text-xs uppercase tracking-[0.3em] text-accent-emerald hover:border-accent-emerald/30 hover:text-white"
         >
           Live pool distribution
         </button>
         <button
           type="button"
           onClick={onOpenBetslip}
-          className="inline-flex items-center gap-2 rounded-full border border-[#9FF7D3]/50 bg-[#9FF7D3]/15 px-4 py-2 text-xs uppercase tracking-[0.3em] text-[#9FF7D3] transition hover:border-[#9FF7D3]/70 hover:bg-[#9FF7D3]/25 hover:text-white"
+          className="interactive-cta inline-flex items-center gap-2 rounded-full border border-accent-emerald/50 bg-accent-emerald/15 px-4 py-2 text-xs uppercase tracking-[0.3em] text-accent-emerald hover:border-accent-emerald/70 hover:bg-accent-emerald/20 hover:text-white"
         >
           Open betslip <ArrowRight className="h-4 w-4" />
         </button>
@@ -412,10 +412,10 @@ function HighlightsSection() {
       {HIGHLIGHTS.map((item) => (
         <article
           key={item.title}
-          className="tk-glass-panel flex flex-col gap-3 rounded-2xl p-5 text-sm text-neutral-300"
+          className="tk-glass-panel interactive-card flex flex-col gap-3 rounded-2xl p-6 text-sm text-slate-300"
         >
           <div className="flex items-center gap-3 text-white">
-            <item.icon className="h-5 w-5 text-[#9FF7D3]" />
+            <item.icon className="h-5 w-5 text-accent-emerald" />
             <h3 className="text-base font-semibold">{item.title}</h3>
           </div>
           <p>{item.copy}</p>
@@ -573,7 +573,7 @@ export default function MarketsLanding() {
               type="button"
               onClick={() => openBetslip(activeMarket, null)}
               disabled={!hasMarket}
-              className="inline-flex w-full items-center justify-center gap-2 rounded-full border border-[#9FF7D3]/50 bg-[#9FF7D3]/15 px-4 py-3 text-xs uppercase tracking-[0.3em] text-[#9FF7D3] transition hover:border-[#9FF7D3]/70 hover:bg-[#9FF7D3]/25 hover:text-white disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-neutral-500"
+              className="interactive-cta inline-flex w-full items-center justify-center gap-2 rounded-full border border-accent-emerald/50 bg-accent-emerald/15 px-4 py-3 text-xs uppercase tracking-[0.3em] text-accent-emerald hover:border-accent-emerald/70 hover:bg-accent-emerald/20 hover:text-white disabled:cursor-not-allowed disabled:border-slate-600/40 disabled:bg-slate-800/60 disabled:text-slate-500"
             >
               Open betslip <ArrowRight className="h-4 w-4" />
             </button>

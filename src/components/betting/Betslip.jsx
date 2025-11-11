@@ -241,13 +241,13 @@ export default function Betslip({ marketId, outcomeId, onClose, onSuccess }) {
 
   if (!market || !outcome) {
     return (
-      <div className="flex flex-col gap-4 bg-transparent p-6 text-center text-sm text-neutral-300">
+      <div className="flex flex-col gap-4 bg-transparent p-6 text-center text-sm text-slate-300">
         <p>Select a market outcome to start building your betslip.</p>
         {typeof onClose === 'function' ? (
           <button
             type="button"
             onClick={onClose}
-            className="self-center rounded-xl border border-white/10 px-4 py-2 text-xs uppercase tracking-[0.35em] text-neutral-300 transition hover:border-white/30 hover:text-white"
+            className="interactive-cta self-center rounded-xl border border-accent-emerald/30 px-4 py-2 text-xs uppercase tracking-[0.35em] text-slate-200 hover:border-accent-emerald/50 hover:text-white"
           >
             Close
           </button>
@@ -259,14 +259,14 @@ export default function Betslip({ marketId, outcomeId, onClose, onSuccess }) {
   if (showSuccess) {
     return (
       <div className="flex flex-col items-center gap-4 px-6 py-10 text-center">
-        <CheckCircle2 className="h-16 w-16 text-emerald-400" />
+        <CheckCircle2 className="h-16 w-16 text-accent-emerald" />
         <div className="flex flex-col gap-2">
           <h3 className="text-2xl font-semibold text-white">Wager placed!</h3>
-          <p className="text-sm text-emerald-200">
+          <p className="text-sm text-accent-emerald/80">
             {formatCurrency(stake, { compact: false, maximumFractionDigits: 0 })} on{' '}
             <span className="font-semibold">{outcome.label}</span>
           </p>
-          <p className="text-xs text-neutral-400">Odds lock in when the market closes.</p>
+          <p className="text-xs text-slate-400">Odds lock in when the market closes.</p>
         </div>
       </div>
     );
@@ -276,14 +276,14 @@ export default function Betslip({ marketId, outcomeId, onClose, onSuccess }) {
   const poolTotal = pool?.total ?? market.pool_total ?? 0;
 
   return (
-    <div className="flex h-full flex-col gap-6 rounded-none bg-[#050a1a]/95 px-6 py-8 text-white sm:rounded-none">
+    <div className="flex h-full flex-col gap-6 rounded-none bg-shell-900/95 px-6 py-8 text-white sm:rounded-none">
       <div className="flex items-start justify-between gap-3">
-        <div className="flex flex-col gap-1">
-          <span className="text-xs uppercase tracking-[0.35em] text-[#7C6BFF]">Betslip</span>
+        <div className="flex flex-col gap-2">
+          <span className="text-xs uppercase tracking-[0.35em] text-accent-blue">Betslip</span>
           <h3 className="truncate text-lg font-semibold" title={market.name}>
             {market.name}
           </h3>
-          <p className="text-xs uppercase tracking-[0.25em] text-neutral-500">
+          <p className="text-xs uppercase tracking-[0.25em] text-slate-500">
             {normaliseStatus(market.status)} · {stats.length} outcomes · {totalWagers} bets
           </p>
         </div>
@@ -291,7 +291,7 @@ export default function Betslip({ marketId, outcomeId, onClose, onSuccess }) {
           <button
             type="button"
             onClick={onClose}
-            className="rounded-full p-2 text-neutral-400 transition hover:bg-white/5 hover:text-white"
+            className="focus-ring rounded-full p-2 text-slate-400 transition-colors duration-200 ease-out-back hover:bg-shell-800/70 hover:text-white"
             aria-label="Close betslip"
           >
             <X className="h-5 w-5" />
@@ -299,9 +299,9 @@ export default function Betslip({ marketId, outcomeId, onClose, onSuccess }) {
         ) : null}
       </div>
 
-      <div className="flex flex-col gap-4 rounded-2xl border border-white/10 bg-white/[0.04] p-4">
-        <div className="flex flex-col gap-2">
-          <label htmlFor="betslip-market" className="text-xs uppercase tracking-[0.3em] text-neutral-500">
+      <div className="flex flex-col gap-4 rounded-2xl border border-accent-emerald/15 bg-shell-800/60 p-4">
+        <div className="flex flex-col gap-3">
+          <label htmlFor="betslip-market" className="text-xs uppercase tracking-[0.3em] text-slate-500">
             Market
           </label>
           <div className="relative">
@@ -310,20 +310,20 @@ export default function Betslip({ marketId, outcomeId, onClose, onSuccess }) {
               value={activeMarketOption?.value ?? ''}
               onChange={(event) => handleSelectMarket(event.target.value)}
               disabled={isPlacing || marketOptions.length === 0}
-              className="w-full appearance-none rounded-xl border border-white/10 bg-[#050a1a] py-3 pl-4 pr-10 text-sm text-white transition focus:border-[#9FF7D3]/40 focus:outline-none focus:ring-2 focus:ring-[#9FF7D3]/20 disabled:opacity-50"
+              className="focus-ring w-full appearance-none rounded-xl border border-accent-emerald/20 bg-shell-900/90 py-3 pl-4 pr-10 text-sm text-white transition-colors duration-200 ease-out-back hover:border-accent-emerald/40 disabled:opacity-50"
             >
               {marketOptions.map((option) => (
-                <option key={option.marketId} value={option.value} className="bg-[#050a1a] text-white">
+                <option key={option.marketId} value={option.value} className="bg-shell-900 text-white">
                   {option.label}
                 </option>
               ))}
             </select>
-            <span className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-neutral-500">⌄</span>
+            <span className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-slate-500">⌄</span>
           </div>
         </div>
 
-        <div className="flex flex-col gap-2">
-          <span className="text-xs uppercase tracking-[0.3em] text-neutral-500">Outcomes</span>
+        <div className="flex flex-col gap-3">
+          <span className="text-xs uppercase tracking-[0.3em] text-slate-500">Outcomes</span>
           <div className="flex flex-wrap justify-center gap-2">
             {Array.isArray(market?.outcomes) && market.outcomes.length > 0 ? (
               market.outcomes.map((item) => (
@@ -334,22 +334,22 @@ export default function Betslip({ marketId, outcomeId, onClose, onSuccess }) {
                   disabled={isPlacing}
                   aria-pressed={String(selectedOutcomeId) === String(item.id)}
                   title={item.label}
-                  className={`max-w-[48%] flex-1 truncate rounded-full px-4 py-2 text-sm transition focus:outline-none focus:ring-2 focus:ring-[#9FF7D3]/40 ${
+                  className={`focus-ring max-w-[48%] flex-1 truncate rounded-full border px-4 py-2 text-sm transition-colors duration-200 ease-out-back motion-safe:hover:scale-102 ${
                     String(selectedOutcomeId) === String(item.id)
-                      ? 'bg-[#9FF7D3]/15 text-[#9FF7D3]'
-                      : 'bg-white/5 text-white hover:bg-white/10'
+                      ? 'border-accent-emerald bg-accent-emerald/20 text-accent-emerald'
+                      : 'border-accent-emerald/20 bg-shell-800/60 text-white hover:border-accent-emerald/40 hover:text-accent-emerald'
                   } disabled:opacity-50`}
                 >
                   {item.label}
                 </button>
               ))
             ) : (
-              <span className="text-xs text-neutral-500">No outcomes available.</span>
+              <span className="text-xs text-slate-500">No outcomes available.</span>
             )}
           </div>
         </div>
 
-        <div className="grid gap-2 rounded-xl border border-white/10 bg-[#050a1a]/60 p-3 text-sm text-neutral-300">
+        <div className="grid gap-2 rounded-xl border border-accent-emerald/15 bg-shell-900/80 p-3 text-sm text-slate-300">
           <div className="flex items-center justify-between">
             <span>Pool size</span>
             <span>{formatCurrency(poolTotal, { compact: false, maximumFractionDigits: 0 })}</span>
@@ -366,18 +366,18 @@ export default function Betslip({ marketId, outcomeId, onClose, onSuccess }) {
               <span>{formatPercent(outcomeStats.share)}</span>
             </div>
           ) : (
-            <span className="text-xs text-neutral-500">No wagers yet on this outcome.</span>
+            <span className="text-xs text-slate-500">No wagers yet on this outcome.</span>
           )}
         </div>
 
         {estimatedReturn > 0 ? (
-          <div className="flex flex-col gap-1 rounded-xl border border-[#9FF7D3]/30 bg-[#9FF7D3]/10 px-4 py-3 text-xs text-[#9FF7D3]">
+          <div className="flex flex-col gap-1 rounded-xl border border-accent-emerald/40 bg-accent-emerald/15 px-4 py-3 text-xs text-accent-emerald">
             <div className="flex items-center justify-between">
               <span>Estimated return</span>
               <span>{formatCurrency(estimatedReturn, { compact: false, maximumFractionDigits: 1 })}</span>
             </div>
             {impliedOdds > 0 ? (
-              <div className="flex items-center justify-between text-[0.65rem] uppercase tracking-[0.3em] text-[#9FF7D3]/80">
+              <div className="flex items-center justify-between text-[0.65rem] uppercase tracking-[0.3em] text-accent-emerald/80">
                 <span>Implied odds</span>
                 <span>{impliedOdds.toFixed(2)}x</span>
               </div>
@@ -387,7 +387,7 @@ export default function Betslip({ marketId, outcomeId, onClose, onSuccess }) {
       </div>
 
       <div className="flex flex-col gap-3">
-        <label className="text-xs uppercase tracking-[0.3em] text-neutral-500">Quick stake</label>
+        <label className="text-xs uppercase tracking-[0.3em] text-slate-500">Quick stake</label>
         <div className="flex flex-wrap justify-center gap-2">
           {QUICK_STAKES.map((qs) => {
             const isActive = stake === qs.value;
@@ -398,10 +398,10 @@ export default function Betslip({ marketId, outcomeId, onClose, onSuccess }) {
                 onClick={() => handleQuickStake(qs.value)}
                 disabled={isPlacing}
                 aria-pressed={isActive}
-                className={`flex min-w-[80px] flex-col items-center justify-center gap-1 rounded-lg border px-3 py-2 text-sm font-semibold transition focus:outline-none focus:ring-2 focus:ring-[#9FF7D3]/40 ${
+                className={`focus-ring flex min-w-[80px] flex-col items-center justify-center gap-1 rounded-lg border px-3 py-2 text-sm font-semibold transition-colors duration-200 ease-out-back motion-safe:hover:scale-102 ${
                   isActive
-                    ? 'border-[#9FF7D3] bg-[#9FF7D3]/15 text-[#9FF7D3]'
-                    : 'border-white/10 bg-white/5 text-white hover:border-white/20 hover:bg-white/10'
+                    ? 'border-accent-emerald bg-accent-emerald/20 text-accent-emerald'
+                    : 'border-accent-emerald/20 bg-shell-800/60 text-white hover:border-accent-emerald/40 hover:text-accent-emerald'
                 } disabled:opacity-50`}
               >
                 <span className="text-base leading-none">💎</span>
@@ -415,11 +415,11 @@ export default function Betslip({ marketId, outcomeId, onClose, onSuccess }) {
       </div>
 
       <div className="flex flex-col gap-3">
-        <label htmlFor="custom-stake" className="text-xs uppercase tracking-[0.3em] text-neutral-500">
+        <label htmlFor="custom-stake" className="text-xs uppercase tracking-[0.3em] text-slate-500">
           Custom amount
         </label>
         <div className="relative">
-          <span className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-neutral-400">💎</span>
+          <span className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-slate-400">💎</span>
           <input
             id="custom-stake"
             type="text"
@@ -428,20 +428,20 @@ export default function Betslip({ marketId, outcomeId, onClose, onSuccess }) {
             onChange={handleCustomStakeChange}
             disabled={isPlacing}
             placeholder="Enter amount..."
-            className="w-full rounded-xl border border-white/10 bg-white/5 py-3 pl-10 pr-4 text-white placeholder:text-neutral-600 focus:border-[#9FF7D3]/40 focus:outline-none focus:ring-2 focus:ring-[#9FF7D3]/20 disabled:opacity-50"
+            className="focus-ring w-full rounded-xl border border-accent-emerald/20 bg-shell-800/60 py-3 pl-10 pr-4 text-white placeholder:text-slate-500 hover:border-accent-emerald/40 disabled:opacity-50"
           />
         </div>
       </div>
 
-      <div className="flex items-center justify-between rounded-xl border border-white/10 bg-white/[0.05] px-4 py-3 text-sm">
-        <span className="text-neutral-400">Stake</span>
+      <div className="flex items-center justify-between rounded-xl border border-accent-emerald/15 bg-shell-800/60 px-4 py-3 text-sm">
+        <span className="text-slate-400">Stake</span>
         <span className="font-semibold text-white">
           {stake ? formatCurrency(stake, { compact: false, maximumFractionDigits: 0 }) : '—'}
         </span>
       </div>
 
-      <div className="flex items-center justify-between rounded-xl border border-white/10 bg-white/[0.05] px-4 py-3 text-sm">
-        <span className="text-neutral-400">Your balance</span>
+      <div className="flex items-center justify-between rounded-xl border border-accent-emerald/15 bg-shell-800/60 px-4 py-3 text-sm">
+        <span className="text-slate-400">Your balance</span>
         <span className="font-semibold text-white">{formatCurrency(balance)}</span>
       </div>
 
@@ -456,7 +456,7 @@ export default function Betslip({ marketId, outcomeId, onClose, onSuccess }) {
         <div
           className={`flex items-center gap-2 rounded-xl border px-4 py-3 text-xs ${
             toast.type === 'success'
-              ? 'border-emerald-500/40 bg-emerald-950/30 text-emerald-200'
+              ? 'border-accent-emerald/40 bg-accent-emerald/15 text-accent-emerald'
               : 'border-red-500/40 bg-red-950/30 text-red-200'
           }`}
         >
@@ -468,7 +468,7 @@ export default function Betslip({ marketId, outcomeId, onClose, onSuccess }) {
         type="button"
         onClick={handlePlaceWager}
         disabled={isPlacing || !stake || stake > balance || !isMarketActive}
-        className="flex items-center justify-center gap-2 rounded-full border border-[#9FF7D3]/60 bg-[#9FF7D3]/15 px-6 py-4 font-semibold uppercase tracking-[0.3em] text-[#9FF7D3] transition hover:border-[#9FF7D3]/80 hover:bg-[#9FF7D3]/25 hover:text-white disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-neutral-500"
+        className="interactive-cta flex items-center justify-center gap-2 rounded-full border border-accent-emerald/60 bg-accent-emerald/15 px-6 py-4 font-semibold uppercase tracking-[0.3em] text-accent-emerald hover:border-accent-emerald/80 hover:bg-accent-emerald/20 hover:text-white disabled:cursor-not-allowed disabled:border-slate-600/40 disabled:bg-slate-800/60 disabled:text-slate-500"
       >
         {isPlacing ? (
           <>
@@ -482,11 +482,11 @@ export default function Betslip({ marketId, outcomeId, onClose, onSuccess }) {
       </button>
 
       {!isMarketActive ? (
-        <p className="text-center text-xs text-neutral-500">Market is not accepting wagers right now.</p>
+        <p className="text-center text-xs text-slate-500">Market is not accepting wagers right now.</p>
       ) : null}
 
       {stake > 0 && stake <= balance ? (
-        <p className="text-center text-xs text-neutral-500">Estimated payout varies based on final pool size.</p>
+        <p className="text-center text-xs text-slate-500">Estimated payout varies based on final pool size.</p>
       ) : null}
     </div>
   );
