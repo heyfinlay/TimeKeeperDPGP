@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { CheckCircle, XCircle, Clock, AlertTriangle, RefreshCcw } from 'lucide-react';
-import { supabaseSelect, supabaseRpc } from '@/lib/supabaseClient.js';
+import { supabaseSelect, supabase } from '@/lib/supabaseClient.js';
 import { formatCurrency } from '@/utils/betting.js';
 
 /**
@@ -62,10 +62,12 @@ export default function SettlementApprovalQueue({ className = '' }) {
 
     setActionInProgress(settlementId);
     try {
-      const result = await supabaseRpc('approve_settlement', {
+      const { data: result, error } = await supabase.rpc('approve_settlement', {
         p_settlement_id: settlementId,
         p_payout_policy: 'refund_if_empty',
       });
+
+      if (error) throw error;
 
       console.log('Settlement approved:', result);
 
@@ -89,10 +91,12 @@ export default function SettlementApprovalQueue({ className = '' }) {
 
     setActionInProgress(settlementId);
     try {
-      await supabaseRpc('reject_settlement', {
+      const { error } = await supabase.rpc('reject_settlement', {
         p_settlement_id: settlementId,
         p_rejection_reason: reason.trim(),
       });
+
+      if (error) throw error;
 
       console.log('Settlement rejected');
 
