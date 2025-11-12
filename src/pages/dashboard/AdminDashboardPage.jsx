@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Loader2, RefreshCcw, Trash2 } from 'lucide-react';
 import SessionMarshalAssignments from '@/components/admin/SessionMarshalAssignments.jsx';
+import SettlementApprovalQueue from '@/components/admin/SettlementApprovalQueue.jsx';
+import SettlementAuditDashboard from '@/components/admin/SettlementAuditDashboard.jsx';
 import {
   assignMarshalToDriver,
   fetchAdminSessions,
@@ -253,6 +255,10 @@ export default function AdminDashboardPage() {
           {error}
         </div>
       ) : null}
+
+      <SettlementApprovalQueue className="mb-6" />
+
+      <SettlementAuditDashboard className="mb-6" />
 
       {isLoading ? (
         <div className="flex min-h-[20vh] items-center justify-center text-sm text-neutral-400">

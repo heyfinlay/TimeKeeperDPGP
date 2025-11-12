@@ -368,10 +368,19 @@ grant select on table public.admin_actions_log to authenticated;
 alter table public.admin_actions_log enable row level security;
 
 -- Only admins can see logs
-create policy "admin_actions_log_admin_only"
-  on public.admin_actions_log
-  for select
-  using (public.is_admin());
+do $$
+begin
+  if not exists (
+    select 1 from pg_policies
+    where tablename = 'admin_actions_log'
+    and policyname = 'admin_actions_log_admin_only'
+  ) then
+    create policy "admin_actions_log_admin_only"
+      on public.admin_actions_log
+      for select
+      using (public.is_admin());
+  end if;
+end $$;
 
 -- Function to log admin actions
 create or replace function public.log_admin_action(

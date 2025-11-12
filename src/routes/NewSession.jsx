@@ -44,6 +44,7 @@ const isUuid = (value) =>
 const steps = [
   { title: 'Session details', description: 'Create the session container and schedule.' },
   { title: 'Session state', description: 'Seed timing defaults for race control and live timing.' },
+  { title: 'Betting config', description: 'Configure betting markets, rake percentages, and betting windows.' },
   { title: 'Drivers', description: 'Select the drivers that will participate in this session.' },
   { title: 'Marshals & teams', description: 'Assign marshals and confirm team information.' },
 ];
@@ -75,6 +76,14 @@ export default function NewSession() {
     eventType: DEFAULT_SESSION_STATE.eventType,
     totalLaps: String(DEFAULT_SESSION_STATE.totalLaps),
     totalDuration: String(DEFAULT_SESSION_STATE.totalDuration),
+  });
+  const [bettingConfig, setBettingConfig] = useState({
+    enableBetting: false,
+    autoCreateMarkets: true,
+    rakePercentage: '5',
+    bettingWindowStart: 'session_created',
+    bettingWindowEnd: 'session_started',
+    marketTypes: ['race_outcome', 'fastest_lap'],
   });
   const [marshalDirectory, setMarshalDirectory] = useState([]);
   const [marshalDirectoryError, setMarshalDirectoryError] = useState(null);
@@ -601,6 +610,153 @@ export default function NewSession() {
       ) : null}
       {activeStep === 3 ? (
         <div className="flex flex-col gap-5 rounded-3xl border border-white/5 bg-[#05070F]/80 p-6">
+          <div className="flex flex-col gap-2">
+            <h2 className="text-lg font-semibold text-white">Betting Configuration</h2>
+            <p className="text-sm text-neutral-400">
+              Configure betting markets, rake percentages, and betting windows for this session.
+            </p>
+          </div>
+
+          {/* Enable Betting Toggle */}
+          <div className="flex items-center justify-between rounded-2xl border border-white/10 bg-[#0B1120]/60 p-4">
+            <div>
+              <label className="text-sm font-semibold text-white">Enable Betting</label>
+              <p className="text-xs text-neutral-400">Allow users to place wagers on this session</p>
+            </div>
+            <input
+              type="checkbox"
+              checked={bettingConfig.enableBetting}
+              onChange={(e) => setBettingConfig((prev) => ({ ...prev, enableBetting: e.target.checked }))}
+              className="h-5 w-5 rounded border-white/20 bg-transparent text-[#9FF7D3] focus:ring-[#9FF7D3]/50"
+            />
+          </div>
+
+          {bettingConfig.enableBetting && (
+            <>
+              {/* Auto-create Markets */}
+              <div className="flex items-center justify-between rounded-2xl border border-white/10 bg-[#0B1120]/60 p-4">
+                <div>
+                  <label className="text-sm font-semibold text-white">Auto-create Markets</label>
+                  <p className="text-xs text-neutral-400">Automatically create markets when session starts</p>
+                </div>
+                <input
+                  type="checkbox"
+                  checked={bettingConfig.autoCreateMarkets}
+                  onChange={(e) => setBettingConfig((prev) => ({ ...prev, autoCreateMarkets: e.target.checked }))}
+                  className="h-5 w-5 rounded border-white/20 bg-transparent text-[#9FF7D3] focus:ring-[#9FF7D3]/50"
+                />
+              </div>
+
+              {/* Rake Percentage */}
+              <div className="flex flex-col gap-2">
+                <label className="text-xs font-semibold uppercase tracking-[0.35em] text-neutral-500">
+                  Rake Percentage
+                </label>
+                <input
+                  type="number"
+                  min="0"
+                  max="20"
+                  step="0.5"
+                  value={bettingConfig.rakePercentage}
+                  onChange={(e) => setBettingConfig((prev) => ({ ...prev, rakePercentage: e.target.value }))}
+                  className="w-full rounded-full border border-white/10 bg-[#0B1120]/60 px-4 py-3 text-sm text-white outline-none transition focus:border-[#9FF7D3]/70 focus:ring-2 focus:ring-[#9FF7D3]/30"
+                />
+                <p className="text-xs text-neutral-400">House commission taken from winning pools (typically 5-10%)</p>
+              </div>
+
+              {/* Betting Window */}
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <div className="flex flex-col gap-2">
+                  <label className="text-xs font-semibold uppercase tracking-[0.35em] text-neutral-500">
+                    Betting Window Opens
+                  </label>
+                  <select
+                    value={bettingConfig.bettingWindowStart}
+                    onChange={(e) => setBettingConfig((prev) => ({ ...prev, bettingWindowStart: e.target.value }))}
+                    className="w-full rounded-full border border-white/10 bg-[#0B1120]/60 px-4 py-3 text-sm text-white outline-none transition focus:border-[#9FF7D3]/70 focus:ring-2 focus:ring-[#9FF7D3]/30"
+                  >
+                    <option value="session_created">When session is created</option>
+                    <option value="session_scheduled">At scheduled start time</option>
+                    <option value="manual">Manual control</option>
+                  </select>
+                </div>
+                <div className="flex flex-col gap-2">
+                  <label className="text-xs font-semibold uppercase tracking-[0.35em] text-neutral-500">
+                    Betting Window Closes
+                  </label>
+                  <select
+                    value={bettingConfig.bettingWindowEnd}
+                    onChange={(e) => setBettingConfig((prev) => ({ ...prev, bettingWindowEnd: e.target.value }))}
+                    className="w-full rounded-full border border-white/10 bg-[#0B1120]/60 px-4 py-3 text-sm text-white outline-none transition focus:border-[#9FF7D3]/70 focus:ring-2 focus:ring-[#9FF7D3]/30"
+                  >
+                    <option value="session_started">When session starts</option>
+                    <option value="first_lap">After first lap</option>
+                    <option value="manual">Manual control</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* Market Types */}
+              {bettingConfig.autoCreateMarkets && (
+                <div className="flex flex-col gap-2">
+                  <label className="text-xs font-semibold uppercase tracking-[0.35em] text-neutral-500">
+                    Market Types to Auto-Create
+                  </label>
+                  <div className="flex flex-col gap-2">
+                    {[
+                      { value: 'race_outcome', label: 'Race Winner' },
+                      { value: 'fastest_lap', label: 'Fastest Lap' },
+                      { value: 'podium', label: 'Podium Finish (Top 3)' },
+                      { value: 'head_to_head', label: 'Head-to-Head Matchups' },
+                    ].map((marketType) => (
+                      <label key={marketType.value} className="flex items-center gap-3 rounded-xl border border-white/10 bg-[#0B1120]/60 p-3">
+                        <input
+                          type="checkbox"
+                          checked={bettingConfig.marketTypes.includes(marketType.value)}
+                          onChange={(e) => {
+                            setBettingConfig((prev) => ({
+                              ...prev,
+                              marketTypes: e.target.checked
+                                ? [...prev.marketTypes, marketType.value]
+                                : prev.marketTypes.filter((t) => t !== marketType.value),
+                            }));
+                          }}
+                          className="h-4 w-4 rounded border-white/20 bg-transparent text-[#9FF7D3] focus:ring-[#9FF7D3]/50"
+                        />
+                        <span className="text-sm text-white">{marketType.label}</span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+
+          <div className="flex flex-wrap items-center justify-between gap-3 text-xs">
+            <span className="text-neutral-400">
+              Betting configuration will be applied when markets are created.
+            </span>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={handlePreviousStep}
+                className="rounded-full border border-white/10 px-4 py-2 font-semibold uppercase tracking-[0.35em] text-neutral-400 transition hover:border-white/40 hover:text-white"
+              >
+                Back
+              </button>
+              <button
+                type="button"
+                onClick={handleNextStep}
+                className="rounded-full border border-[#9FF7D3]/40 bg-[#9FF7D3]/15 px-4 py-2 font-semibold uppercase tracking-[0.35em] text-[#9FF7D3] transition hover:border-[#9FF7D3]/70 hover:text-white"
+              >
+                Continue
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+      {activeStep === 4 ? (
+        <div className="flex flex-col gap-5 rounded-3xl border border-white/5 bg-[#05070F]/80 p-6">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <h2 className="text-lg font-semibold text-white">Drivers</h2>
             <button
@@ -713,7 +869,7 @@ export default function NewSession() {
           </div>
         </div>
       ) : null}
-      {activeStep === 4 ? (
+      {activeStep === 5 ? (
         <div className="flex flex-col gap-5 rounded-3xl border border-white/5 bg-[#05070F]/80 p-6">
           <div className="flex flex-col gap-3">
             <h2 className="text-lg font-semibold text-white">Marshal assignments</h2>

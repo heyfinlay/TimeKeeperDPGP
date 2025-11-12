@@ -75,9 +75,7 @@ begin
   v_is_approved := public.validate_settlement_approval(p_market_id, p_winning_outcome_id);
 
   if not v_is_approved then
-    raise exception
-      'Settlement not approved. Market requires approval via pending_settlements. ' ||
-      'Use propose_settlement() to create a settlement proposal, then approve_settlement() to execute it.';
+    raise exception 'Settlement not approved. Market requires approval via pending_settlements. Use propose_settlement() to create a settlement proposal, then approve_settlement() to execute it.';
   end if;
 
   -- Execute settlement

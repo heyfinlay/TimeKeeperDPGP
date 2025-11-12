@@ -1,6 +1,4 @@
-drop function if exists session_has_access(uuid);
-
-create function session_has_access(session_id uuid)
+create or replace function session_has_access(session_id uuid)
 returns boolean
 security definer
 language sql as $$
@@ -14,7 +12,16 @@ $$;
 
 alter table public.session_entries enable row level security;
 
-create policy "Allow access to session entries"
-on public.session_entries
-for select
-using (session_has_access(session_id));
+do $$
+begin
+  if not exists (
+    select 1 from pg_policies
+    where tablename = 'session_entries'
+    and policyname = 'Allow access to session entries'
+  ) then
+    create policy "Allow access to session entries"
+    on public.session_entries
+    for select
+    using (session_has_access(session_id));
+  end if;
+end $$;
