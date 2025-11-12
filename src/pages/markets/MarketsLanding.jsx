@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { createPortal } from 'react-dom';
 import { ArrowRight, Layers, Timer, TrendingUp } from 'lucide-react';
 import BetslipDrawer from '@/components/betting/BetslipDrawer.jsx';
@@ -416,6 +417,14 @@ function ActiveMarketCard({
         )}
       </div>
       <div className="flex flex-wrap items-center justify-between gap-3 text-sm text-slate-300">
+        {market?.id ? (
+          <Link
+            to={`/markets/${market.id}`}
+            className="interactive-cta inline-flex items-center gap-2 rounded-full border border-transparent px-3 py-1 text-xs uppercase tracking-[0.3em] text-accent-blue hover:border-accent-blue/30 hover:text-white"
+          >
+            View market page
+          </Link>
+        ) : null}
         <button
           type="button"
           onClick={onOpenPool}
