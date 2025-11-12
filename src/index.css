@@ -33,6 +33,22 @@ body {
     -webkit-backdrop-filter: blur(var(--tk-glass-blur));
     transition: border-color 0.4s ease, box-shadow 0.4s ease, transform 0.4s ease;
   }
+
+  .trend-ticker {
+    @apply inline-flex items-center gap-1 rounded-full border border-white/10 bg-white/5 px-2 py-1 text-xs font-medium tracking-wide;
+  }
+
+  .trend-ticker--up {
+    @apply border-emerald-400/40 bg-emerald-400/10 text-emerald-300;
+  }
+
+  .trend-ticker--down {
+    @apply border-rose-400/40 bg-rose-400/10 text-rose-300;
+  }
+
+  .trend-ticker--flat {
+    @apply border-white/10 bg-white/5 text-slate-400;
+  }
 }
 
 @layer utilities {

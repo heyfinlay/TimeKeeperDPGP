@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Activity, Clock, TrendingDown, TrendingUp } from 'lucide-react';
+import { ArrowDown, ArrowUp, Clock, Minus } from 'lucide-react';
 import { useParimutuelStore, driverStats } from '@/state/parimutuelStore.js';
 import { useAuth } from '@/context/AuthContext.jsx';
 import { formatCurrency, formatPercent, formatOdds, formatRelativeTime } from '@/utils/betting.js';
@@ -63,22 +63,64 @@ const buildSparkline = (history, outcomeId) => {
 const DeltaChip = ({ delta }) => {
   if (!Number.isFinite(delta) || Math.abs(delta) < 0.0005) {
     return (
-      <span className="flex items-center gap-1 rounded-full bg-white/[0.04] px-2 py-1 text-xs text-neutral-400">
-        <Activity className="h-3 w-3" /> Stable
+      <span
+        className="trend-ticker trend-ticker--flat"
+        role="status"
+        aria-label="Share unchanged since open"
+      >
+        <Minus className="h-3.5 w-3.5" aria-hidden="true" />
       </span>
     );
   }
   const isPositive = delta > 0;
-  const Icon = isPositive ? TrendingUp : TrendingDown;
   const percent = formatPercent(Math.abs(delta), { maximumFractionDigits: 1 });
   return (
     <span
-      className={`flex items-center gap-1 rounded-full px-2 py-1 text-xs ${
-        isPositive ? 'bg-emerald-500/10 text-emerald-400' : 'bg-rose-500/10 text-rose-400'
-      }`}
+      className={`trend-ticker ${isPositive ? 'trend-ticker--up' : 'trend-ticker--down'}`}
+      role="status"
+      aria-label={`Share ${isPositive ? 'up' : 'down'} ${percent} since open`}
     >
-      <Icon className="h-3 w-3" />
-      {`${isPositive ? '+' : '-'}${percent}`}
+      {isPositive ? (
+        <ArrowUp className="h-3.5 w-3.5" aria-hidden="true" />
+      ) : (
+        <ArrowDown className="h-3.5 w-3.5" aria-hidden="true" />
+      )}
+      <span>{`${isPositive ? '+' : '-'}${percent}`}</span>
+    </span>
+  );
+};
+
+const HandleDeltaTicker = ({ delta }) => {
+  if (!Number.isFinite(delta) || Math.abs(delta) < 0.5) {
+    return (
+      <span
+        className="trend-ticker trend-ticker--flat mt-1 w-8 justify-center"
+        role="status"
+        aria-label="Handle unchanged since open"
+      >
+        <Minus className="h-3.5 w-3.5" aria-hidden="true" />
+      </span>
+    );
+  }
+
+  const isPositive = delta > 0;
+  const amount = formatCurrency(Math.abs(delta), {
+    compact: false,
+    maximumFractionDigits: 0,
+  });
+
+  return (
+    <span
+      className={`trend-ticker ${isPositive ? 'trend-ticker--up' : 'trend-ticker--down'} mt-1 w-max`}
+      role="status"
+      aria-label={`Handle ${isPositive ? 'up' : 'down'} ${amount} since open`}
+    >
+      {isPositive ? (
+        <ArrowUp className="h-3.5 w-3.5" aria-hidden="true" />
+      ) : (
+        <ArrowDown className="h-3.5 w-3.5" aria-hidden="true" />
+      )}
+      <span>{`${isPositive ? '+' : '-'}${amount}`}</span>
     </span>
   );
 };
@@ -277,16 +319,7 @@ export default function PoolAnalytics({ marketId = null, className = '', isManag
                       <span className="font-semibold text-white">
                         {formatCurrency(entry.total, { compact: false, maximumFractionDigits: 0 })}
                       </span>
-                      {showAdminMetrics ? (
-                        <span className="text-xs text-slate-400">
-                          {deltaHandle === 0
-                            ? 'No change since open'
-                            : `${deltaHandle > 0 ? '+' : '-'}${formatCurrency(Math.abs(deltaHandle), {
-                                compact: false,
-                                maximumFractionDigits: 0,
-                              })} since open`}
-                        </span>
-                      ) : null}
+                      {showAdminMetrics ? <HandleDeltaTicker delta={deltaHandle} /> : null}
                     </div>
                     <div className="flex flex-col">
                       <span className="text-xs uppercase tracking-wide text-slate-500">Trend</span>
