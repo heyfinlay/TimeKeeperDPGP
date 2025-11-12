@@ -8,6 +8,7 @@ import {
   Clock,
   DollarSign,
   Eye,
+  Gavel,
   Loader2,
   RefreshCcw,
   Search,
@@ -20,11 +21,14 @@ import {
 import { supabase } from '../../lib/supabaseClient';
 import { useAuth } from '../../context/AuthContext';
 import AdminMarketWizard from '@/components/admin/markets/AdminMarketWizard.jsx';
+import SettlementApprovalQueue from '@/components/admin/SettlementApprovalQueue.jsx';
+import SettlementAuditDashboard from '@/components/admin/SettlementAuditDashboard.jsx';
 import { useParimutuelStore } from '@/state/parimutuelStore.js';
 import { handleApproveDeposit, formatWalletBalance } from '@/lib/wallet.js';
 
 const TABS = {
   MARKETS: 'markets',
+  SETTLEMENTS: 'settlements',
   PENDING_ACTIONS: 'pending',
   WALLETS: 'wallets',
   ANALYTICS: 'analytics',
@@ -445,6 +449,7 @@ const AdminMarketsPage = () => {
       <div className="flex gap-2 border-b border-white/10">
         {[
           { key: TABS.MARKETS, label: 'Markets', icon: BarChart3 },
+          { key: TABS.SETTLEMENTS, label: 'Settlements', icon: Gavel },
           { key: TABS.PENDING_ACTIONS, label: 'Pending Actions', icon: Clock },
           { key: TABS.WALLETS, label: 'User Wallets', icon: Users },
           { key: TABS.ANALYTICS, label: 'Analytics', icon: TrendingUp },
@@ -603,6 +608,13 @@ const AdminMarketsPage = () => {
                 })
               )}
             </div>
+          </div>
+        )}
+
+        {activeTab === TABS.SETTLEMENTS && (
+          <div className="flex flex-col gap-6">
+            <SettlementApprovalQueue />
+            <SettlementAuditDashboard />
           </div>
         )}
 
