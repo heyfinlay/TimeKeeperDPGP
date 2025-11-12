@@ -14,6 +14,7 @@ import {
   supabaseSelect,
   isTableMissingError,
 } from '@/lib/supabaseClient.js';
+import { computeToteQuote } from '@/utils/tote.js';
 
 const STORAGE_KEY = 'parimutuel-store:v1';
 
@@ -26,6 +27,22 @@ const baseState = {
   selectedMarketId: null,
   pools: {},
   poolHistory: {},
+  quotePreview: {
+    marketId: null,
+    outcomeId: null,
+    stake: 0,
+    quote: null,
+    source: 'local',
+    isLoading: false,
+    error: null,
+    updatedAt: null,
+  },
+  historyWindow: '1m',
+  realtime: {
+    lastUpdate: null,
+    isStale: false,
+    lagMs: 0,
+  },
   placement: {
     isPlacing: false,
     marketId: null,
@@ -58,6 +75,70 @@ const bootstrapState = () => {
   }
 };
 
+const clampNumber = (value, min, max) => {
+  if (!Number.isFinite(value)) {
+    return min;
+  }
+  return Math.min(max, Math.max(min, value));
+};
+
+const resolveTakeout = (market, fallback = 0.1) => {
+  const takeout = Number(market?.takeout);
+  if (Number.isFinite(takeout)) {
+    return clampNumber(takeout, 0, 0.25);
+  }
+  const rakeBps = Number(market?.rake_bps);
+  if (Number.isFinite(rakeBps)) {
+    return clampNumber(rakeBps / 10000, 0, 0.25);
+  }
+  return fallback;
+};
+
+const createEmptyHistoryEntry = () => ({
+  windows: {},
+  isLoading: {},
+  errors: {},
+  lastUpdatedAt: {},
+});
+
+const buildLocalHistoryPayload = ({ market, pool, windowKey }) => {
+  const stats = driverStats(market, pool);
+  const now = new Date().toISOString();
+  const total = Number(pool?.total ?? market?.pool_total ?? 0);
+  const takeout = resolveTakeout(pool ?? market);
+  return {
+    window: windowKey,
+    anchorAt: now,
+    updatedAt: now,
+    takeout,
+    totalPool: Number.isFinite(total) ? total : 0,
+    anchorPool: Number.isFinite(total) ? total : 0,
+    runners: stats.map((entry) => ({
+      outcomeId: entry.outcomeId,
+      label: entry.label,
+      current: {
+        pool: entry.total,
+        share: entry.share,
+        odds: entry.odds || null,
+        wagerCount: entry.wagerCount,
+      },
+      anchor: {
+        pool: entry.total,
+        share: entry.share,
+        odds: entry.odds || null,
+        timestamp: now,
+      },
+      delta: {
+        share: 0,
+        handle: 0,
+        odds: 0,
+        trend: 'flat',
+      },
+      sparkline: [],
+    })),
+  };
+};
+
 const buildPoolsFromEvents = (events = []) => {
   return events.reduce((acc, event) => {
     if (!Array.isArray(event?.markets)) {
@@ -68,7 +149,7 @@ const buildPoolsFromEvents = (events = []) => {
         return;
       }
       const marketTotal = Number(market.pool_total ?? market.total_pool ?? 0);
-      const rakeBps = Number.isFinite(Number(market.rake_bps)) ? Number(market.rake_bps) : 0;
+      const takeout = resolveTakeout(market);
       const outcomes = Array.isArray(market?.outcomes)
         ? market.outcomes.reduce((outAcc, outcome) => {
             if (!outcome?.id) {
@@ -87,7 +168,8 @@ const buildPoolsFromEvents = (events = []) => {
       acc[market.id] = {
         total: Number.isFinite(marketTotal) && marketTotal > 0 ? marketTotal : totalFromOutcomes,
         outcomes,
-        rakeBps,
+        takeout,
+        updatedAt: market.updated_at ?? market.closes_at ?? null,
       };
     });
     return acc;
@@ -136,7 +218,7 @@ const updateEventsWithPool = (events, marketId, outcomeId, delta) =>
   }));
 
 const updatePoolsWithDelta = (pools, marketId, outcomeId, delta) => {
-  const existing = pools[marketId] ?? { total: 0, outcomes: {}, rakeBps: 0 };
+  const existing = pools[marketId] ?? { total: 0, outcomes: {}, takeout: 0.1 };
   const outcome = existing.outcomes[outcomeId] ?? { total: 0, wagerCount: 0 };
   const total = Math.max(0, Number(existing.total ?? 0) + delta);
   return {
@@ -162,10 +244,8 @@ export const driverStats = (market, pool) => {
   }
   const outcomes = Array.isArray(market?.outcomes) ? market.outcomes : [];
   const totalPool = Number(pool?.total ?? market?.pool_total ?? 0);
-  const rakeBps = Number.isFinite(Number(pool?.rakeBps ?? market?.rake_bps))
-    ? Number(pool?.rakeBps ?? market?.rake_bps)
-    : 0;
-  const rakeMultiplier = Math.max(0, 1 - rakeBps / 10000);
+  const takeout = resolveTakeout(pool ?? market);
+  const rakeMultiplier = Math.max(0, 1 - takeout);
   const netPool = totalPool * rakeMultiplier;
   return outcomes
     .map((outcome) => {
@@ -184,62 +264,6 @@ export const driverStats = (market, pool) => {
       };
     })
     .sort((a, b) => b.total - a.total);
-};
-
-const MAX_POOL_HISTORY = 30;
-
-const capturePoolSnapshot = (market, pool, timestamp = new Date().toISOString()) => {
-  if (!market?.id) {
-    return null;
-  }
-  const stats = driverStats(market, pool);
-  const total = Number(pool?.total ?? market?.pool_total ?? 0);
-  const safeTotal = Number.isFinite(total) ? total : 0;
-  return {
-    timestamp,
-    total: safeTotal,
-    outcomes: stats.reduce((acc, entry) => {
-      acc[entry.outcomeId] = {
-        total: entry.total ?? 0,
-        share: entry.share ?? 0,
-        odds: entry.odds ?? 0,
-        wagerCount: entry.wagerCount ?? 0,
-      };
-      return acc;
-    }, {}),
-  };
-};
-
-const buildInitialPoolHistory = (events, pools, timestamp) => {
-  if (!Array.isArray(events) || events.length === 0) {
-    return {};
-  }
-  const history = {};
-  events.forEach((event) => {
-    event?.markets?.forEach((market) => {
-      const snapshot = capturePoolSnapshot(market, pools?.[market.id], timestamp);
-      if (snapshot) {
-        history[market.id] = { snapshots: [snapshot] };
-      }
-    });
-  });
-  return history;
-};
-
-const appendPoolHistorySnapshot = (history, market, pool, timestamp) => {
-  if (!market?.id) {
-    return history;
-  }
-  const snapshot = capturePoolSnapshot(market, pool, timestamp);
-  if (!snapshot) {
-    return history;
-  }
-  const existing = history?.[market.id]?.snapshots ?? [];
-  const nextSnapshots = [...existing.slice(-(MAX_POOL_HISTORY - 1)), snapshot];
-  return {
-    ...history,
-    [market.id]: { snapshots: nextSnapshots },
-  };
 };
 
 export const settleEvent = (event, winningOutcomeIds = []) => {
@@ -303,6 +327,16 @@ const ActionTypes = {
   PLACE_WAGER_ERROR: 'PLACE_WAGER_ERROR',
   CLEAR_TOAST: 'CLEAR_TOAST',
   SETTLE_EVENT: 'SETTLE_EVENT',
+  LOAD_HISTORY_START: 'LOAD_HISTORY_START',
+  LOAD_HISTORY_SUCCESS: 'LOAD_HISTORY_SUCCESS',
+  LOAD_HISTORY_ERROR: 'LOAD_HISTORY_ERROR',
+  SET_HISTORY_WINDOW: 'SET_HISTORY_WINDOW',
+  SYNC_POOL_SUMMARY: 'SYNC_POOL_SUMMARY',
+  PREVIEW_QUOTE_START: 'PREVIEW_QUOTE_START',
+  PREVIEW_QUOTE_SUCCESS: 'PREVIEW_QUOTE_SUCCESS',
+  PREVIEW_QUOTE_ERROR: 'PREVIEW_QUOTE_ERROR',
+  CLEAR_QUOTE_PREVIEW: 'CLEAR_QUOTE_PREVIEW',
+  SET_REALTIME_STATUS: 'SET_REALTIME_STATUS',
 };
 
 const reducer = (state, action) => {
@@ -316,7 +350,14 @@ const reducer = (state, action) => {
     case ActionTypes.LOAD_SUCCESS: {
       const events = action.payload?.events ?? [];
       const pools = buildPoolsFromEvents(events);
-      const timestamp = new Date().toISOString();
+      const history = {};
+      events.forEach((event) => {
+        event?.markets?.forEach((market) => {
+          if (!history[market.id]) {
+            history[market.id] = createEmptyHistoryEntry();
+          }
+        });
+      });
       const persistedEventId = state.selectedEventId;
       const persistedMarketId = state.selectedMarketId;
       const nextEvent =
@@ -330,7 +371,7 @@ const reducer = (state, action) => {
         supportsMarkets: action.payload?.supportsMarkets ?? state.supportsMarkets,
         error: null,
         pools,
-        poolHistory: buildInitialPoolHistory(events, pools, timestamp),
+        poolHistory: history,
         selectedEventId: nextEvent?.id ?? null,
         selectedMarketId: nextMarket?.id ?? fallbackMarket?.id ?? null,
         lastLoadedAt: new Date().toISOString(),
@@ -379,25 +420,26 @@ const reducer = (state, action) => {
       const delta = Number(stake) || 0;
       const events = updateEventsWithPool(state.events, marketId, outcomeId, delta);
       const pools = updatePoolsWithDelta(state.pools, marketId, outcomeId, delta);
-      const market = findMarket(events, marketId);
-      const pool = market ? pools?.[market.id] ?? null : null;
-      const nextHistory = appendPoolHistorySnapshot(
-        state.poolHistory,
-        market,
-        pool,
-        new Date().toISOString(),
-      );
       return {
         ...state,
         events,
         pools,
-        poolHistory: nextHistory,
         placement: {
           isPlacing: false,
           marketId,
           outcomeId,
           error: null,
           lastWager: wager ?? null,
+        },
+        quotePreview:
+          state.quotePreview.marketId === marketId
+            ? { ...baseState.quotePreview }
+            : state.quotePreview,
+        realtime: {
+          ...state.realtime,
+          lastUpdate: new Date().toISOString(),
+          isStale: false,
+          lagMs: 0,
         },
         toast: message
           ? { type: 'success', message }
@@ -433,6 +475,183 @@ const reducer = (state, action) => {
         ),
       };
     }
+    case ActionTypes.LOAD_HISTORY_START: {
+      const { marketId, window: windowKey } = action.payload ?? {};
+      if (!marketId || !windowKey) {
+        return state;
+      }
+      const existing = state.poolHistory[marketId] ?? createEmptyHistoryEntry();
+      return {
+        ...state,
+        poolHistory: {
+          ...state.poolHistory,
+          [marketId]: {
+            ...existing,
+            isLoading: { ...existing.isLoading, [windowKey]: true },
+            errors: { ...existing.errors, [windowKey]: null },
+          },
+        },
+      };
+    }
+    case ActionTypes.LOAD_HISTORY_SUCCESS: {
+      const { marketId, window: windowKey, payload } = action.payload ?? {};
+      if (!marketId || !windowKey) {
+        return state;
+      }
+      const existing = state.poolHistory[marketId] ?? createEmptyHistoryEntry();
+      return {
+        ...state,
+        poolHistory: {
+          ...state.poolHistory,
+          [marketId]: {
+            ...existing,
+            windows: { ...existing.windows, [windowKey]: payload },
+            isLoading: { ...existing.isLoading, [windowKey]: false },
+            errors: { ...existing.errors, [windowKey]: null },
+            lastUpdatedAt: {
+              ...existing.lastUpdatedAt,
+              [windowKey]: payload?.updatedAt ?? new Date().toISOString(),
+            },
+          },
+        },
+      };
+    }
+    case ActionTypes.LOAD_HISTORY_ERROR: {
+      const { marketId, window: windowKey, error } = action.payload ?? {};
+      if (!marketId || !windowKey) {
+        return state;
+      }
+      const existing = state.poolHistory[marketId] ?? createEmptyHistoryEntry();
+      return {
+        ...state,
+        poolHistory: {
+          ...state.poolHistory,
+          [marketId]: {
+            ...existing,
+            isLoading: { ...existing.isLoading, [windowKey]: false },
+            errors: { ...existing.errors, [windowKey]: error ?? 'Failed to load history.' },
+          },
+        },
+      };
+    }
+    case ActionTypes.SET_HISTORY_WINDOW:
+      return {
+        ...state,
+        historyWindow: action.payload?.window ?? state.historyWindow,
+      };
+    case ActionTypes.SYNC_POOL_SUMMARY: {
+      const { marketId, summary } = action.payload ?? {};
+      if (!marketId || !summary) {
+        return state;
+      }
+      const takeout = resolveTakeout(summary, state.pools[marketId]?.takeout ?? 0.1);
+      const outcomes = Array.isArray(summary?.outcomes)
+        ? summary.outcomes.reduce((acc, outcome) => {
+            const contribution = Number(outcome.pool ?? 0);
+            const wagerCount = Number(outcome.wagerCount ?? outcome.wagers ?? 0);
+            acc[outcome.outcomeId] = {
+              total: Number.isFinite(contribution) ? contribution : 0,
+              wagerCount: Number.isFinite(wagerCount) ? wagerCount : 0,
+            };
+            return acc;
+          }, {})
+        : {};
+      const nextPools = {
+        ...state.pools,
+        [marketId]: {
+          total: Number(summary.totalPool ?? 0),
+          takeout,
+          outcomes,
+          updatedAt: summary.updatedAt ?? new Date().toISOString(),
+        },
+      };
+      const nextEvents = state.events.map((event) => ({
+        ...event,
+        markets: event.markets?.map((market) => {
+          if (market.id !== marketId) {
+            return market;
+          }
+          return {
+            ...market,
+            takeout,
+            pool_total: Number(summary.totalPool ?? market.pool_total ?? 0),
+            status: summary.status ?? market.status,
+            closes_at: summary.closeTime ?? market.closes_at,
+            outcomes: market.outcomes?.map((outcome) => {
+              const next = outcomes[outcome.id];
+              if (!next) {
+                return outcome;
+              }
+              return {
+                ...outcome,
+                pool_total: next.total,
+                wager_count: next.wagerCount,
+              };
+            }),
+          };
+        }),
+      }));
+      return {
+        ...state,
+        events: nextEvents,
+        pools: nextPools,
+        realtime: {
+          ...state.realtime,
+          lastUpdate: summary.snapshotAt ?? new Date().toISOString(),
+          isStale: false,
+          lagMs: 0,
+        },
+      };
+    }
+    case ActionTypes.PREVIEW_QUOTE_START:
+      return {
+        ...state,
+        quotePreview: {
+          ...state.quotePreview,
+          marketId: action.payload?.marketId ?? null,
+          outcomeId: action.payload?.outcomeId ?? null,
+          stake: action.payload?.stake ?? 0,
+          isLoading: true,
+          error: null,
+        },
+      };
+    case ActionTypes.PREVIEW_QUOTE_SUCCESS:
+      return {
+        ...state,
+        quotePreview: {
+          marketId: action.payload?.marketId ?? null,
+          outcomeId: action.payload?.outcomeId ?? null,
+          stake: action.payload?.stake ?? 0,
+          quote: action.payload?.quote ?? null,
+          updatedAt: action.payload?.updatedAt ?? new Date().toISOString(),
+          source: action.payload?.source ?? 'local',
+          isLoading: false,
+          error: null,
+        },
+      };
+    case ActionTypes.PREVIEW_QUOTE_ERROR:
+      return {
+        ...state,
+        quotePreview: {
+          ...state.quotePreview,
+          isLoading: false,
+          error: action.payload?.message ?? 'Unable to fetch quote preview.',
+        },
+      };
+    case ActionTypes.CLEAR_QUOTE_PREVIEW:
+      return {
+        ...state,
+        quotePreview: { ...baseState.quotePreview },
+      };
+    case ActionTypes.SET_REALTIME_STATUS:
+      return {
+        ...state,
+        realtime: {
+          lastUpdate: action.payload?.lastUpdate ?? state.realtime.lastUpdate,
+          isStale: action.payload?.isStale ?? state.realtime.isStale,
+          lagMs: action.payload?.lagMs ?? state.realtime.lagMs,
+        },
+      };
     default:
       return state;
   }
@@ -446,7 +665,9 @@ export const createParimutuelState = () => ({
   events: [],
   pools: {},
   poolHistory: {},
+  quotePreview: { ...baseState.quotePreview },
   placement: { ...baseState.placement },
+  realtime: { ...baseState.realtime },
 });
 export const parimutuelReducer = reducer;
 
@@ -473,6 +694,38 @@ export function ParimutuelProvider({ children }) {
     }
   }, [state.selectedEventId, state.selectedMarketId]);
 
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return undefined;
+    }
+    const interval = window.setInterval(() => {
+      const current = stateRef.current.realtime;
+      if (!current?.lastUpdate) {
+        return;
+      }
+      const last = new Date(current.lastUpdate).getTime();
+      if (Number.isNaN(last)) {
+        return;
+      }
+      const lagMs = Math.max(0, Date.now() - last);
+      const isStale = lagMs > 5000;
+      if (
+        current.isStale !== isStale ||
+        Math.abs((current.lagMs ?? 0) - lagMs) > 250
+      ) {
+        dispatch({
+          type: ActionTypes.SET_REALTIME_STATUS,
+          payload: {
+            isStale,
+            lagMs,
+            lastUpdate: stateRef.current.realtime.lastUpdate,
+          },
+        });
+      }
+    }, 2000);
+    return () => window.clearInterval(interval);
+  }, []);
+
   const loadEvents = useCallback(async () => {
     if (!isSupabaseConfigured) {
       dispatch({
@@ -487,13 +740,13 @@ export function ParimutuelProvider({ children }) {
       // Fetch events with markets and outcomes
       const rows = await supabaseSelect('events', {
         select:
-          'id,title,venue,starts_at,status,session_id,markets(id,name,type,rake_bps,status,closes_at,outcomes(id,label,sort_order,color,driver_id))',
+          'id,title,venue,starts_at,status,session_id,markets(id,name,type,rake_bps,takeout,status,closes_at,outcomes(id,label,sort_order,color,driver_id))',
         order: { column: 'starts_at', ascending: true },
       });
 
       // Fetch pool data from materialized views
       const [marketPools, outcomePools] = await Promise.all([
-        supabaseSelect('market_pools', { select: 'market_id,total_pool,unique_bettors,total_wagers' }),
+        supabaseSelect('market_pools', { select: 'market_id,total_pool,unique_bettors,total_wagers,takeout' }),
         supabaseSelect('outcome_pools', { select: 'outcome_id,total_staked,wager_count' }),
       ]);
 
@@ -513,11 +766,19 @@ export function ParimutuelProvider({ children }) {
             markets: Array.isArray(event?.markets)
               ? event.markets.map((market) => {
                   const marketPoolData = marketPoolsMap[market.id];
+                  const computedTakeout = resolveTakeout(
+                    {
+                      takeout: market.takeout ?? marketPoolData?.takeout ?? null,
+                      rake_bps: market.rake_bps,
+                    },
+                    0.1,
+                  );
                   return {
                     ...market,
                     pool_total: marketPoolData?.total_pool ?? 0,
                     unique_bettors: marketPoolData?.unique_bettors ?? 0,
                     total_wagers: marketPoolData?.total_wagers ?? 0,
+                    takeout: computedTakeout,
                     outcomes: Array.isArray(market?.outcomes)
                       ? market.outcomes.map((outcome) => {
                           const outcomePoolData = outcomePoolsMap[outcome.id];
@@ -559,6 +820,288 @@ export function ParimutuelProvider({ children }) {
       });
       return { success: false, error };
     }
+  }, []);
+
+  const setHistoryWindow = useCallback((windowKey) => {
+    if (!windowKey) {
+      return;
+    }
+    dispatch({ type: ActionTypes.SET_HISTORY_WINDOW, payload: { window: windowKey } });
+  }, []);
+
+  const loadMarketHistory = useCallback(
+    async ({ marketId, window: windowKey } = {}) => {
+      const currentState = stateRef.current;
+      const targetMarketId = marketId ?? currentState.selectedMarketId;
+      const resolvedWindow = windowKey ?? currentState.historyWindow ?? '1m';
+      if (!targetMarketId) {
+        return { success: false, error: new Error('No market selected') };
+      }
+
+      dispatch({
+        type: ActionTypes.LOAD_HISTORY_START,
+        payload: { marketId: targetMarketId, window: resolvedWindow },
+      });
+
+      const market = findMarket(currentState.events, targetMarketId);
+      const pool = currentState.pools[targetMarketId] ?? null;
+
+      if (!isSupabaseConfigured || !supabase) {
+        const payload = buildLocalHistoryPayload({
+          market,
+          pool,
+          windowKey: resolvedWindow,
+        });
+        dispatch({
+          type: ActionTypes.LOAD_HISTORY_SUCCESS,
+          payload: { marketId: targetMarketId, window: resolvedWindow, payload },
+        });
+        return { success: true, data: payload, offline: true };
+      }
+
+      try {
+        const { data, error } = await supabase.rpc('get_market_history', {
+          p_market_id: targetMarketId,
+          p_window: resolvedWindow,
+        });
+        if (error) {
+          throw error;
+        }
+        const payload = data ?? buildLocalHistoryPayload({
+          market,
+          pool,
+          windowKey: resolvedWindow,
+        });
+        dispatch({
+          type: ActionTypes.LOAD_HISTORY_SUCCESS,
+          payload: { marketId: targetMarketId, window: resolvedWindow, payload },
+        });
+        return { success: true, data: payload };
+      } catch (error) {
+        console.error('Failed to load market history', error);
+        dispatch({
+          type: ActionTypes.LOAD_HISTORY_ERROR,
+          payload: {
+            marketId: targetMarketId,
+            window: resolvedWindow,
+            error: error?.message ?? 'Failed to load history.',
+          },
+        });
+        return { success: false, error };
+      }
+    },
+    [],
+  );
+
+  const syncMarketSummary = useCallback(
+    async (marketId) => {
+      const currentState = stateRef.current;
+      const targetMarketId = marketId ?? currentState.selectedMarketId;
+      if (!targetMarketId) {
+        return { success: false, error: new Error('No market selected') };
+      }
+
+      const market = findMarket(currentState.events, targetMarketId);
+      const pool = currentState.pools[targetMarketId] ?? null;
+
+      if (!isSupabaseConfigured || !supabase) {
+        const stats = driverStats(market, pool);
+        const summary = {
+          marketId: targetMarketId,
+          totalPool: Number(pool?.total ?? market?.pool_total ?? 0),
+          takeout: resolveTakeout(pool ?? market),
+          outcomes: stats.map((entry) => ({
+            outcomeId: entry.outcomeId,
+            pool: entry.total,
+            wagerCount: entry.wagerCount,
+          })),
+          status: market?.status ?? null,
+          closeTime: market?.closes_at ?? null,
+          snapshotAt: new Date().toISOString(),
+        };
+        dispatch({
+          type: ActionTypes.SYNC_POOL_SUMMARY,
+          payload: { marketId: targetMarketId, summary },
+        });
+        return { success: true, data: summary, offline: true };
+      }
+
+      try {
+        const { data, error } = await supabase.rpc('get_market_summary', {
+          p_market_id: targetMarketId,
+        });
+        if (error) {
+          throw error;
+        }
+        if (data) {
+          dispatch({
+            type: ActionTypes.SYNC_POOL_SUMMARY,
+            payload: { marketId: targetMarketId, summary: data },
+          });
+        }
+        return { success: true, data };
+      } catch (error) {
+        console.error('Failed to sync market summary', error);
+        return { success: false, error };
+      }
+    },
+    [],
+  );
+
+  const previewQuote = useCallback(
+    async ({ marketId, outcomeId, stake, sampleRate = 0.25 } = {}) => {
+      const currentState = stateRef.current;
+      const targetMarketId = marketId ?? currentState.selectedMarketId;
+      const numericStake = Math.max(Number(stake) || 0, 0);
+      if (!targetMarketId || !outcomeId) {
+        dispatch({ type: ActionTypes.CLEAR_QUOTE_PREVIEW });
+        return { success: false, error: new Error('Market or outcome missing') };
+      }
+
+      const market = findMarket(currentState.events, targetMarketId);
+      if (!market) {
+        dispatch({ type: ActionTypes.CLEAR_QUOTE_PREVIEW });
+        return { success: false, error: new Error('Market not found') };
+      }
+
+      const outcome = findOutcome(market, outcomeId);
+      if (!outcome) {
+        dispatch({ type: ActionTypes.CLEAR_QUOTE_PREVIEW });
+        return { success: false, error: new Error('Outcome not found') };
+      }
+
+      if (numericStake <= 0) {
+        dispatch({ type: ActionTypes.CLEAR_QUOTE_PREVIEW });
+        return { success: true, cleared: true };
+      }
+
+      dispatch({
+        type: ActionTypes.PREVIEW_QUOTE_START,
+        payload: { marketId: targetMarketId, outcomeId: outcome.id, stake: numericStake },
+      });
+
+      const pool = currentState.pools[targetMarketId] ?? null;
+      const totalPool = Number(pool?.total ?? market?.pool_total ?? 0);
+      const runnerPool = Number(pool?.outcomes?.[outcome.id]?.total ?? outcome?.pool_total ?? 0);
+      const takeout = resolveTakeout(pool ?? market);
+
+      const localQuote = computeToteQuote({
+        T: totalPool,
+        W: runnerPool,
+        r: takeout,
+        s: numericStake,
+      });
+
+      dispatch({
+        type: ActionTypes.PREVIEW_QUOTE_SUCCESS,
+        payload: {
+          marketId: targetMarketId,
+          outcomeId: outcome.id,
+          stake: numericStake,
+          quote: localQuote,
+          source: 'local',
+          updatedAt: new Date().toISOString(),
+        },
+      });
+
+      if (!isSupabaseConfigured || !supabase) {
+        return { success: true, quote: localQuote, offline: true };
+      }
+
+      try {
+        const { data, error } = await supabase.rpc('quote_market_outcome', {
+          p_market_id: targetMarketId,
+          p_outcome_id: outcome.id,
+          p_stake: numericStake,
+        });
+        if (error) {
+          throw error;
+        }
+        const normalise = (value, fallback) => {
+          const numeric = Number(value);
+          if (Number.isFinite(numeric)) {
+            return numeric;
+          }
+          return fallback;
+        };
+        const remotePayload = data ?? {};
+        const remoteQuote = {
+          baselineMultiplier: normalise(
+            remotePayload.baselineMultiplier ?? remotePayload.baseline_multiplier,
+            localQuote.baselineMultiplier,
+          ),
+          effectiveMultiplier: normalise(
+            remotePayload.effectiveMultiplier ?? remotePayload.effective_multiplier,
+            localQuote.effectiveMultiplier,
+          ),
+          estPayout: normalise(
+            remotePayload.estPayout ?? remotePayload.est_payout,
+            localQuote.estPayout,
+          ),
+          impliedProb: normalise(
+            remotePayload.impliedProb ?? remotePayload.implied_prob,
+            localQuote.impliedProb,
+          ),
+          priceImpact: normalise(
+            remotePayload.priceImpact ?? remotePayload.price_impact,
+            localQuote.priceImpact,
+          ),
+          maxPossiblePayout: normalise(
+            remotePayload.maxPossiblePayout ?? remotePayload.max_possible_payout,
+            localQuote.maxPossiblePayout,
+          ),
+          shareAfterBet: normalise(
+            remotePayload.shareAfterBet ?? remotePayload.share_after_bet,
+            localQuote.shareAfterBet ?? localQuote.impliedProb,
+          ),
+        };
+
+        dispatch({
+          type: ActionTypes.PREVIEW_QUOTE_SUCCESS,
+          payload: {
+            marketId: targetMarketId,
+            outcomeId: outcome.id,
+            stake: numericStake,
+            quote: remoteQuote,
+            source: 'remote',
+            updatedAt: new Date().toISOString(),
+          },
+        });
+
+        if (sampleRate > 0 && Math.random() <= sampleRate) {
+          supabase
+            .rpc('log_quote_telemetry', {
+              p_market_id: targetMarketId,
+              p_outcome_id: outcome.id,
+              p_stake: numericStake,
+              p_baseline:
+                remoteQuote.baselineMultiplier ?? localQuote.baselineMultiplier ?? null,
+              p_effective:
+                remoteQuote.effectiveMultiplier ?? localQuote.effectiveMultiplier ?? null,
+              p_price_impact:
+                remoteQuote.priceImpact ?? localQuote.priceImpact ?? null,
+              p_sample_rate: sampleRate,
+            })
+            .catch((telemetryError) => {
+              console.warn('Failed to record quote telemetry', telemetryError);
+            });
+        }
+
+        return { success: true, quote: remoteQuote };
+      } catch (error) {
+        console.error('Failed to preview quote', error);
+        dispatch({
+          type: ActionTypes.PREVIEW_QUOTE_ERROR,
+          payload: { message: error?.message ?? 'Unable to fetch quote preview.' },
+        });
+        return { success: false, error, quote: localQuote };
+      }
+    },
+    [],
+  );
+
+  const clearQuotePreview = useCallback(() => {
+    dispatch({ type: ActionTypes.CLEAR_QUOTE_PREVIEW });
   }, []);
 
   const selectEvent = useCallback((eventId) => {
@@ -669,13 +1212,30 @@ export function ParimutuelProvider({ children }) {
       state,
       actions: {
         loadEvents,
+        setHistoryWindow,
+        loadMarketHistory,
+        syncMarketSummary,
         selectEvent,
         selectMarket,
         placeWager,
+        previewQuote,
         clearToast,
+        clearQuotePreview,
       },
     }),
-    [state, loadEvents, selectEvent, selectMarket, placeWager, clearToast],
+    [
+      state,
+      loadEvents,
+      setHistoryWindow,
+      loadMarketHistory,
+      syncMarketSummary,
+      selectEvent,
+      selectMarket,
+      placeWager,
+      previewQuote,
+      clearToast,
+      clearQuotePreview,
+    ],
   );
 
   return createElement(ParimutuelContext.Provider, { value }, children);

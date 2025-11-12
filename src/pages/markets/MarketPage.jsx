@@ -4,7 +4,7 @@ import { ArrowLeft, Clock } from 'lucide-react';
 import PoolAnalytics from '@/components/betting/PoolAnalytics.jsx';
 import LiveBetsFeed from '@/components/markets/LiveBetsFeed.jsx';
 import { useParimutuelStore } from '@/state/parimutuelStore.js';
-import { formatCurrency, formatCountdown } from '@/utils/betting.js';
+import { formatCurrency, formatCountdown, formatPercent } from '@/utils/betting.js';
 
 const findMarketById = (events, marketId) => {
   if (!marketId) {
@@ -27,6 +27,35 @@ const findEventForMarket = (events, marketId) => {
     return null;
   }
   return events.find((event) => event.markets?.some((market) => String(market.id) === String(marketId))) ?? null;
+};
+
+const clampNumber = (value, min, max) => {
+  if (!Number.isFinite(value)) {
+    return min;
+  }
+  if (value < min) {
+    return min;
+  }
+  if (value > max) {
+    return max;
+  }
+  return value;
+};
+
+const resolveTakeoutValue = (market, pool) => {
+  const poolTakeout = Number(pool?.takeout);
+  if (Number.isFinite(poolTakeout)) {
+    return clampNumber(poolTakeout, 0, 0.25);
+  }
+  const marketTakeout = Number(market?.takeout);
+  if (Number.isFinite(marketTakeout)) {
+    return clampNumber(marketTakeout, 0, 0.25);
+  }
+  const rakeBps = Number(market?.rake_bps);
+  if (Number.isFinite(rakeBps)) {
+    return clampNumber(rakeBps / 10000, 0, 0.25);
+  }
+  return 0.1;
 };
 
 export default function MarketPage() {
@@ -74,6 +103,12 @@ export default function MarketPage() {
     compact: false,
     maximumFractionDigits: 0,
   });
+  const takeout = resolveTakeoutValue(market, pool);
+  const takeoutDisplay = formatPercent(takeout, { maximumFractionDigits: 1 });
+  const netHandle = formatCurrency(
+    (pool?.total ?? market?.pool_total ?? 0) * Math.max(0, 1 - takeout),
+    { compact: false, maximumFractionDigits: 0 },
+  );
   const countdown = formatCountdown(market?.closes_at ?? null);
 
   if (!supportsMarkets) {
@@ -135,6 +170,9 @@ export default function MarketPage() {
         <div className="flex flex-wrap items-center gap-4 text-xs text-slate-400">
           <span>
             Handle <span className="font-semibold text-white">{handle}</span>
+          </span>
+          <span>
+            Net <span className="font-semibold text-white">{netHandle}</span> after takeout ({takeoutDisplay})
           </span>
           <span className="flex items-center gap-2">
             <Clock className="h-3.5 w-3.5" /> {countdown.label}

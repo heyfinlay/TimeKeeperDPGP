@@ -6,6 +6,7 @@ import BetslipDrawer from '@/components/betting/BetslipDrawer.jsx';
 import PoolAnalytics from '@/components/betting/PoolAnalytics.jsx';
 import { driverStats, useParimutuelStore } from '@/state/parimutuelStore.js';
 import { formatCountdown, formatCurrency, formatOdds, formatPercent } from '@/utils/betting.js';
+import { isFeatureEnabled } from '@/constants/featureFlags.js';
 import { resolveOutcomeIdentity } from '@/utils/outcomes.js';
 
 const HIGHLIGHTS = [
@@ -30,6 +31,35 @@ const findEventByMarketId = (events, marketId) =>
 const normaliseStatus = (status) => {
   if (!status) return 'Scheduled';
   return String(status).replaceAll('_', ' ');
+};
+
+const clampNumber = (value, min, max) => {
+  if (!Number.isFinite(value)) {
+    return min;
+  }
+  if (value < min) {
+    return min;
+  }
+  if (value > max) {
+    return max;
+  }
+  return value;
+};
+
+const resolveTakeoutValue = (market, pool) => {
+  const poolTakeout = Number(pool?.takeout);
+  if (Number.isFinite(poolTakeout)) {
+    return clampNumber(poolTakeout, 0, 0.25);
+  }
+  const marketTakeout = Number(market?.takeout);
+  if (Number.isFinite(marketTakeout)) {
+    return clampNumber(marketTakeout, 0, 0.25);
+  }
+  const rakeBps = Number(market?.rake_bps);
+  if (Number.isFinite(rakeBps)) {
+    return clampNumber(rakeBps / 10000, 0, 0.25);
+  }
+  return 0.1;
 };
 
 function useCountdown(target) {
@@ -296,6 +326,7 @@ function ActiveMarketCard({
   market,
   stats,
   pool,
+  quotePreview,
   onSelectOutcome,
   onOpenBetslip,
   onOpenPool,
@@ -304,12 +335,11 @@ function ActiveMarketCard({
   const countdown = useCountdown(market?.closes_at);
   const marketOptions = Array.isArray(event?.markets) ? event.markets : [];
   const totalPool = Number(pool?.total ?? market?.pool_total ?? 0);
-  const rakeBps = Number.isFinite(Number(pool?.rakeBps ?? market?.rake_bps))
-    ? Number(pool?.rakeBps ?? market?.rake_bps)
-    : 0;
-  const rakeRatio = Math.min(Math.max(rakeBps / 10000, 0), 1);
-  const payoutRate = Math.max(0, 1 - rakeRatio);
+  const takeout = resolveTakeoutValue(market, pool);
+  const payoutRate = Math.max(0, 1 - takeout);
   const netPool = Math.max(0, totalPool * payoutRate);
+  const takeoutDisplay = formatPercent(takeout, { maximumFractionDigits: 1 });
+  const toteV2Enabled = isFeatureEnabled('tote_v2_math');
   return (
     <section className="tk-glass-panel interactive-card flex flex-col gap-6 rounded-2xl p-6">
       <header className="flex flex-wrap items-start justify-between gap-4">
@@ -359,7 +389,7 @@ function ActiveMarketCard({
             {formatCurrency(totalPool, { compact: false, maximumFractionDigits: 0 })}
           </span>
           <span className="text-xs text-slate-500">
-            Net {formatCurrency(netPool, { compact: false, maximumFractionDigits: 0 })} after rake
+            Net {formatCurrency(netPool, { compact: false, maximumFractionDigits: 0 })} after takeout ({takeoutDisplay})
           </span>
         </div>
       </div>
@@ -379,6 +409,25 @@ function ActiveMarketCard({
             const badgeStyle = {
               backgroundImage: `linear-gradient(135deg, ${identity.primaryColor}, ${identity.secondaryColor})`,
             };
+            const previewMatch =
+              toteV2Enabled &&
+              quotePreview?.marketId === market?.id &&
+              quotePreview?.outcomeId === entry.outcomeId &&
+              Number(quotePreview?.stake ?? 0) > 0 &&
+              quotePreview?.quote;
+            const effectiveMultiplier = previewMatch
+              ? quotePreview.quote?.effectiveMultiplier ?? entry.odds
+              : entry.odds;
+            const priceImpact = previewMatch
+              ? Number(quotePreview.quote?.priceImpact ?? 0)
+              : 0;
+            const shareAfterBet = previewMatch
+              ? Number(quotePreview.quote?.shareAfterBet ?? entry.share)
+              : entry.share;
+            const shareText = formatPercent(entry.share, { maximumFractionDigits: 1 });
+            const shareAfterText = formatPercent(shareAfterBet, { maximumFractionDigits: 1 });
+            const priceImpactLabel = formatPercent(-priceImpact, { maximumFractionDigits: 2 });
+            const baselineLabel = formatOdds(entry.odds);
             return (
               <button
                 key={entry.outcomeId}
@@ -398,18 +447,27 @@ function ActiveMarketCard({
                     {entry.label}
                   </p>
                   <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-400">
-                    <span>{formatPercent(entry.share)}</span>
+                    <span>
+                      Share {shareText}
+                      {previewMatch ? ` → ${shareAfterText}` : ''}
+                    </span>
                     <span className="hidden sm:inline">•</span>
                     <span>{entry.wagerCount ?? 0} bets</span>
                   </div>
                 </div>
                 <div className="flex flex-col items-end gap-1 text-right">
                   <span className="text-lg font-semibold text-accent-emerald">
-                    {formatOdds(entry.odds)}
+                    {formatOdds(effectiveMultiplier)}
+                  </span>
+                  <span className={`text-xs ${previewMatch ? 'text-slate-400' : 'text-slate-500'}`}>
+                    Baseline {baselineLabel}
                   </span>
                   <span className="text-xs text-slate-500">
                     {formatCurrency(entry.total, { compact: false, maximumFractionDigits: 0 })} Diamonds
                   </span>
+                  {previewMatch ? (
+                    <span className="text-xs text-slate-400">Price impact {priceImpactLabel}</span>
+                  ) : null}
                 </div>
               </button>
             );
@@ -465,7 +523,7 @@ function HighlightsSection() {
 
 export default function MarketsLanding() {
   const {
-    state: { status, events, supportsMarkets, pools, selectedEventId, selectedMarketId },
+    state: { status, events, supportsMarkets, pools, selectedEventId, selectedMarketId, quotePreview },
     actions,
   } = useParimutuelStore();
 
@@ -598,6 +656,7 @@ export default function MarketsLanding() {
                 market={activeMarket}
                 stats={stats}
                 pool={activePool}
+                quotePreview={quotePreview}
                 onSelectOutcome={(entry) => openBetslip(activeMarket, entry)}
                 onOpenBetslip={() => openBetslip(activeMarket, null)}
                 onOpenPool={handleOpenPool}
