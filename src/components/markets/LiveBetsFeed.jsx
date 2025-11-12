@@ -60,7 +60,7 @@ export default function LiveBetsFeed({ marketId = null, limit = DEFAULT_LIMIT, c
     try {
       const rows = await supabaseSelect('wagers', {
         select:
-          'id,stake,placed_at,market_id,outcome_id,profiles:profiles!wagers_user_id_fkey(handle,display_name),outcomes(label)',
+          'id,stake,placed_at,market_id,outcome_id,user_id,profiles:user_id(handle,display_name),outcomes(label)',
         filters: { limit: String(limit), market_id: `eq.${marketId}` },
         order: { column: 'placed_at', ascending: false },
       });

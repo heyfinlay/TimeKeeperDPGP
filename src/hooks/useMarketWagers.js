@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   isSupabaseConfigured,
   supabaseSelect,
   subscribeToTable,
   isTableMissingError,
+  isColumnMissingError,
 } from '@/lib/supabaseClient.js';
 
 const DEFAULT_LIMIT = 12;
@@ -56,6 +57,38 @@ export function useMarketWagers(marketId, { limit = DEFAULT_LIMIT } = {}) {
         setSupportsWagers(false);
         setWagers([]);
         setError(null);
+      } else if (isColumnMissingError(caughtError, 'abbreviation') || isColumnMissingError(caughtError, 'color')) {
+        // Column doesn't exist yet - degrade gracefully by querying without it
+        console.warn('Outcome columns missing, falling back to basic query:', caughtError.message);
+        try {
+          const rows = await supabaseSelect('wagers', {
+            select: 'id,stake,placed_at,outcome_id,market_id,outcomes(label),markets(name)',
+            filters: {
+              market_id: `eq.${marketId}`,
+              limit: String(limit),
+            },
+            order: { column: 'placed_at', ascending: false },
+          });
+          const normalized = Array.isArray(rows)
+            ? rows.map((row) => ({
+                id: row.id,
+                stake: Number(row.stake ?? 0),
+                placedAt: row.placed_at,
+                outcomeId: row.outcome_id,
+                marketId: row.market_id,
+                outcomeLabel: row.outcomes?.label ?? 'Outcome',
+                outcomeColor: null,
+                outcomeAbbreviation: null,
+                marketName: row.markets?.name ?? '',
+              }))
+            : [];
+          setWagers(normalized);
+          setSupportsWagers(true);
+          setError(null);
+        } catch (fallbackError) {
+          console.error('Fallback query also failed', fallbackError);
+          setError(fallbackError);
+        }
       } else {
         console.error('Failed to load market wagers', caughtError);
         setError(caughtError);
@@ -69,6 +102,13 @@ export function useMarketWagers(marketId, { limit = DEFAULT_LIMIT } = {}) {
     void loadWagers();
   }, [loadWagers]);
 
+  // Use a ref to stabilize the loadWagers callback for the realtime subscription
+  // This prevents the subscription from being torn down and recreated on every render
+  const loadWagersRef = useRef(loadWagers);
+  useEffect(() => {
+    loadWagersRef.current = loadWagers;
+  }, [loadWagers]);
+
   useEffect(() => {
     if (!marketId || !isSupabaseConfigured || !supportsWagers) {
       return undefined;
@@ -77,7 +117,7 @@ export function useMarketWagers(marketId, { limit = DEFAULT_LIMIT } = {}) {
     const unsubscribe = subscribeToTable(
       { schema: 'public', table: 'wagers', event: '*', filter: `market_id=eq.${marketId}` },
       () => {
-        void loadWagers();
+        void loadWagersRef.current();
       },
       { maxRetries: 3 },
     );
@@ -87,7 +127,7 @@ export function useMarketWagers(marketId, { limit = DEFAULT_LIMIT } = {}) {
         unsubscribe();
       }
     };
-  }, [marketId, loadWagers, supportsWagers]);
+  }, [marketId, supportsWagers]); // Removed loadWagers from dependencies
 
   return {
     wagers,

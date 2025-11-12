@@ -227,3 +227,95 @@ export async function deleteSessionDeep(sessionId, { deleteStorage = true } = {}
   }
   return true;
 }
+
+/**
+ * Fetch pending settlements awaiting approval
+ */
+export async function fetchPendingSettlements() {
+  if (!isSupabaseConfigured || !supabase) {
+    throw new Error(NO_SUPABASE_ERROR);
+  }
+
+  const { data, error } = await supabase
+    .from('pending_settlements_with_context')
+    .select('*')
+    .eq('settlement_status', 'pending')
+    .order('proposed_at', { ascending: false });
+
+  if (error) {
+    throw error;
+  }
+
+  return Array.isArray(data) ? data : [];
+}
+
+/**
+ * Propose a settlement for a market
+ */
+export async function proposeSettlement({ marketId, outcomeId, timingData = null, notes = null }) {
+  if (!marketId || !outcomeId) {
+    throw new Error('Market ID and outcome ID are required to propose a settlement.');
+  }
+  if (!isSupabaseConfigured || !supabase) {
+    throw new Error(NO_SUPABASE_ERROR);
+  }
+
+  const { data, error } = await supabase.rpc('propose_settlement', {
+    p_market_id: marketId,
+    p_proposed_outcome_id: outcomeId,
+    p_timing_data: timingData,
+    p_notes: notes,
+  });
+
+  if (error) {
+    throw error;
+  }
+
+  return data; // Returns settlement ID
+}
+
+/**
+ * Approve a pending settlement (executes the settlement immediately)
+ */
+export async function approveSettlement({ settlementId, payoutPolicy = 'refund_if_empty' }) {
+  if (!settlementId) {
+    throw new Error('Settlement ID is required to approve a settlement.');
+  }
+  if (!isSupabaseConfigured || !supabase) {
+    throw new Error(NO_SUPABASE_ERROR);
+  }
+
+  const { data, error } = await supabase.rpc('approve_settlement', {
+    p_settlement_id: settlementId,
+    p_payout_policy: payoutPolicy,
+  });
+
+  if (error) {
+    throw error;
+  }
+
+  return data;
+}
+
+/**
+ * Reject a pending settlement
+ */
+export async function rejectSettlement({ settlementId, reason }) {
+  if (!settlementId || !reason) {
+    throw new Error('Settlement ID and rejection reason are required.');
+  }
+  if (!isSupabaseConfigured || !supabase) {
+    throw new Error(NO_SUPABASE_ERROR);
+  }
+
+  const { data, error } = await supabase.rpc('reject_settlement', {
+    p_settlement_id: settlementId,
+    p_rejection_reason: reason,
+  });
+
+  if (error) {
+    throw error;
+  }
+
+  return data;
+}
