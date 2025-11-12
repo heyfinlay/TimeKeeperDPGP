@@ -11,6 +11,7 @@ import Dashboard from '@/routes/Dashboard.jsx';
 import AdminDashboardPage from '@/pages/dashboard/AdminDashboardPage.jsx';
 import AdminMarketsPage from '@/pages/admin/AdminMarketsPage.jsx';
 import Markets from '@/routes/Markets.jsx';
+import MarketPage from '@/pages/markets/MarketPage.jsx';
 import AccountSetup from '@/routes/AccountSetup.jsx';
 import AuthCallback from '@/routes/AuthCallback.jsx';
 import Control from '@/routes/Control.jsx';
@@ -29,6 +30,7 @@ export default function App() {
           <Route element={<AppLayout />}>
             <Route path="/" element={<Welcome />} />
             <Route path="/markets" element={<Markets />} />
+            <Route path="/markets/:marketId" element={<MarketPage />} />
             <Route
               path="/account/setup"
               element={
