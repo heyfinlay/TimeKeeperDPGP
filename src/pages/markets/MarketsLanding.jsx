@@ -407,7 +407,7 @@ function ActiveMarketCard({
                     {formatOdds(entry.odds)}
                   </span>
                   <span className="text-xs text-slate-500">
-                    {formatCurrency(entry.total, { compact: false, maximumFractionDigits: 0 })} handle
+                    {formatCurrency(entry.total, { compact: false, maximumFractionDigits: 0 })} Diamonds
                   </span>
                 </div>
               </button>
