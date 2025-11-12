@@ -18,7 +18,34 @@ export type Database = {
       [_ in never]: never
     }
     Views: {
-      [_ in never]: never
+      market_pools: {
+        Row: {
+          market_id: string | null
+          total_pool: number | null
+          total_wagers: number | null
+          unique_bettors: number | null
+          takeout: number | null
+        }
+      }
+      outcome_pools: {
+        Row: {
+          market_id: string | null
+          outcome_id: string | null
+          total_staked: number | null
+          wager_count: number | null
+        }
+      }
+      pool_snapshots_1m: {
+        Row: {
+          market_id: string | null
+          outcome_id: string | null
+          minute_bucket: string | null
+          avg_total_pool: number | null
+          avg_outcome_pool: number | null
+          avg_takeout: number | null
+          last_created_at: string | null
+        }
+      }
     }
     Functions: {
       graphql: {
@@ -308,6 +335,7 @@ export type Database = {
           id: string
           name: string
           rake_bps: number
+          takeout: number
           status: string
           type: string
         }
@@ -318,6 +346,7 @@ export type Database = {
           id?: string
           name: string
           rake_bps?: number
+          takeout?: number
           status?: string
           type: string
         }
@@ -328,6 +357,7 @@ export type Database = {
           id?: string
           name?: string
           rake_bps?: number
+          takeout?: number
           status?: string
           type?: string
         }
@@ -379,6 +409,102 @@ export type Database = {
             columns: ["market_id"]
             isOneToOne: false
             referencedRelation: "markets"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      pool_snapshots: {
+        Row: {
+          created_at: string
+          id: string
+          market_id: string
+          outcome_id: string
+          outcome_pool: number
+          takeout: number
+          total_pool: number
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          market_id: string
+          outcome_id: string
+          outcome_pool: number
+          takeout: number
+          total_pool: number
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          market_id?: string
+          outcome_id?: string
+          outcome_pool?: number
+          takeout?: number
+          total_pool?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "pool_snapshots_market_id_fkey",
+            columns: ["market_id"],
+            isOneToOne: false,
+            referencedRelation: "markets",
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "pool_snapshots_outcome_id_fkey",
+            columns: ["outcome_id"],
+            isOneToOne: false,
+            referencedRelation: "outcomes",
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      quote_telemetry: {
+        Row: {
+          baseline_multiplier: number | null
+          created_at: string
+          effective_multiplier: number | null
+          id: string
+          market_id: string
+          meta: Json | null
+          outcome_id: string
+          price_impact: number | null
+          stake: number
+        }
+        Insert: {
+          baseline_multiplier?: number | null
+          created_at?: string
+          effective_multiplier?: number | null
+          id?: string
+          market_id: string
+          meta?: Json | null
+          outcome_id: string
+          price_impact?: number | null
+          stake: number
+        }
+        Update: {
+          baseline_multiplier?: number | null
+          created_at?: string
+          effective_multiplier?: number | null
+          id?: string
+          market_id?: string
+          meta?: Json | null
+          outcome_id?: string
+          price_impact?: number | null
+          stake?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "quote_telemetry_market_id_fkey",
+            columns: ["market_id"],
+            isOneToOne: false,
+            referencedRelation: "markets",
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "quote_telemetry_outcome_id_fkey",
+            columns: ["outcome_id"],
+            isOneToOne: false,
+            referencedRelation: "outcomes",
             referencedColumns: ["id"]
           },
         ]
@@ -1027,6 +1153,7 @@ export type Database = {
           p_outcomes: Json
           p_rake_bps?: number
           p_session_id: string
+          p_takeout?: number
         }
         Returns: Json
       }
@@ -1059,6 +1186,29 @@ export type Database = {
         Args: { p_session_id: string }
         Returns: undefined
       }
+      get_market_history: {
+        Args: { p_market_id: string; p_window?: string }
+        Returns: Json
+      }
+      get_market_summary: { Args: { p_market_id: string }; Returns: Json }
+      log_quote_telemetry: {
+        Args: {
+          p_baseline: number
+          p_effective: number
+          p_market_id: string
+          p_outcome_id: string
+          p_price_impact: number
+          p_sample_rate?: number
+          p_stake: number
+        }
+        Returns: Json
+      }
+      quote_market_outcome: {
+        Args: { p_market_id: string; p_outcome_id: string; p_stake: number }
+        Returns: Json
+      }
+      refresh_pool_snapshots_1m: { Args: Record<PropertyKey, never>; Returns: undefined }
+      snapshot_market_pools: { Args: { p_market_id?: string }; Returns: Json }
       finish_race_rpc: { Args: { p_session_id: string }; Returns: undefined }
       invalidate_last_lap_atomic: {
         Args: { p_driver_id: string; p_mode?: string; p_session_id: string }

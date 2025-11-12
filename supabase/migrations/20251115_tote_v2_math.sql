@@ -1,330 +1,37 @@
--- Diamond Sports Book wallet and markets schema
-create table if not exists public.events (
-  id uuid primary key default gen_random_uuid(),
-  title text not null,
-  venue text,
-  starts_at timestamptz,
-  ends_at timestamptz,
-  status text not null default 'upcoming',
-  session_id uuid references public.sessions(id) on delete set null
-);
+-- Tote V2 math, historical pool snapshots, and quote telemetry
 
-create table if not exists public.markets (
-  id uuid primary key default gen_random_uuid(),
-  event_id uuid not null references public.events(id) on delete cascade,
-  name text not null,
-  type text not null,
-  rake_bps int not null default 500,
-  takeout numeric(5,4) not null default 0.10,
-  status text not null default 'open',
-  closes_at timestamptz,
-  created_at timestamptz not null default now()
-);
+-- 1. Ensure markets.takeout exists and is populated
+alter table public.markets
+  add column if not exists takeout numeric(5,4);
 
-create table if not exists public.outcomes (
-  id uuid primary key default gen_random_uuid(),
-  market_id uuid not null references public.markets(id) on delete cascade,
-  label text not null,
-  sort_order int not null default 0,
-  color text,
-  driver_id uuid references public.drivers(id) on delete set null
-);
-
-create table if not exists public.wallet_accounts (
-  user_id uuid primary key references auth.users(id) on delete cascade,
-  balance bigint not null default 0
-);
-
-create table if not exists public.wallet_transactions (
-  id uuid primary key default gen_random_uuid(),
-  user_id uuid not null references auth.users(id) on delete cascade,
-  kind text not null,
-  amount bigint not null,
-  direction text not null default 'debit',
-  meta jsonb,
-  created_at timestamptz not null default now(),
-  constraint wallet_transactions_direction_check
-    check (direction in ('debit', 'credit')),
-  constraint wallet_transactions_amount_direction_check
-    check (
-      (direction = 'debit' and amount <= 0)
-      or (direction = 'credit' and amount >= 0)
-    )
-);
-
-create or replace function public.wallet_transactions_enforce_direction()
-returns trigger
-language plpgsql
-security definer
-set search_path = public
-as $$
-begin
-  if new.direction not in ('debit', 'credit') then
-    raise exception 'Invalid transaction direction: %', new.direction;
-  end if;
-
-  if new.direction = 'debit' and new.amount > 0 then
-    raise exception 'Debit transactions must have a non-positive amount';
-  end if;
-
-  if new.direction = 'credit' and new.amount < 0 then
-    raise exception 'Credit transactions must have a non-negative amount';
-  end if;
-
-  return new;
+update public.markets
+set takeout = case
+  when takeout is not null then takeout
+  when rake_bps is not null then greatest(0, least(0.25, rake_bps / 10000.0))
+  else 0.10
 end;
-$$;
-
-create trigger wallet_transactions_enforce_direction
-  before insert or update on public.wallet_transactions
-  for each row
-  execute function public.wallet_transactions_enforce_direction();
-
-create table if not exists public.wagers (
-  id uuid primary key default gen_random_uuid(),
-  user_id uuid not null references auth.users(id) on delete cascade,
-  market_id uuid not null references public.markets(id) on delete cascade,
-  outcome_id uuid not null references public.outcomes(id) on delete cascade,
-  stake bigint not null check (stake > 0),
-  placed_at timestamptz not null default now(),
-  status text not null default 'pending'
-);
-
-create table if not exists public.withdrawals (
-  id uuid primary key default gen_random_uuid(),
-  user_id uuid not null references auth.users(id) on delete cascade,
-  amount bigint not null check (amount > 0),
-  status text not null default 'queued',
-  created_at timestamptz not null default now()
-);
-
-create table if not exists public.deposits (
-  id uuid primary key default gen_random_uuid(),
-  user_id uuid not null references auth.users(id) on delete cascade,
-  amount bigint not null check (amount > 0),
-  ic_phone_number text,
-  reference_code text,
-  status text not null default 'queued',
-  created_at timestamptz not null default now()
-);
 
 alter table public.markets
-  add constraint markets_takeout_check check (takeout >= 0 and takeout <= 0.25);
+  alter column takeout set default 0.10;
 
-create index if not exists markets_event_id_idx on public.markets (event_id);
-create index if not exists outcomes_market_id_idx on public.outcomes (market_id);
-create index if not exists events_session_id_idx on public.events (session_id);
-create index if not exists outcomes_driver_id_idx on public.outcomes (driver_id);
-create index if not exists wagers_user_id_idx on public.wagers (user_id);
-create index if not exists wagers_market_id_idx on public.wagers (market_id);
-create index if not exists wallet_transactions_user_id_idx on public.wallet_transactions (user_id);
-create index if not exists deposits_user_id_idx on public.deposits (user_id);
+alter table public.markets
+  alter column takeout set not null;
 
--- Ensure realtime publications include tables
-DO
-BEGIN
-  ALTER PUBLICATION supabase_realtime ADD TABLE public.events;
-EXCEPTION
-  WHEN duplicate_object THEN NULL;
-END
-;
-
-DO
-BEGIN
-  ALTER PUBLICATION supabase_realtime ADD TABLE public.markets;
-EXCEPTION
-  WHEN duplicate_object THEN NULL;
-END
-;
-
-DO
-BEGIN
-  ALTER PUBLICATION supabase_realtime ADD TABLE public.outcomes;
-EXCEPTION
-  WHEN duplicate_object THEN NULL;
-END
-;
-
-DO
-BEGIN
-  ALTER PUBLICATION supabase_realtime ADD TABLE public.wallet_accounts;
-EXCEPTION
-  WHEN duplicate_object THEN NULL;
-END
-;
-
-DO
-BEGIN
-  ALTER PUBLICATION supabase_realtime ADD TABLE public.wagers;
-EXCEPTION
-  WHEN duplicate_object THEN NULL;
-END
-;
-
-DO
-BEGIN
-  ALTER PUBLICATION supabase_realtime ADD TABLE public.wallet_transactions;
-EXCEPTION
-  WHEN duplicate_object THEN NULL;
-END
-;
-
-DO
-BEGIN
-  ALTER PUBLICATION supabase_realtime ADD TABLE public.withdrawals;
-EXCEPTION
-  WHEN duplicate_object THEN NULL;
-END
-;
-
-DO
-BEGIN
-  ALTER PUBLICATION supabase_realtime ADD TABLE public.deposits;
-EXCEPTION
-  WHEN duplicate_object THEN NULL;
-END
-;
-
--- Admin market creation helper
-create or replace function public.admin_create_market(
-  p_session_id uuid,
-  p_market_name text,
-  p_rake_bps int default 500,
-  p_closes_at timestamptz default null,
-  p_outcomes jsonb,
-  p_market_type text default 'parimutuel',
-  p_takeout numeric default null
-) returns jsonb
-language plpgsql
-security definer
-set search_path = public, pg_temp
-as $$
-declare
-  v_session_name text;
-  v_event_id uuid;
-  v_market_id uuid;
-  v_created_outcomes jsonb := '[]'::jsonb;
-  v_market record;
-  v_now timestamptz := now();
-  v_outcome record;
-  v_color text;
-  v_driver uuid;
-  v_label text;
-  v_sort_order int;
-  v_driver_session_id uuid;
-  v_takeout numeric(5,4);
-BEGIN
-  if not is_admin() then
-    raise exception 'Only admins may create markets.' using errcode = '42501';
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_constraint
+    where conrelid = 'public.markets'::regclass
+      and conname = 'markets_takeout_check'
+  ) then
+    alter table public.markets
+      add constraint markets_takeout_check check (takeout >= 0 and takeout <= 0.25);
   end if;
-
-  if p_session_id is null then
-    raise exception 'A session is required to create a market.';
-  end if;
-
-  if coalesce(trim(p_market_name), '') = '' then
-    raise exception 'Market name is required.';
-  end if;
-
-  if p_rake_bps is null then
-    p_rake_bps := 500;
-  end if;
-
-  if p_rake_bps < 0 or p_rake_bps > 2000 then
-    raise exception 'Rake must be between 0 and 2000 basis points.';
-  end if;
-
-  if p_closes_at is not null and p_closes_at <= v_now then
-    raise exception 'Close time must be in the future.';
-  end if;
-
-  if p_outcomes is null or jsonb_typeof(p_outcomes) <> 'array' or jsonb_array_length(p_outcomes) = 0 then
-    raise exception 'At least one outcome is required.';
-  end if;
-
-  select name into v_session_name from public.sessions where id = p_session_id;
-  if v_session_name is null then
-    raise exception 'Session not found.';
-  end if;
-
-  select id into v_event_id
-  from public.events
-  where session_id = p_session_id
-  limit 1;
-
-  if v_event_id is null then
-    insert into public.events (title, status, session_id)
-    values (v_session_name, 'upcoming', p_session_id)
-    returning id into v_event_id;
-  end if;
-
-  v_takeout := coalesce(p_takeout, greatest(0, least(0.25, p_rake_bps / 10000.0)));
-
-  insert into public.markets (event_id, name, type, rake_bps, status, closes_at, takeout)
-  values (v_event_id, p_market_name, coalesce(nullif(trim(p_market_type), ''), 'parimutuel'), p_rake_bps, 'open', p_closes_at, v_takeout)
-  returning * into v_market;
-
-  for v_outcome in
-    select value, ordinality as idx
-    from jsonb_array_elements(p_outcomes) with ordinality
-  loop
-    v_label := coalesce(trim(v_outcome.value->>'label'), '');
-    if v_label = '' then
-      raise exception 'Each outcome must include a label.';
-    end if;
-
-    v_color := nullif(trim(v_outcome.value->>'color'), '');
-    if v_color is not null and length(v_color) > 64 then
-      raise exception 'Outcome color values must be 64 characters or less.';
-    end if;
-
-    v_driver := null;
-    if v_outcome.value ? 'driver_id' then
-      begin
-        v_driver := (v_outcome.value->>'driver_id')::uuid;
-      exception when others then
-        raise exception 'Outcome driver_id must be a valid UUID.';
-      end;
-      if v_driver is not null then
-        select session_id into v_driver_session_id from public.drivers where id = v_driver;
-        if v_driver_session_id is null or v_driver_session_id <> p_session_id then
-          raise exception 'Driver % does not belong to the selected session.', v_driver;
-        end if;
-      end if;
-    end if;
-
-    v_sort_order := coalesce((v_outcome.value->>'sort_order')::int, v_outcome.idx::int - 1);
-
-    insert into public.outcomes (market_id, label, sort_order, color, driver_id)
-    values (v_market.id, v_label, greatest(0, v_sort_order), v_color, v_driver)
-    returning id, label, sort_order, color, driver_id into v_outcome;
-
-    v_created_outcomes := coalesce(v_created_outcomes, '[]'::jsonb) || jsonb_build_array(
-      jsonb_build_object(
-        'id', v_outcome.id,
-        'label', v_outcome.label,
-        'sort_order', v_outcome.sort_order,
-        'color', v_outcome.color,
-        'driver_id', v_outcome.driver_id
-      )
-    );
-  end loop;
-
-  perform public.log_admin_action('create_market', v_market.id, jsonb_build_object('session_id', p_session_id));
-
-  return jsonb_build_object(
-    'success', true,
-    'market_id', v_market.id,
-    'event_id', v_market.event_id,
-    'market', row_to_json(v_market),
-    'outcomes', v_created_outcomes
-  );
-END;
+end
 $$;
 
-grant execute on function public.admin_create_market(uuid, text, int, timestamptz, jsonb, text, numeric) to authenticated;
-
--- Tote v2 historical snapshots and quote telemetry
+-- 2. Pool snapshots table + indexes
 create table if not exists public.pool_snapshots (
   id uuid primary key default gen_random_uuid(),
   market_id uuid not null references public.markets(id) on delete cascade,
@@ -341,6 +48,7 @@ create index if not exists pool_snapshots_market_outcome_created_idx
 create index if not exists pool_snapshots_market_created_idx
   on public.pool_snapshots (market_id, created_at desc);
 
+-- 3. Minute-bucket materialised view for historical trends
 create materialized view if not exists public.pool_snapshots_1m as
 select
   market_id,
@@ -356,6 +64,7 @@ group by market_id, outcome_id, date_trunc('minute', created_at);
 create unique index if not exists pool_snapshots_1m_unique
   on public.pool_snapshots_1m (market_id, outcome_id, minute_bucket);
 
+-- 4. Views exposing live pool state
 create or replace view public.market_pools as
 select
   m.id as market_id,
@@ -379,6 +88,7 @@ left join public.wagers w on w.outcome_id = o.id
 where o.market_id is not null
 group by o.id, o.market_id;
 
+-- 5. Materialised view refresh helper
 create or replace function public.refresh_pool_snapshots_1m()
 returns void
 language plpgsql
@@ -390,6 +100,24 @@ begin
 end;
 $$;
 
+grant execute on function public.refresh_pool_snapshots_1m() to authenticated;
+
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_cron.cron_job
+    where jobname = 'refresh_pool_snapshots_1m'
+  ) then
+    perform pg_cron.schedule('refresh_pool_snapshots_1m', '*/5 * * * *', $$select public.refresh_pool_snapshots_1m();$$);
+  end if;
+exception when undefined_table then
+  -- pg_cron not installed; noop
+  null;
+end
+$$;
+
+-- 6. Snapshot RPC to persist live pools
 create or replace function public.snapshot_market_pools(p_market_id uuid default null)
 returns jsonb
 language plpgsql
@@ -440,6 +168,9 @@ begin
 end;
 $$;
 
+grant execute on function public.snapshot_market_pools(uuid) to authenticated;
+
+-- 7. Market summary RPC (single source of truth for pools)
 create or replace function public.get_market_summary(p_market_id uuid)
 returns jsonb
 language plpgsql
@@ -493,6 +224,9 @@ begin
 end;
 $$;
 
+grant execute on function public.get_market_summary(uuid) to authenticated;
+
+-- 8. Historical trend RPC
 create or replace function public.get_market_history(p_market_id uuid, p_window text default '1m')
 returns jsonb
 language plpgsql
@@ -676,6 +410,9 @@ begin
 end;
 $$;
 
+grant execute on function public.get_market_history(uuid, text) to authenticated;
+
+-- 9. Quote RPC to match frontend math
 create or replace function public.quote_market_outcome(
   p_market_id uuid,
   p_outcome_id uuid,
@@ -765,6 +502,9 @@ begin
 end;
 $$;
 
+grant execute on function public.quote_market_outcome(uuid, uuid, numeric) to authenticated;
+
+-- 10. Quote telemetry table + logger
 create table if not exists public.quote_telemetry (
   id uuid primary key default gen_random_uuid(),
   market_id uuid not null references public.markets(id) on delete cascade,
@@ -823,6 +563,156 @@ begin
 end;
 $$;
 
+grant execute on function public.log_quote_telemetry(uuid, uuid, numeric, numeric, numeric, numeric, numeric) to authenticated;
+
+-- 11. Update admin_create_market to populate takeout
+create or replace function public.admin_create_market(
+  p_session_id uuid,
+  p_market_name text,
+  p_rake_bps int default 500,
+  p_closes_at timestamptz default null,
+  p_outcomes jsonb,
+  p_market_type text default 'parimutuel',
+  p_takeout numeric default null
+) returns jsonb
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  v_session_name text;
+  v_event_id uuid;
+  v_market_id uuid;
+  v_created_outcomes jsonb := '[]'::jsonb;
+  v_market record;
+  v_now timestamptz := now();
+  v_outcome record;
+  v_color text;
+  v_driver uuid;
+  v_label text;
+  v_sort_order int;
+  v_driver_session_id uuid;
+  v_takeout numeric(5,4);
+begin
+  if not is_admin() then
+    raise exception 'Only admins may create markets.' using errcode = '42501';
+  end if;
+
+  if p_session_id is null then
+    raise exception 'A session is required to create a market.';
+  end if;
+
+  if coalesce(trim(p_market_name), '') = '' then
+    raise exception 'Market name is required.';
+  end if;
+
+  if p_rake_bps is null then
+    p_rake_bps := 500;
+  end if;
+
+  if p_rake_bps < 0 or p_rake_bps > 2000 then
+    raise exception 'Rake must be between 0 and 2000 basis points.';
+  end if;
+
+  if p_closes_at is not null and p_closes_at <= v_now then
+    raise exception 'Close time must be in the future.';
+  end if;
+
+  if p_outcomes is null or jsonb_typeof(p_outcomes) <> 'array' or jsonb_array_length(p_outcomes) = 0 then
+    raise exception 'At least one outcome is required.';
+  end if;
+
+  select name into v_session_name from public.sessions where id = p_session_id;
+  if v_session_name is null then
+    raise exception 'Session not found.';
+  end if;
+
+  select id into v_event_id
+  from public.events
+  where session_id = p_session_id
+  limit 1;
+
+  if v_event_id is null then
+    insert into public.events (title, status, session_id)
+    values (v_session_name, 'upcoming', p_session_id)
+    returning id into v_event_id;
+  end if;
+
+  v_takeout := coalesce(p_takeout, greatest(0, least(0.25, p_rake_bps / 10000.0)));
+
+  insert into public.markets (event_id, name, type, rake_bps, status, closes_at, takeout)
+  values (
+    v_event_id,
+    p_market_name,
+    coalesce(nullif(trim(p_market_type), ''), 'parimutuel'),
+    p_rake_bps,
+    'open',
+    p_closes_at,
+    v_takeout
+  )
+  returning * into v_market;
+
+  for v_outcome in
+    select value, ordinality as idx
+    from jsonb_array_elements(p_outcomes) with ordinality
+  loop
+    v_label := coalesce(trim(v_outcome.value->>'label'), '');
+    if v_label = '' then
+      raise exception 'Each outcome must include a label.';
+    end if;
+
+    v_color := nullif(trim(v_outcome.value->>'color'), '');
+    if v_color is not null and length(v_color) > 64 then
+      raise exception 'Outcome color values must be 64 characters or less.';
+    end if;
+
+    v_driver := null;
+    if v_outcome.value ? 'driver_id' then
+      begin
+        v_driver := (v_outcome.value->>'driver_id')::uuid;
+      exception when others then
+        raise exception 'Outcome driver_id must be a valid UUID.';
+      end;
+      if v_driver is not null then
+        select session_id into v_driver_session_id from public.drivers where id = v_driver;
+        if v_driver_session_id is null or v_driver_session_id <> p_session_id then
+          raise exception 'Driver % does not belong to the selected session.', v_driver;
+        end if;
+      end if;
+    end if;
+
+    v_sort_order := coalesce((v_outcome.value->>'sort_order')::int, v_outcome.idx::int - 1);
+
+    insert into public.outcomes (market_id, label, sort_order, color, driver_id)
+    values (v_market.id, v_label, greatest(0, v_sort_order), v_color, v_driver)
+    returning id, label, sort_order, color, driver_id into v_outcome;
+
+    v_created_outcomes := coalesce(v_created_outcomes, '[]'::jsonb) || jsonb_build_array(
+      jsonb_build_object(
+        'id', v_outcome.id,
+        'label', v_outcome.label,
+        'sort_order', v_outcome.sort_order,
+        'color', v_outcome.color,
+        'driver_id', v_outcome.driver_id
+      )
+    );
+  end loop;
+
+  perform public.log_admin_action('create_market', v_market.id, jsonb_build_object('session_id', p_session_id));
+
+  return jsonb_build_object(
+    'success', true,
+    'market_id', v_market.id,
+    'event_id', v_market.event_id,
+    'market', row_to_json(v_market),
+    'outcomes', v_created_outcomes
+  );
+end;
+$$;
+
+grant execute on function public.admin_create_market(uuid, text, int, timestamptz, jsonb, text, numeric) to authenticated;
+
+-- 12. Update settle_market to reference takeout instead of rake_bps
 create or replace function public.settle_market(
   p_market_id uuid,
   p_winning_outcome_id uuid,
@@ -1005,10 +895,4 @@ begin
 end;
 $$;
 
-grant execute on function public.refresh_pool_snapshots_1m() to authenticated;
-grant execute on function public.snapshot_market_pools(uuid) to authenticated;
-grant execute on function public.get_market_summary(uuid) to authenticated;
-grant execute on function public.get_market_history(uuid, text) to authenticated;
-grant execute on function public.quote_market_outcome(uuid, uuid, numeric) to authenticated;
-grant execute on function public.log_quote_telemetry(uuid, uuid, numeric, numeric, numeric, numeric, numeric) to authenticated;
 grant execute on function public.settle_market(uuid, uuid, text) to authenticated;

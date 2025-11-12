@@ -128,9 +128,11 @@ describe('parimutuel reducer', () => {
     expect(loaded.selectedEventId).toBe('event-1');
     expect(loaded.selectedMarketId).toBe('market-1');
     expect(loaded.pools['market-1'].total).toBe(2000);
-    expect(loaded.poolHistory['market-1'].snapshots).toHaveLength(1);
-    expect(loaded.poolHistory['market-1'].snapshots[0].total).toBe(2000);
-    expect(loaded.poolHistory['market-1'].snapshots[0].outcomes['outcome-1'].total).toBe(1200);
+    expect(loaded.poolHistory['market-1']).toMatchObject({
+      windows: {},
+      isLoading: {},
+      errors: {},
+    });
   });
 
   test('updates pools after successful wager', () => {
@@ -156,10 +158,11 @@ describe('parimutuel reducer', () => {
     expect(outcome.pool_total).toBe(1700);
     expect(state.pools['market-1'].total).toBe(2500);
     expect(state.toast?.type).toBe('success');
-    expect(state.poolHistory['market-1'].snapshots).toHaveLength(2);
-    const latestSnapshot = state.poolHistory['market-1'].snapshots[1];
-    expect(latestSnapshot.total).toBe(2500);
-    expect(latestSnapshot.outcomes['outcome-1'].total).toBe(1700);
+    expect(state.poolHistory['market-1']).toMatchObject({
+      windows: {},
+      isLoading: {},
+      errors: {},
+    });
   });
 });
 

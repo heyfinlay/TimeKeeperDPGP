@@ -9,8 +9,47 @@ const TABS = [
   { id: 'bets', label: 'Your Bets' },
 ];
 
+const WINDOW_OPTIONS = [
+  { id: '1m', label: '1m' },
+  { id: '5m', label: '5m' },
+  { id: 'since_open', label: 'Since Open' },
+];
+
 const SPARKLINE_BARS = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
 const MAX_RECENT_BETS = 8;
+
+const clampNumber = (value, min, max) => {
+  if (!Number.isFinite(value)) {
+    return min;
+  }
+  if (value < min) {
+    return min;
+  }
+  if (value > max) {
+    return max;
+  }
+  return value;
+};
+
+const resolveTakeoutValue = (market, pool, windowData) => {
+  const historyTakeout = Number(windowData?.takeout);
+  if (Number.isFinite(historyTakeout)) {
+    return clampNumber(historyTakeout, 0, 0.25);
+  }
+  const poolTakeout = Number(pool?.takeout);
+  if (Number.isFinite(poolTakeout)) {
+    return clampNumber(poolTakeout, 0, 0.25);
+  }
+  const marketTakeout = Number(market?.takeout);
+  if (Number.isFinite(marketTakeout)) {
+    return clampNumber(marketTakeout, 0, 0.25);
+  }
+  const rakeBps = Number(market?.rake_bps);
+  if (Number.isFinite(rakeBps)) {
+    return clampNumber(rakeBps / 10000, 0, 0.25);
+  }
+  return 0.1;
+};
 
 const findMarket = (events, marketId) => {
   if (!marketId) {
@@ -31,12 +70,20 @@ const findMarket = (events, marketId) => {
 const findOutcome = (market, outcomeId) =>
   market?.outcomes?.find((candidate) => String(candidate.id) === String(outcomeId)) ?? null;
 
-const buildSparkline = (history, outcomeId) => {
-  if (!Array.isArray(history) || history.length === 0) {
+const buildSparkline = (samples) => {
+  if (!Array.isArray(samples) || samples.length === 0) {
     return null;
   }
-  const values = history
-    .map((snapshot) => snapshot?.outcomes?.[outcomeId]?.share)
+  const values = samples
+    .map((point) => {
+      if (point == null) return null;
+      if (typeof point === 'number') return point;
+      if (typeof point === 'object') {
+        const share = point.share ?? point.value ?? null;
+        return typeof share === 'number' ? share : null;
+      }
+      return null;
+    })
     .filter((value) => typeof value === 'number' && !Number.isNaN(value));
   if (values.length <= 1) {
     return null;
@@ -73,19 +120,19 @@ const DeltaChip = ({ delta }) => {
     );
   }
   const isPositive = delta > 0;
-  const percent = formatPercent(Math.abs(delta), { maximumFractionDigits: 1 });
+  const pp = Math.abs(delta * 100).toFixed(1);
   return (
     <span
       className={`trend-ticker ${isPositive ? 'trend-ticker--up' : 'trend-ticker--down'}`}
       role="status"
-      aria-label={`Share ${isPositive ? 'up' : 'down'} ${percent} since open`}
+      aria-label={`Share ${isPositive ? 'up' : 'down'} ${pp} percentage points`}
     >
       {isPositive ? (
         <ArrowUp className="h-3.5 w-3.5" aria-hidden="true" />
       ) : (
         <ArrowDown className="h-3.5 w-3.5" aria-hidden="true" />
       )}
-      <span>{`${isPositive ? '+' : '-'}${percent}`}</span>
+      <span>{`${isPositive ? '+' : '-'}${pp}pp`}</span>
     </span>
   );
 };
@@ -127,12 +174,12 @@ const HandleDeltaTicker = ({ delta }) => {
 
 export default function PoolAnalytics({ marketId = null, className = '', isManagement = false }) {
   const {
-    state: { events, selectedMarketId, pools, placement, poolHistory },
+    state: { events, selectedMarketId, pools, placement, poolHistory, historyWindow, realtime },
+    actions: { loadMarketHistory, setHistoryWindow },
   } = useParimutuelStore();
   const { profile } = useAuth();
 
   const [activeTab, setActiveTab] = useState('overview');
-  const [baselineSnapshot, setBaselineSnapshot] = useState(null);
   const [recentBets, setRecentBets] = useState([]);
 
   const resolvedMarketId = marketId ?? selectedMarketId;
@@ -142,29 +189,16 @@ export default function PoolAnalytics({ marketId = null, className = '', isManag
   );
   const pool = market ? pools?.[market.id] ?? null : null;
   const stats = useMemo(() => driverStats(market, pool), [market, pool]);
-  const history = useMemo(
-    () => (market ? poolHistory?.[market.id]?.snapshots ?? [] : []),
+  const historyState = useMemo(
+    () => (market ? poolHistory?.[market.id] ?? null : null),
     [market?.id, poolHistory],
   );
-  const latestSnapshot = useMemo(
-    () => (history.length > 0 ? history[history.length - 1] : null),
-    [history],
-  );
-
-  useEffect(() => {
-    if (!market?.id) {
-      setBaselineSnapshot(null);
-      return;
-    }
-    setBaselineSnapshot((current) => {
-      if (current?.marketId === market.id) {
-        return current;
-      }
-      const baseline = latestSnapshot ? { ...latestSnapshot, marketId: market.id } : null;
-      return baseline;
-    });
-  }, [market?.id, latestSnapshot]);
-
+  const windowData = historyState?.windows?.[historyWindow] ?? null;
+  const historyLoading = Boolean(historyState?.isLoading?.[historyWindow]);
+  const historyError = historyState?.errors?.[historyWindow] ?? null;
+  const updatedAt = windowData?.updatedAt ?? realtime?.lastUpdate ?? null;
+  const takeoutValue = resolveTakeoutValue(market, pool, windowData);
+  const takeoutDisplay = formatPercent(takeoutValue, { maximumFractionDigits: 1 });
   useEffect(() => {
     if (!market?.id) {
       setRecentBets([]);
@@ -172,6 +206,13 @@ export default function PoolAnalytics({ marketId = null, className = '', isManag
     }
     setRecentBets((entries) => entries.filter((entry) => entry.marketId === market.id));
   }, [market?.id]);
+
+  useEffect(() => {
+    if (!market?.id) {
+      return;
+    }
+    loadMarketHistory({ marketId: market.id, window: historyWindow });
+  }, [market?.id, historyWindow, loadMarketHistory]);
 
   useEffect(() => {
     if (!placement?.lastWager || !market?.id) {
@@ -224,6 +265,54 @@ export default function PoolAnalytics({ marketId = null, className = '', isManag
     [recentBets, stats],
   );
 
+  const runnerCards = useMemo(() => {
+    if (windowData && Array.isArray(windowData.runners)) {
+      return windowData.runners.map((runner) => {
+        const currentShare = Number(runner.current?.share ?? 0);
+        const deltaShare = Number(runner.delta?.share ?? 0);
+        const currentPoolAmount = Number(runner.current?.pool ?? 0);
+        const handleDelta = Number(runner.delta?.handle ?? 0);
+        const oddsCurrent = Number(runner.current?.odds ?? 0);
+        const oddsDelta = Number(runner.delta?.odds ?? 0);
+        const sparkline = buildSparkline(runner.sparkline ?? []);
+        const trend = runner.delta?.trend ?? (deltaShare > 0 ? 'up' : deltaShare < 0 ? 'down' : 'flat');
+        const wagerCount = Number(runner.current?.wagerCount ?? runner.current?.wagers ?? 0);
+        return {
+          outcomeId: runner.runnerId ?? runner.outcomeId ?? runner.id,
+          label: runner.label ?? 'Outcome',
+          currentShare,
+          deltaShare,
+          currentPool: currentPoolAmount,
+          handleDelta,
+          odds: oddsCurrent,
+          oddsDelta,
+          sparkline,
+          trend,
+          wagerCount,
+        };
+      });
+    }
+    return stats.map((entry) => ({
+      outcomeId: entry.outcomeId,
+      label: entry.label,
+      currentShare: entry.share,
+      deltaShare: 0,
+      currentPool: entry.total,
+      handleDelta: 0,
+      odds: entry.odds,
+      oddsDelta: 0,
+      sparkline: null,
+      trend: 'flat',
+      wagerCount: entry.wagerCount ?? 0,
+    }));
+  }, [windowData, stats]);
+
+  const totalPoolDisplay = formatCurrency(
+    windowData?.totalPool ?? pool?.total ?? market?.pool_total ?? 0,
+    { compact: false, maximumFractionDigits: 0 },
+  );
+  const updatedLabel = updatedAt ? formatRelativeTime(updatedAt) : '—';
+
   const containerClasses = `tk-glass-panel interactive-card flex flex-col gap-6 rounded-2xl p-6 ${className}`.trim();
 
   if (!market) {
@@ -246,16 +335,12 @@ export default function PoolAnalytics({ marketId = null, className = '', isManag
         <div className="flex flex-col gap-2">
           <span className="text-xs uppercase tracking-[0.35em] text-accent-blue">Pool analytics</span>
           <div className="flex flex-col gap-2 text-sm text-slate-300 md:flex-row md:items-center md:justify-between">
-            <div className="flex flex-col">
-              <h2 className="text-lg font-semibold text-white">{market.name ?? 'Market'}</h2>
-              <p className="text-xs text-slate-400">
-                {formatCurrency(pool?.total ?? market.pool_total ?? 0, {
-                  compact: false,
-                  maximumFractionDigits: 0,
-                })}{' '}
-                in pool · {totalBets} bets
-              </p>
-            </div>
+          <div className="flex flex-col">
+            <h2 className="text-lg font-semibold text-white">{market.name ?? 'Market'}</h2>
+            <p className="text-xs text-slate-400">
+                {totalPoolDisplay} in pool · {totalBets} bets
+            </p>
+          </div>
             <div className="flex items-center gap-2">
               {TABS.map((tab) => (
                 <button
@@ -274,65 +359,96 @@ export default function PoolAnalytics({ marketId = null, className = '', isManag
             </div>
           </div>
         </div>
-        <div className="flex items-center gap-2 text-xs text-slate-500">
-          <Clock className="h-3.5 w-3.5" />
-          Updated {formatRelativeTime(latestSnapshot?.timestamp)}
+        <div className="flex flex-wrap items-center gap-3 text-xs text-slate-500">
+          <span className="flex items-center gap-2">
+            <Clock className="h-3.5 w-3.5" />
+            Updated {updatedLabel}
+          </span>
+          <span>Takeout {takeoutDisplay}</span>
         </div>
       </header>
 
       {activeTab === 'overview' ? (
-        <div className="flex flex-col gap-3">
-          {stats.length === 0 ? (
+        <div className="flex flex-col gap-4">
+          <div className="flex flex-wrap items-center gap-2">
+            {WINDOW_OPTIONS.map((option) => (
+              <button
+                key={option.id}
+                type="button"
+                onClick={() => setHistoryWindow(option.id)}
+                className={`rounded-full border px-3 py-1 text-xs font-semibold transition-colors duration-200 ${
+                  historyWindow === option.id
+                    ? 'border-accent-emerald bg-accent-emerald/20 text-accent-emerald'
+                    : 'border-accent-emerald/20 bg-shell-800/60 text-slate-300 hover:border-accent-emerald/40 hover:text-white'
+                }`}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+          {historyError ? (
+            <p className="rounded-xl border border-red-500/30 bg-red-900/30 px-4 py-3 text-sm text-red-200">
+              Unable to load pool history: {historyError}
+            </p>
+          ) : null}
+          {historyLoading && runnerCards.length === 0 ? (
+            <p className="rounded-xl border border-accent-emerald/15 bg-shell-800/60 px-4 py-3 text-sm text-slate-400">
+              Loading pool trends…
+            </p>
+          ) : null}
+          {runnerCards.length === 0 && !historyLoading ? (
             <p className="rounded-xl border border-accent-emerald/15 bg-shell-800/60 px-4 py-3 text-sm text-slate-400">
               No outcomes available for this market yet.
             </p>
-          ) : (
-            stats.map((entry) => {
-              const latest = latestSnapshot?.outcomes?.[entry.outcomeId] ?? null;
-              const baseline = baselineSnapshot?.outcomes?.[entry.outcomeId] ?? null;
-              const deltaShare = baseline ? (latest?.share ?? entry.share) - baseline.share : 0;
-              const deltaHandle = baseline
-                ? (latest?.total ?? entry.total ?? 0) - (baseline.total ?? 0)
-                : 0;
-              const sparkline = buildSparkline(history, entry.outcomeId);
-              return (
-                <article
-                  key={entry.outcomeId}
-                  className="rounded-xl border border-accent-emerald/15 bg-shell-800/60 p-4 transition-colors duration-200 ease-out-back focus-within:ring-2 focus-within:ring-accent-emerald/40 focus-within:ring-offset-2 focus-within:ring-offset-shell-900"
-                >
-                  <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-                    <div className="flex flex-col">
-                      <h3 className="text-sm font-semibold text-white">{entry.label}</h3>
-                      <p className="text-xs text-slate-400">Live odds {formatOdds(entry.odds)}</p>
-                    </div>
-                    <DeltaChip delta={deltaShare} />
+          ) : null}
+          {runnerCards.map((card) => {
+            const oddsDeltaLabel = Number.isFinite(card.oddsDelta)
+              ? `${card.oddsDelta >= 0 ? '+' : ''}${Math.abs(card.oddsDelta) >= 1 ? card.oddsDelta.toFixed(1) : card.oddsDelta.toFixed(2)}`
+              : '0.00';
+            const trendTone =
+              card.trend === 'up'
+                ? 'text-accent-emerald'
+                : card.trend === 'down'
+                  ? 'text-red-300'
+                  : 'text-slate-400';
+            return (
+              <article
+                key={card.outcomeId}
+                className="rounded-xl border border-accent-emerald/15 bg-shell-800/60 p-4 transition-all duration-200 ease-out-back"
+              >
+                <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
+                  <div className="flex flex-col">
+                    <h3 className="text-sm font-semibold text-white">{card.label}</h3>
+                    <p className="text-xs text-slate-400">
+                      Share {formatPercent(card.currentShare, { maximumFractionDigits: 1 })} · Handle{' '}
+                      {formatCurrency(card.currentPool, { compact: false, maximumFractionDigits: 0 })}
+                    </p>
                   </div>
-                  <div className="mt-3 grid gap-3 text-sm text-slate-300 md:grid-cols-3">
-                    <div className="flex flex-col">
-                      <span className="text-xs uppercase tracking-wide text-slate-500">Share</span>
-                      <span className="font-semibold text-white">
-                        {formatPercent(entry.share, { maximumFractionDigits: 1 })}
-                      </span>
-                    </div>
-                    <div className="flex flex-col">
-                      <span className="text-xs uppercase tracking-wide text-slate-500">Handle</span>
-                      <span className="font-semibold text-white">
-                        {formatCurrency(entry.total, { compact: false, maximumFractionDigits: 0 })}
-                      </span>
-                      {showAdminMetrics ? <HandleDeltaTicker delta={deltaHandle} /> : null}
-                    </div>
-                    <div className="flex flex-col">
-                      <span className="text-xs uppercase tracking-wide text-slate-500">Trend</span>
-                      <span className="font-mono text-base text-white">{sparkline ?? '—'}</span>
-                      <span className="text-xs text-slate-400">
-                        {entry.wagerCount ?? 0} wagers
-                      </span>
-                    </div>
+                  <DeltaChip delta={card.deltaShare} />
+                </div>
+                <div className="mt-4 grid gap-3 text-sm text-slate-300 md:grid-cols-3">
+                  <div className="flex flex-col gap-1">
+                    <span className="text-xs uppercase tracking-wide text-slate-500">Handle Δ</span>
+                    {showAdminMetrics ? (
+                      <HandleDeltaTicker delta={card.handleDelta} />
+                    ) : (
+                      <span className="text-xs text-slate-500">Hidden</span>
+                    )}
                   </div>
-                </article>
-              );
-            })
-          )}
+                  <div className="flex flex-col gap-1">
+                    <span className="text-xs uppercase tracking-wide text-slate-500">Odds</span>
+                    <span className="font-semibold text-white">{formatOdds(card.odds)}</span>
+                    <span className={`text-xs ${trendTone}`}>Δ x{oddsDeltaLabel}</span>
+                  </div>
+                  <div className="flex flex-col gap-1">
+                    <span className="text-xs uppercase tracking-wide text-slate-500">Trend</span>
+                    <span className="font-mono text-base text-white">{card.sparkline ?? '—'}</span>
+                    <span className="text-xs text-slate-400">{card.wagerCount} wagers</span>
+                  </div>
+                </div>
+              </article>
+            );
+          })}
         </div>
       ) : (
         <div className="flex flex-col gap-3">
