@@ -8,9 +8,17 @@ const FOCUSABLE =
 export default function BetslipDrawer({ open, onClose, marketId, outcomeId, onSuccess }) {
   const drawerRef = useRef(null);
   const lastFocusedRef = useRef(null);
+  const onCloseRef = useRef(onClose);
+  const hasFocusedRef = useRef(false);
+
+  // Keep onClose ref up to date
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  }, [onClose]);
 
   useEffect(() => {
     if (!open || typeof document === 'undefined') {
+      hasFocusedRef.current = false;
       return undefined;
     }
 
@@ -19,6 +27,9 @@ export default function BetslipDrawer({ open, onClose, marketId, outcomeId, onSu
     document.body.style.overflow = 'hidden';
 
     const focusFirst = () => {
+      // Only focus on initial open, not on re-renders
+      if (hasFocusedRef.current) return;
+
       const node = drawerRef.current;
       if (!node) return;
       const focusable = node.querySelectorAll(FOCUSABLE);
@@ -27,13 +38,14 @@ export default function BetslipDrawer({ open, onClose, marketId, outcomeId, onSu
       } else {
         node.focus();
       }
+      hasFocusedRef.current = true;
     };
 
     const handleKeyDown = (event) => {
       if (event.key === 'Escape') {
         event.preventDefault();
-        if (typeof onClose === 'function') {
-          onClose();
+        if (typeof onCloseRef.current === 'function') {
+          onCloseRef.current();
         }
         return;
       }
@@ -81,7 +93,7 @@ export default function BetslipDrawer({ open, onClose, marketId, outcomeId, onSu
         lastFocusedRef.current.focus();
       }
     };
-  }, [open, onClose]);
+  }, [open]);
 
   if (!open || typeof document === 'undefined') {
     return null;

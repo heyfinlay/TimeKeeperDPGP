@@ -1,11 +1,11 @@
-create or replace function session_has_access(session_id uuid)
+create or replace function session_has_access(target_session_id uuid)
 returns boolean
 security definer
 language sql as $$
   select exists (
     select 1
     from public.session_members
-    where session_members.session_id = session_id
+    where session_members.session_id = target_session_id
       and session_members.user_id = auth.uid()
   );
 $$;
@@ -22,6 +22,6 @@ begin
     create policy "Allow access to session entries"
     on public.session_entries
     for select
-    using (session_has_access(session_id));
+    using (public.session_has_access(session_entries.session_id));
   end if;
 end $$;
