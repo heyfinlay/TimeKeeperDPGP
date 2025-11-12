@@ -33,17 +33,17 @@ begin
   )
   returning id into v_session_id;
 
-  -- Insert the creator as owner
+  -- Insert the creator as owner (with explicit enum cast)
   insert into public.session_members (session_id, user_id, role)
-  values (v_session_id, v_creator_id, 'owner')
+  values (v_session_id, v_creator_id, 'owner'::session_member_role)
   on conflict (session_id, user_id)
   do update set role = excluded.role, inserted_at = timezone('utc', now());
 
-  -- Insert other members (marshals)
+  -- Insert other members (marshals) with explicit enum cast
   insert into public.session_members (session_id, user_id, role)
   select v_session_id,
          (member->>'user_id')::uuid,
-         coalesce(nullif(member->>'role', ''), 'marshal')
+         coalesce(nullif(member->>'role', ''), 'marshal')::session_member_role
   from jsonb_array_elements(coalesce(p_session->'members', '[]'::jsonb)) as member
   where nullif(member->>'user_id', '') is not null
   on conflict (session_id, user_id)
