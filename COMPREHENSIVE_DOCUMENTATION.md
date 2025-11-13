@@ -795,7 +795,7 @@ Return true if:
 
 #### `profile.js`
 **Exports**:
-- `resolveProfileRole(profile, { claims })`: Determine user role (checks JWT claims)
+- `ensureProfileForCurrentUser(profile, { supabase })`: SECURITY DEFINER RPC wrapper that seeds a row for the signed-in user if missing
 - `saveProfile(patch, { supabase, userId })`: Update profile in DB
 
 ### 6.3 Utility Functions (`src/utils/`)

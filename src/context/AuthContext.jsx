@@ -27,26 +27,17 @@ const DEFAULT_PROFILE = {
   team_id: null,
 };
 
-const collectRoleClaims = (user) => {
-  if (!user) return [];
-  const claims = [];
-  const appMeta = user.app_metadata ?? {};
-  const userMeta = user.user_metadata ?? {};
+const normaliseRole = (role) => {
+  if (typeof role !== 'string') {
+    return null;
+  }
+  const trimmed = role.trim().toLowerCase();
+  return trimmed.length > 0 ? trimmed : null;
+};
 
-  if (Array.isArray(appMeta.roles)) {
-    claims.push(...appMeta.roles);
-  }
-  if (typeof appMeta.role === 'string') {
-    claims.push(appMeta.role);
-  }
-  if (Array.isArray(userMeta.roles)) {
-    claims.push(...userMeta.roles);
-  }
-  if (typeof userMeta.role === 'string') {
-    claims.push(userMeta.role);
-  }
-
-  return claims;
+const applyProfileDefaults = (profile = {}) => {
+  const resolvedRole = normaliseRole(profile.role) ?? DEFAULT_PROFILE.role;
+  return { ...DEFAULT_PROFILE, ...profile, role: resolvedRole };
 };
 
 const isNoRowError = (error) => error?.code === 'PGRST116';
@@ -66,7 +57,6 @@ export const AuthProvider = ({ children }) => {
     if (fetchingProfileRef.current) return;
     fetchingProfileRef.current = true;
     try {
-      const roleClaims = collectRoleClaims(nextUser);
       const { data, error } = await supabase
         .from('profiles')
         .select('*')
@@ -91,8 +81,7 @@ export const AuthProvider = ({ children }) => {
         const role = resolveProfileRole(baseProfile, { claims: roleClaims });
         setProfile({ ...DEFAULT_PROFILE, ...baseProfile, role });
       } else {
-        const role = resolveProfileRole(data, { claims: roleClaims });
-        setProfile({ ...DEFAULT_PROFILE, ...data, role });
+        setProfile(applyProfileDefaults(data));
       }
       setProfileError(null);
     } catch (error) {
@@ -178,9 +167,7 @@ export const AuthProvider = ({ children }) => {
       try {
         const updated = await saveProfile(patch, { supabase, userId: user?.id });
         if (updated) {
-          const roleClaims = collectRoleClaims(user);
-          const role = resolveProfileRole(updated, { claims: roleClaims });
-          setProfile({ ...DEFAULT_PROFILE, ...updated, role });
+          setProfile(applyProfileDefaults(updated));
           setProfileError(null);
         }
         return updated;

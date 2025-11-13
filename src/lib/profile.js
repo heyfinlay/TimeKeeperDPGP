@@ -4,7 +4,6 @@ export const PROFILE_COLUMN_SELECTION =
   'id, role, handle, display_name, ic_phone_number, assigned_driver_ids, team_id, tier, experience_points';
 
 const DEFAULT_ROLE = 'marshal';
-const ADMIN_ROLE = 'admin';
 
 const normaliseString = (value) => {
   if (typeof value !== 'string') {
@@ -27,28 +26,6 @@ const normaliseArray = (value) => {
     return null;
   }
   return Array.isArray(value) ? value : null;
-};
-
-export const resolveProfileRole = (profile = {}, { claims = [], defaultRole = DEFAULT_ROLE } = {}) => {
-  const normalisedClaims = Array.isArray(claims)
-    ? claims.map(normaliseRole).filter((role) => typeof role === 'string' && role.length > 0)
-    : [];
-
-  if (normalisedClaims.includes(ADMIN_ROLE)) {
-    return ADMIN_ROLE;
-  }
-
-  const storedRole = normaliseRole(profile.role);
-  if (storedRole === ADMIN_ROLE) {
-    return ADMIN_ROLE;
-  }
-
-  if (storedRole) {
-    return storedRole;
-  }
-
-  const firstClaim = normalisedClaims.find((role) => role);
-  return firstClaim ?? defaultRole;
 };
 
 export const buildProfilePayload = (patch = {}) => {
