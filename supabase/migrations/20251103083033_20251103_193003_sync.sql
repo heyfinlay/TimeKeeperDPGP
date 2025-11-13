@@ -377,19 +377,19 @@ BEGIN
      LANGUAGE plpgsql
      STABLE
      SECURITY DEFINER
-     SET search_path TO 'public'
+     SET search_path TO 'public', 'pg_temp'
     AS $function$
     declare
-      jwt_role text := coalesce(auth.jwt()->>'role', '');
+      v_user_id uuid := auth.uid();
     begin
-      if jwt_role = 'admin' then
-        return true;
+      if v_user_id is null then
+        return false;
       end if;
 
       return exists (
         select 1
         from public.profiles p
-        where p.id = auth.uid()
+        where p.id = v_user_id
           and p.role = 'admin'
       );
     end;

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { isSupabaseConfigured, supabase } from '../../lib/supabaseClient.js';
-import { PROFILE_COLUMN_SELECTION } from '../../lib/profile.js';
+import { PROFILE_COLUMN_SELECTION, ensureProfileForCurrentUser } from '../../lib/profile.js';
 import { useAuth } from '../../context/AuthContext.jsx';
 
 const AuthCallback = () => {
@@ -164,22 +164,17 @@ const AuthCallback = () => {
               sessionUser.user_metadata?.name ||
               sessionUser.email ||
               'Marshal';
+            const ensuredProfile = await ensureProfileForCurrentUser(
+              { displayName: fallbackDisplayName, role: 'marshal' },
+              { supabase },
+            );
 
-            const { data: createdProfile, error: createError } = await supabase
-              .from('profiles')
-              .insert({
+            profileRow =
+              ensuredProfile ?? {
                 id: sessionUser.id,
                 role: 'marshal',
                 display_name: fallbackDisplayName,
-              })
-              .select(PROFILE_COLUMN_SELECTION)
-              .single();
-
-            if (createError) {
-              throw createError;
-            }
-
-            profileRow = createdProfile ?? null;
+              };
           } else {
             profileRow = profileData;
           }
