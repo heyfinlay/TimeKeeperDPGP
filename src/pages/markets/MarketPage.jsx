@@ -169,10 +169,10 @@ export default function MarketPage() {
         </div>
         <div className="flex flex-wrap items-center gap-4 text-xs text-slate-400">
           <span>
-            Handle <span className="font-semibold text-white">{handle}</span>
+            Diamonds staked <span className="font-semibold text-white">{handle}</span>
           </span>
           <span>
-            Net <span className="font-semibold text-white">{netHandle}</span> after takeout ({takeoutDisplay})
+            Net pool <span className="font-semibold text-white">{netHandle}</span> after takeout ({takeoutDisplay})
           </span>
           <span className="flex items-center gap-2">
             <Clock className="h-3.5 w-3.5" /> {countdown.label}

@@ -1,8 +1,14 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ArrowDown, ArrowUp, Clock, Minus } from 'lucide-react';
 import { useParimutuelStore, driverStats } from '@/state/parimutuelStore.js';
 import { useAuth } from '@/context/AuthContext.jsx';
 import { formatCurrency, formatPercent, formatOdds, formatRelativeTime } from '@/utils/betting.js';
+import {
+  isSupabaseConfigured,
+  supabaseSelect,
+  subscribeToTable,
+  isTableMissingError,
+} from '@/lib/supabaseClient.js';
 
 const TABS = [
   { id: 'overview', label: 'Pool Overview' },
@@ -17,6 +23,13 @@ const WINDOW_OPTIONS = [
 
 const SPARKLINE_BARS = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
 const MAX_RECENT_BETS = 8;
+const REMOTE_BET_LIMIT = MAX_RECENT_BETS * 2;
+
+const FLOW_WINDOW_META = {
+  '1m': { column: '1m', aria: 'the last minute' },
+  '5m': { column: 'last 5m', aria: 'the last five minutes' },
+  since_open: { column: 'since open', aria: 'since the market opened' },
+};
 
 const clampNumber = (value, min, max) => {
   if (!Number.isFinite(value)) {
@@ -107,6 +120,9 @@ const buildSparkline = (samples) => {
     .join('');
 };
 
+const formatDiamondAmount = (value, options = {}) =>
+  formatCurrency(value, options).replace(/💎[\s\u00A0]?/, '💎');
+
 const DeltaChip = ({ delta }) => {
   if (!Number.isFinite(delta) || Math.abs(delta) < 0.0005) {
     return (
@@ -137,30 +153,31 @@ const DeltaChip = ({ delta }) => {
   );
 };
 
-const HandleDeltaTicker = ({ delta }) => {
+const FlowTicker = ({ delta, windowLabel = 'the selected window' }) => {
   if (!Number.isFinite(delta) || Math.abs(delta) < 0.5) {
     return (
       <span
-        className="trend-ticker trend-ticker--flat mt-1 w-8 justify-center"
+        className="trend-ticker trend-ticker--flat mt-1 w-max whitespace-nowrap"
         role="status"
-        aria-label="Handle unchanged since open"
+        aria-label={`Diamonds flow unchanged during ${windowLabel}`}
       >
         <Minus className="h-3.5 w-3.5" aria-hidden="true" />
+        <span className="ml-1">–</span>
       </span>
     );
   }
 
   const isPositive = delta > 0;
-  const amount = formatCurrency(Math.abs(delta), {
-    compact: false,
-    maximumFractionDigits: 0,
+  const amount = formatDiamondAmount(Math.abs(delta), {
+    compact: true,
+    maximumFractionDigits: 1,
   });
 
   return (
     <span
-      className={`trend-ticker ${isPositive ? 'trend-ticker--up' : 'trend-ticker--down'} mt-1 w-max`}
+      className={`trend-ticker ${isPositive ? 'trend-ticker--up' : 'trend-ticker--down'} mt-1 w-max whitespace-nowrap`}
       role="status"
-      aria-label={`Handle ${isPositive ? 'up' : 'down'} ${amount} since open`}
+      aria-label={`Diamonds flow ${isPositive ? 'up' : 'down'} ${amount} during ${windowLabel}`}
     >
       {isPositive ? (
         <ArrowUp className="h-3.5 w-3.5" aria-hidden="true" />
@@ -172,15 +189,43 @@ const HandleDeltaTicker = ({ delta }) => {
   );
 };
 
+const resolveOutcomeLabel = (market, outcomeId, fallback = 'Outcome') => {
+  if (!market?.outcomes) {
+    return fallback;
+  }
+  const match = market.outcomes.find((candidate) => String(candidate.id) === String(outcomeId));
+  return match?.label ?? fallback;
+};
+
+const normaliseWagerRow = (row, { market } = {}) => {
+  if (!row) {
+    return null;
+  }
+  const outcomeId = row.outcome_id ?? row.outcomeId ?? null;
+  const timestamp = row.placed_at ?? row.created_at ?? row.timestamp ?? new Date().toISOString();
+  return {
+    id: row.id ?? `local-${outcomeId ?? timestamp}`,
+    marketId: row.market_id ?? row.marketId ?? market?.id ?? null,
+    outcomeId,
+    label: row.outcomes?.label ?? row.label ?? resolveOutcomeLabel(market, outcomeId),
+    stake: Number(row.stake ?? 0),
+    timestamp,
+    status: row.status ?? 'pending',
+  };
+};
+
 export default function PoolAnalytics({ marketId = null, className = '', isManagement = false }) {
   const {
     state: { events, selectedMarketId, pools, placement, poolHistory, historyWindow, realtime },
     actions: { loadMarketHistory, setHistoryWindow },
   } = useParimutuelStore();
-  const { profile } = useAuth();
+  const { profile, user } = useAuth();
 
   const [activeTab, setActiveTab] = useState('overview');
   const [recentBets, setRecentBets] = useState([]);
+  const [isLoadingBets, setIsLoadingBets] = useState(false);
+  const [betsError, setBetsError] = useState(null);
+  const [supportsBetHistory, setSupportsBetHistory] = useState(isSupabaseConfigured);
 
   const resolvedMarketId = marketId ?? selectedMarketId;
   const market = useMemo(
@@ -199,6 +244,10 @@ export default function PoolAnalytics({ marketId = null, className = '', isManag
   const updatedAt = windowData?.updatedAt ?? realtime?.lastUpdate ?? null;
   const takeoutValue = resolveTakeoutValue(market, pool, windowData);
   const takeoutDisplay = formatPercent(takeoutValue, { maximumFractionDigits: 1 });
+  const flowWindowMeta = FLOW_WINDOW_META[historyWindow] ?? {
+    column: historyWindow || 'window',
+    aria: 'the selected window',
+  };
   useEffect(() => {
     if (!market?.id) {
       setRecentBets([]);
@@ -206,6 +255,13 @@ export default function PoolAnalytics({ marketId = null, className = '', isManag
     }
     setRecentBets((entries) => entries.filter((entry) => entry.marketId === market.id));
   }, [market?.id]);
+
+  useEffect(() => {
+    if (!user?.id) {
+      setRecentBets([]);
+      setBetsError(null);
+    }
+  }, [user?.id]);
 
   useEffect(() => {
     if (!market?.id) {
@@ -221,27 +277,102 @@ export default function PoolAnalytics({ marketId = null, className = '', isManag
     if (placement.lastWager.marketId !== market.id) {
       return;
     }
-    const outcome = findOutcome(market, placement.lastWager.outcomeId);
+    const nextEntry = normaliseWagerRow(
+      {
+        id: placement.lastWager.id ?? `local-${placement.lastWager.outcomeId}`,
+        market_id: market.id,
+        outcome_id: placement.lastWager.outcomeId,
+        stake: placement.lastWager.stake,
+        placed_at: new Date().toISOString(),
+        status: placement.lastWager.status ?? 'pending',
+      },
+      { market },
+    );
+    if (!nextEntry) {
+      return;
+    }
     setRecentBets((entries) => {
-      const wagerId = placement.lastWager.id ?? `local-${placement.lastWager.outcomeId}`;
-      const nextEntry = {
-        id: wagerId,
-        marketId: market.id,
-        outcomeId: placement.lastWager.outcomeId,
-        label: outcome?.label ?? 'Outcome',
-        stake: Number(placement.lastWager.stake ?? 0),
-        timestamp: new Date().toISOString(),
-      };
-      const existingIndex = entries.findIndex((entry) => entry.id === wagerId);
-      const filtered = entries.filter((entry) => entry.marketId === market.id);
-      if (existingIndex >= 0) {
-        const next = [...filtered];
-        next[existingIndex] = nextEntry;
-        return next;
-      }
+      const filtered = entries.filter((entry) => entry.id !== nextEntry.id && entry.marketId === market.id);
       return [nextEntry, ...filtered].slice(0, MAX_RECENT_BETS);
     });
-  }, [placement?.lastWager, market?.id, market?.outcomes]);
+  }, [placement?.lastWager, market]);
+
+  const loadUserBets = useCallback(async () => {
+    if (!market?.id || !user?.id) {
+      return;
+    }
+    if (!isSupabaseConfigured) {
+      setSupportsBetHistory(false);
+      return;
+    }
+    if (!supportsBetHistory) {
+      return;
+    }
+    setIsLoadingBets(true);
+    try {
+      const rows = await supabaseSelect('wagers', {
+        select: 'id,stake,placed_at,status,outcome_id,market_id,outcomes(label)',
+        filters: {
+          market_id: `eq.${market.id}`,
+          user_id: `eq.${user.id}`,
+          limit: String(REMOTE_BET_LIMIT),
+        },
+        order: { column: 'placed_at', ascending: false },
+      });
+      const normalized = Array.isArray(rows)
+        ? rows
+            .map((row) => normaliseWagerRow(row, { market }))
+            .filter(Boolean)
+            .slice(0, MAX_RECENT_BETS)
+        : [];
+      setRecentBets(normalized);
+      setBetsError(null);
+      setSupportsBetHistory(true);
+    } catch (error) {
+      if (isTableMissingError(error, 'wagers')) {
+        setSupportsBetHistory(false);
+        setRecentBets([]);
+        setBetsError('Wager history is unavailable in this environment.');
+      } else {
+        console.error('Failed to load user wagers', error);
+        setBetsError(error.message ?? 'Unable to load your wagers.');
+      }
+    } finally {
+      setIsLoadingBets(false);
+    }
+  }, [market?.id, user?.id, supportsBetHistory]);
+
+  useEffect(() => {
+    if (!market?.id || !user?.id || !isSupabaseConfigured) {
+      return;
+    }
+    void loadUserBets();
+  }, [loadUserBets, market?.id, user?.id]);
+
+  useEffect(() => {
+    if (!market?.id || !user?.id || !isSupabaseConfigured || !supportsBetHistory) {
+      return undefined;
+    }
+    const unsubscribe = subscribeToTable(
+      { schema: 'public', table: 'wagers', event: '*', filter: `user_id=eq.${user.id}` },
+      (payload) => {
+        const nextEntry = normaliseWagerRow(payload?.new, { market });
+        if (!nextEntry || nextEntry.marketId !== market.id) {
+          return;
+        }
+        setRecentBets((entries) => {
+          const filtered = entries.filter((entry) => entry.id !== nextEntry.id);
+          return [nextEntry, ...filtered].slice(0, MAX_RECENT_BETS);
+        });
+      },
+      { maxRetries: 3 },
+    );
+    return () => {
+      if (typeof unsubscribe === 'function') {
+        unsubscribe();
+      }
+    };
+  }, [market?.id, user?.id, supportsBetHistory]);
 
   useEffect(() => {
     setActiveTab('overview');
@@ -307,12 +438,29 @@ export default function PoolAnalytics({ marketId = null, className = '', isManag
     }));
   }, [windowData, stats]);
 
+  const mostBackedOutcomeId = useMemo(() => {
+    if (!Array.isArray(runnerCards) || runnerCards.length === 0) {
+      return null;
+    }
+    return runnerCards.reduce((top, card) => {
+      const share = Number(card.currentShare ?? 0);
+      if (!Number.isFinite(share)) {
+        return top;
+      }
+      if (!top || share > top.share) {
+        return { id: card.outcomeId, share };
+      }
+      return top;
+    }, null)?.id;
+  }, [runnerCards]);
+
   const totalPoolDisplay = formatCurrency(
     windowData?.totalPool ?? pool?.total ?? market?.pool_total ?? 0,
     { compact: false, maximumFractionDigits: 0 },
   );
   const updatedLabel = updatedAt ? formatRelativeTime(updatedAt) : '—';
 
+  const flowColumnLabel = `FLOW (${flowWindowMeta.column})`;
   const containerClasses = `tk-glass-panel interactive-card flex flex-col gap-6 rounded-2xl p-6 ${className}`.trim();
 
   if (!market) {
@@ -411,6 +559,14 @@ export default function PoolAnalytics({ marketId = null, className = '', isManag
                 : card.trend === 'down'
                   ? 'text-red-300'
                   : 'text-slate-400';
+            const isMostBacked = mostBackedOutcomeId && card.outcomeId === mostBackedOutcomeId;
+            const averageBet = card.wagerCount > 0 ? card.currentPool / card.wagerCount : null;
+            const averageBetDisplay = Number.isFinite(averageBet)
+              ? formatDiamondAmount(averageBet, { compact: false, maximumFractionDigits: 0 })
+              : null;
+            const betSummary = card.wagerCount
+              ? `${card.wagerCount === 1 ? '1 bet' : `${card.wagerCount} bets`} · avg ${averageBetDisplay ?? '—'}`
+              : 'No bets yet.';
             return (
               <article
                 key={card.outcomeId}
@@ -418,9 +574,16 @@ export default function PoolAnalytics({ marketId = null, className = '', isManag
               >
                 <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
                   <div className="flex flex-col">
-                    <h3 className="text-sm font-semibold text-white">{card.label}</h3>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <h3 className="text-sm font-semibold text-white">{card.label}</h3>
+                      {isMostBacked ? (
+                        <span className="inline-flex items-center rounded-full border border-accent-emerald/30 bg-accent-emerald/10 px-2 py-0.5 text-[0.65rem] font-semibold uppercase tracking-[0.2em] text-accent-emerald">
+                          Most backed
+                        </span>
+                      ) : null}
+                    </div>
                     <p className="text-xs text-slate-400">
-                      Share {formatPercent(card.currentShare, { maximumFractionDigits: 1 })} · Handle{' '}
+                      Share {formatPercent(card.currentShare, { maximumFractionDigits: 1 })} · Diamonds staked{' '}
                       {formatCurrency(card.currentPool, { compact: false, maximumFractionDigits: 0 })}
                     </p>
                   </div>
@@ -428,9 +591,9 @@ export default function PoolAnalytics({ marketId = null, className = '', isManag
                 </div>
                 <div className="mt-4 grid gap-3 text-sm text-slate-300 md:grid-cols-3">
                   <div className="flex flex-col gap-1">
-                    <span className="text-xs uppercase tracking-wide text-slate-500">Handle Δ</span>
+                    <span className="text-xs uppercase tracking-wide text-slate-500">{flowColumnLabel}</span>
                     {showAdminMetrics ? (
-                      <HandleDeltaTicker delta={card.handleDelta} />
+                      <FlowTicker delta={card.handleDelta} windowLabel={flowWindowMeta.aria} />
                     ) : (
                       <span className="text-xs text-slate-500">Hidden</span>
                     )}
@@ -443,7 +606,7 @@ export default function PoolAnalytics({ marketId = null, className = '', isManag
                   <div className="flex flex-col gap-1">
                     <span className="text-xs uppercase tracking-wide text-slate-500">Trend</span>
                     <span className="font-mono text-base text-white">{card.sparkline ?? '—'}</span>
-                    <span className="text-xs text-slate-400">{card.wagerCount} wagers</span>
+                    <span className="text-xs text-slate-400">{betSummary}</span>
                   </div>
                 </div>
               </article>
@@ -452,30 +615,57 @@ export default function PoolAnalytics({ marketId = null, className = '', isManag
         </div>
       ) : (
         <div className="flex flex-col gap-3">
-          {betsForDisplay.length === 0 ? (
+          {!user?.id ? (
+            <p className="rounded-xl border border-dashed border-accent-emerald/15 bg-shell-800/40 px-4 py-3 text-sm text-slate-400">
+              Sign in to see wagers you have placed on this market.
+            </p>
+          ) : (!isSupabaseConfigured || !supportsBetHistory) && betsForDisplay.length === 0 ? (
+            <p className="rounded-xl border border-dashed border-amber-400/25 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
+              Wager history isn&apos;t available in this environment. New bets will still appear while you stay on this page.
+            </p>
+          ) : betsError ? (
+            <p className="rounded-xl border border-red-500/30 bg-red-900/30 px-4 py-3 text-sm text-red-200">
+              Unable to load your wagers: {betsError}
+            </p>
+          ) : isLoadingBets && betsForDisplay.length === 0 ? (
+            <p className="rounded-xl border border-accent-emerald/15 bg-shell-800/60 px-4 py-3 text-sm text-slate-400">
+              Loading your wagers…
+            </p>
+          ) : betsForDisplay.length === 0 ? (
             <p className="rounded-xl border border-dashed border-accent-emerald/15 bg-shell-800/40 px-4 py-3 text-sm text-slate-400">
               You have not placed any wagers on this market yet.
             </p>
           ) : (
-            betsForDisplay.map((bet) => (
-              <article
-                key={bet.id}
-                className="rounded-xl border border-accent-emerald/15 bg-shell-800/60 p-4"
-              >
-                <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-                  <div>
-                    <h3 className="text-sm font-semibold text-white">{bet.label}</h3>
-                    <p className="text-xs text-slate-400">Placed {formatRelativeTime(bet.timestamp)}</p>
+            betsForDisplay.map((bet) => {
+              const statusLabel = (bet.status ?? 'pending').replace(/_/g, ' ');
+              return (
+                <article
+                  key={bet.id}
+                  className="rounded-xl border border-accent-emerald/15 bg-shell-800/60 p-4"
+                >
+                  <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+                    <div>
+                      <h3 className="text-sm font-semibold text-white">{bet.label}</h3>
+                      <p className="text-xs text-slate-400">
+                        {formatRelativeTime(bet.timestamp)} · {statusLabel}
+                      </p>
+                    </div>
+                    <div className="flex flex-wrap items-end justify-between gap-3 text-sm text-white md:justify-end">
+                      <div className="flex flex-col text-left">
+                        <span className="font-semibold text-white">
+                          {formatCurrency(bet.stake, { compact: false, maximumFractionDigits: 0 })}
+                        </span>
+                        <span className="text-xs uppercase tracking-wide text-slate-500">Diamonds staked</span>
+                      </div>
+                      <div className="flex flex-col items-end text-xs text-slate-400">
+                        <span>{formatPercent(bet.share, { maximumFractionDigits: 1 })} share</span>
+                        <span>{formatOdds(bet.odds)}</span>
+                      </div>
+                    </div>
                   </div>
-                  <div className="flex items-center gap-3 text-sm text-white">
-                    <span>{formatCurrency(bet.stake, { compact: false, maximumFractionDigits: 0 })}</span>
-                    <span className="text-xs uppercase tracking-wide text-slate-400">
-                      {formatPercent(bet.share, { maximumFractionDigits: 1 })} share · {formatOdds(bet.odds)}
-                    </span>
-                  </div>
-                </div>
-              </article>
-            ))
+                </article>
+              );
+            })
           )}
         </div>
       )}
