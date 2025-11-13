@@ -867,11 +867,10 @@ export function ParimutuelProvider({ children }) {
         if (error) {
           throw error;
         }
-        const payload = data ?? buildLocalHistoryPayload({
-          market,
-          pool,
-          windowKey: resolvedWindow,
-        });
+        if (!data) {
+          throw new Error('No history data available for this market.');
+        }
+        const payload = data;
         dispatch({
           type: ActionTypes.LOAD_HISTORY_SUCCESS,
           payload: { marketId: targetMarketId, window: resolvedWindow, payload },
