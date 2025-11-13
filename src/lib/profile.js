@@ -86,6 +86,43 @@ export const buildProfilePayload = (patch = {}) => {
   return payload;
 };
 
+export const ensureProfileForCurrentUser = async (profile = {}, options = {}) => {
+  const supabaseClient = options.supabase ?? supabase;
+  if (!supabaseClient) {
+    throw new Error('Supabase client is not configured.');
+  }
+
+  const payload = {};
+
+  const displayNameSource = Object.prototype.hasOwnProperty.call(profile, 'display_name')
+    ? profile.display_name
+    : profile.displayName;
+  const resolvedDisplayName = normaliseString(displayNameSource);
+  if (resolvedDisplayName) {
+    payload.display_name = resolvedDisplayName;
+  }
+
+  const roleSource = (() => {
+    if (Object.prototype.hasOwnProperty.call(profile, 'role_hint')) {
+      return profile.role_hint;
+    }
+    if (Object.prototype.hasOwnProperty.call(profile, 'roleHint')) {
+      return profile.roleHint;
+    }
+    return profile.role;
+  })();
+  const resolvedRoleHint = normaliseRole(roleSource);
+  if (resolvedRoleHint) {
+    payload.role_hint = resolvedRoleHint;
+  }
+
+  const { data, error } = await supabaseClient.rpc('ensure_profile_for_current_user', payload);
+  if (error) {
+    throw error;
+  }
+  return data ?? null;
+};
+
 export const saveProfile = async (patch = {}, options = {}) => {
   const supabaseClient = options.supabase ?? supabase;
   if (!supabaseClient) {
