@@ -18,6 +18,21 @@ const normaliseRole = (value) => {
   return typeof role === 'string' ? role.toLowerCase() : null;
 };
 
+const VALID_ROLES = new Set(['spectator', 'driver', 'marshal', 'admin']);
+
+const resolveRoleFromClaims = (claims = {}) => {
+  if (!claims || typeof claims !== 'object') {
+    return null;
+  }
+  const claimedRole = normaliseRole(
+    claims.role ?? claims.role_hint ?? claims.roleHint ?? claims.profile_role,
+  );
+  if (claimedRole && VALID_ROLES.has(claimedRole) && claimedRole !== 'admin') {
+    return claimedRole;
+  }
+  return null;
+};
+
 const normaliseArray = (value) => {
   if (Array.isArray(value)) {
     return value;
@@ -98,6 +113,20 @@ export const ensureProfileForCurrentUser = async (profile = {}, options = {}) =>
     throw error;
   }
   return data ?? null;
+};
+
+export const resolveProfileRole = (profile = {}, options = {}) => {
+  const profileRole = normaliseRole(profile?.role);
+  if (profileRole && VALID_ROLES.has(profileRole)) {
+    return profileRole;
+  }
+
+  const claimsRole = resolveRoleFromClaims(options.claims);
+  if (claimsRole && VALID_ROLES.has(claimsRole)) {
+    return claimsRole;
+  }
+
+  return DEFAULT_ROLE;
 };
 
 export const saveProfile = async (patch = {}, options = {}) => {
