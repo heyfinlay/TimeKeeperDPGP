@@ -71,14 +71,14 @@ export const AuthProvider = ({ children }) => {
           nextUser.user_metadata?.name ||
           nextUser.email ||
           'Marshal';
-        const roleToInsert = resolveProfileRole({ role: 'marshal' }, { claims: roleClaims });
+        const roleToInsert = resolveProfileRole({ role: 'marshal' });
         const ensuredProfile = await ensureProfileForCurrentUser(
           { displayName, role: roleToInsert },
           { supabase },
         );
         const fallbackProfile = { ...DEFAULT_PROFILE, id: nextUser.id, display_name: displayName };
         const baseProfile = ensuredProfile ?? fallbackProfile;
-        const role = resolveProfileRole(baseProfile, { claims: roleClaims });
+        const role = resolveProfileRole(baseProfile);
         setProfile({ ...DEFAULT_PROFILE, ...baseProfile, role });
       } else {
         setProfile(applyProfileDefaults(data));
