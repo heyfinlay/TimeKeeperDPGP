@@ -185,6 +185,30 @@ EXCEPTION
 END
 ;
 
+-- Determine whether the current user is an admin solely from their profile row
+create or replace function public.is_admin()
+returns boolean
+language plpgsql
+stable
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  v_user_id uuid := auth.uid();
+begin
+  if v_user_id is null then
+    return false;
+  end if;
+
+  return exists (
+    select 1
+    from public.profiles p
+    where p.id = v_user_id
+      and p.role = 'admin'
+  );
+end;
+$$;
+
 -- Admin market creation helper
 create or replace function public.admin_create_market(
   p_session_id uuid,
@@ -1012,3 +1036,54 @@ grant execute on function public.get_market_history(uuid, text) to authenticated
 grant execute on function public.quote_market_outcome(uuid, uuid, numeric) to authenticated;
 grant execute on function public.log_quote_telemetry(uuid, uuid, numeric, numeric, numeric, numeric, numeric) to authenticated;
 grant execute on function public.settle_market(uuid, uuid, text) to authenticated;
+
+-- Ensure a profile exists for the authenticated user without needing direct INSERTs
+create or replace function public.ensure_profile_for_current_user(
+  display_name text default null,
+  role_hint text default null
+) returns public.profiles
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  v_user_id uuid := auth.uid();
+  v_profile public.profiles%rowtype;
+  v_display_name text;
+  v_role text;
+begin
+  if v_user_id is null then
+    raise exception 'auth.uid() is required';
+  end if;
+
+  select * into v_profile
+  from public.profiles
+  where id = v_user_id;
+
+  if found then
+    return v_profile;
+  end if;
+
+  v_display_name := nullif(trim(coalesce(display_name, '')), '');
+  if v_display_name is null then
+    v_display_name := 'Marshal';
+  end if;
+
+  v_role := lower(coalesce(role_hint, 'marshal'));
+  if v_role not in ('spectator', 'driver', 'marshal', 'admin') then
+    v_role := 'marshal';
+  end if;
+
+  if v_role = 'admin' and not public.is_admin() then
+    v_role := 'marshal';
+  end if;
+
+  insert into public.profiles (id, role, display_name)
+  values (v_user_id, v_role, v_display_name)
+  returning * into v_profile;
+
+  return v_profile;
+end;
+$$;
+
+grant execute on function public.ensure_profile_for_current_user(text, text) to authenticated;
