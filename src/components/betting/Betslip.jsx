@@ -456,7 +456,7 @@ export default function Betslip({ marketId, outcomeId, onClose, onSuccess }) {
 
         <div className="flex flex-col gap-3">
           <span className="text-xs uppercase tracking-[0.3em] text-slate-500">Outcomes</span>
-          <div className="flex flex-wrap justify-center gap-2">
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
             {Array.isArray(market?.outcomes) && market.outcomes.length > 0 ? (
               market.outcomes.map((item) => (
                 <button
@@ -466,7 +466,7 @@ export default function Betslip({ marketId, outcomeId, onClose, onSuccess }) {
                   disabled={isPlacing}
                   aria-pressed={String(selectedOutcomeId) === String(item.id)}
                   title={item.label}
-                  className={`focus-ring max-w-[48%] flex-1 truncate rounded-full border px-4 py-2 text-sm transition-colors duration-200 ease-out-back motion-safe:hover:scale-102 ${
+                  className={`focus-ring w-full truncate rounded-full border px-4 py-2 text-sm transition-colors duration-200 ease-out-back motion-safe:hover:scale-102 ${
                     String(selectedOutcomeId) === String(item.id)
                       ? 'border-accent-emerald bg-accent-emerald/20 text-accent-emerald'
                       : 'border-accent-emerald/20 bg-shell-800/60 text-white hover:border-accent-emerald/40 hover:text-accent-emerald'

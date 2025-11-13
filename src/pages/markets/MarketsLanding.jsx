@@ -433,7 +433,7 @@ function ActiveMarketCard({
                 key={entry.outcomeId}
                 type="button"
                 onClick={() => onSelectOutcome(entry)}
-                className="focus-ring group flex items-center gap-4 rounded-2xl border border-accent-emerald/15 bg-shell-800/60 px-4 py-4 text-left transition-all duration-200 ease-out-back motion-safe:hover:-translate-y-[1px] motion-safe:hover:border-accent-emerald/40 motion-safe:hover:bg-accent-emerald/10"
+                className="focus-ring group flex flex-col gap-4 rounded-2xl border border-accent-emerald/15 bg-shell-800/60 px-4 py-4 text-left transition-all duration-200 ease-out-back motion-safe:hover:-translate-y-[1px] motion-safe:hover:border-accent-emerald/40 motion-safe:hover:bg-accent-emerald/10 sm:flex-row sm:items-center"
               >
                 <span
                   className="flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-xl text-sm font-semibold uppercase tracking-wide text-white shadow-lg shadow-black/30"
@@ -455,16 +455,21 @@ function ActiveMarketCard({
                     <span>{entry.wagerCount ?? 0} bets</span>
                   </div>
                 </div>
-                <div className="flex flex-col items-end gap-1 text-right">
-                  <span className="text-lg font-semibold text-accent-emerald">
-                    {formatOdds(effectiveMultiplier)}
-                  </span>
-                  <span className={`text-xs ${previewMatch ? 'text-slate-400' : 'text-slate-500'}`}>
-                    Baseline {baselineLabel}
-                  </span>
-                  <span className="text-xs text-slate-500">
-                    {formatCurrency(entry.total, { compact: false, maximumFractionDigits: 0 })} Diamonds
-                  </span>
+                <div className="flex w-full flex-col gap-1 text-right sm:w-auto sm:items-end">
+                  <div className="flex flex-col items-end">
+                    <span className="text-lg font-semibold text-accent-emerald">
+                      {formatOdds(effectiveMultiplier)}
+                    </span>
+                    <span className={`text-xs ${previewMatch ? 'text-slate-400' : 'text-slate-500'}`}>
+                      Baseline {baselineLabel}
+                    </span>
+                  </div>
+                  <div className="flex flex-col items-end text-xs text-slate-400">
+                    <span className="font-semibold text-white">
+                      {formatCurrency(entry.total, { compact: false, maximumFractionDigits: 0 })}
+                    </span>
+                    <span>Diamonds staked</span>
+                  </div>
                   {previewMatch ? (
                     <span className="text-xs text-slate-400">Price impact {priceImpactLabel}</span>
                   ) : null}
