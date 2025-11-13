@@ -1068,7 +1068,7 @@ export function ParimutuelProvider({ children }) {
           },
         });
 
-        if (sampleRate > 0 && Math.random() <= sampleRate) {
+        if (sampleRate > 0 && Math.random() <= sampleRate && supabase) {
           supabase
             .rpc('log_quote_telemetry', {
               p_market_id: targetMarketId,
