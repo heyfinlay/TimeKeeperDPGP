@@ -1087,3 +1087,21 @@ end;
 $$;
 
 grant execute on function public.ensure_profile_for_current_user(text, text) to authenticated;
+
+-- Ensure session_state rows remain unique per session
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1
+    FROM information_schema.tables
+    WHERE table_schema = 'public' AND table_name = 'session_state'
+  ) THEN
+    IF NOT EXISTS (
+      SELECT 1 FROM pg_constraint WHERE conname = 'session_state_session_id_key'
+    ) THEN
+      ALTER TABLE public.session_state
+        ADD CONSTRAINT session_state_session_id_key UNIQUE (session_id);
+    END IF;
+  END IF;
+END;
+$$ LANGUAGE plpgsql;

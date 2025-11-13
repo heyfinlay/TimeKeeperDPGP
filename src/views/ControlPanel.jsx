@@ -345,7 +345,7 @@ export default function ControlPanel() {
     const rows = [{ id: sessionId, session_id: sessionId, updated_at: new Date().toISOString(), ...patch }];
     const { data, error } = await supabase
       .from('session_state')
-      .upsert(rows, { onConflict: 'id' })
+      .upsert(rows, { onConflict: 'session_id' })
       .select('*')
       .maybeSingle();
     if (error) throw error;

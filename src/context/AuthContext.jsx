@@ -8,7 +8,7 @@ import {
   useState,
 } from 'react';
 import { isSupabaseConfigured, supabase } from '../lib/supabaseClient.js';
-import { ensureProfileForCurrentUser, saveProfile } from '../lib/profile.js';
+import { ensureProfileForCurrentUser, resolveProfileRole, saveProfile } from '../lib/profile.js';
 
 const AuthContext = createContext({
   status: isSupabaseConfigured ? 'loading' : 'disabled',
@@ -71,13 +71,15 @@ export const AuthProvider = ({ children }) => {
           nextUser.user_metadata?.name ||
           nextUser.email ||
           'Marshal';
+        const roleToInsert = resolveProfileRole({ role: 'marshal' }, { claims: roleClaims });
         const ensuredProfile = await ensureProfileForCurrentUser(
-          { displayName, role: DEFAULT_PROFILE.role },
+          { displayName, role: roleToInsert },
           { supabase },
         );
         const fallbackProfile = { ...DEFAULT_PROFILE, id: nextUser.id, display_name: displayName };
         const baseProfile = ensuredProfile ?? fallbackProfile;
-        setProfile(applyProfileDefaults(baseProfile));
+        const role = resolveProfileRole(baseProfile, { claims: roleClaims });
+        setProfile({ ...DEFAULT_PROFILE, ...baseProfile, role });
       } else {
         setProfile(applyProfileDefaults(data));
       }
