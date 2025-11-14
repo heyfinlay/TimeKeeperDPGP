@@ -548,7 +548,7 @@ export default function ControlPanel() {
       }
     });
 
-    await persistSessionPatch({ command: 'reset_session', race_time_ms: 0, procedure_phase: 'setup' });
+    await persistSessionPatch({ command: 'reset_session', race_time_ms: 0 });
     pushControlEntry({
       kind: 'timer',
       title: 'Session reset',
