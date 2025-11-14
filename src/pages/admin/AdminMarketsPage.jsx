@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useState, useMemo } from 'react';
 import {
   AlertCircle,
-  ArrowRight,
   BarChart3,
   CheckCircle,
   ChevronDown,
@@ -25,6 +24,7 @@ import SettlementApprovalQueue from '@/components/admin/SettlementApprovalQueue.
 import SettlementAuditDashboard from '@/components/admin/SettlementAuditDashboard.jsx';
 import { useParimutuelStore } from '@/state/parimutuelStore.js';
 import { handleApproveDeposit, formatWalletBalance } from '@/lib/wallet.js';
+import { proposeSettlement } from '@/services/admin.js';
 
 const TABS = {
   MARKETS: 'markets',
@@ -62,6 +62,7 @@ const AdminMarketsPage = () => {
   const [events, setEvents] = useState([]);
   const [outcomes, setOutcomes] = useState([]);
   const [wagers, setWagers] = useState([]);
+  const [pendingWagers, setPendingWagers] = useState([]);
   const [withdrawals, setWithdrawals] = useState([]);
   const [deposits, setDeposits] = useState([]);
   const [walletAccounts, setWalletAccounts] = useState([]);
@@ -71,8 +72,13 @@ const AdminMarketsPage = () => {
   const [selectedMarket, setSelectedMarket] = useState(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [modalMode, setModalMode] = useState(null); // 'close', 'settle'
+  const [settlementOutcomeId, setSettlementOutcomeId] = useState(null);
+  const [settlementNotes, setSettlementNotes] = useState('');
+  const [timingEvidence, setTimingEvidence] = useState('');
+  const [isSubmittingSettlement, setIsSubmittingSettlement] = useState(false);
   const [approvingDepositId, setApprovingDepositId] = useState(null);
   const [processingWithdrawalId, setProcessingWithdrawalId] = useState(null);
+  const [processingPendingWagerId, setProcessingPendingWagerId] = useState(null);
   const [depositStatusFilter, setDepositStatusFilter] = useState('queued');
   const [withdrawalStatusFilter, setWithdrawalStatusFilter] = useState('queued');
   const [receiptCodes, setReceiptCodes] = useState({});
@@ -93,6 +99,7 @@ const AdminMarketsPage = () => {
         { data: withdrawalsData, error: withdrawalsError },
         { data: depositsData, error: depositsError },
         { data: walletsData, error: walletsError },
+        { data: pendingWagersData, error: pendingWagersError },
       ] = await Promise.all([
         supabase.from('events').select('*').order('starts_at', { ascending: false }),
         supabase.from('markets').select('*').order('created_at', { ascending: false }),
@@ -101,6 +108,7 @@ const AdminMarketsPage = () => {
         supabase.from('withdrawals').select('*').order('created_at', { ascending: false }),
         supabase.from('deposits').select('*').order('created_at', { ascending: false }),
         supabase.from('wallet_accounts').select('*'),
+        supabase.rpc('admin_list_pending_wagers'),
       ]);
 
       if (eventsError) throw eventsError;
@@ -110,6 +118,7 @@ const AdminMarketsPage = () => {
       if (withdrawalsError) throw withdrawalsError;
       if (depositsError) throw depositsError;
       if (walletsError) throw walletsError;
+      if (pendingWagersError) throw pendingWagersError;
 
       setEvents(eventsData || []);
       setMarkets(marketsData || []);
@@ -118,6 +127,7 @@ const AdminMarketsPage = () => {
       setWithdrawals(withdrawalsData || []);
       setDeposits(depositsData || []);
       setWalletAccounts(walletsData || []);
+      setPendingWagers(pendingWagersData || []);
     } catch (err) {
       console.error('Failed to fetch admin markets data:', err);
       setError(err.message || 'Failed to load markets data');
@@ -179,7 +189,6 @@ const AdminMarketsPage = () => {
   // Market analytics
   const marketAnalytics = useMemo(() => {
     const totalWagered = wagers.reduce((sum, w) => sum + (w.stake || 0), 0);
-    const pendingWagers = wagers.filter(w => w.status === 'pending');
     const pendingWithdrawals = withdrawals.filter(w => w.status === 'queued');
     const pendingDeposits = deposits.filter((deposit) => deposit.status === 'queued');
     const activeMarkets = markets.filter(m => m.status === 'open');
@@ -192,7 +201,45 @@ const AdminMarketsPage = () => {
       activeMarketsCount: activeMarkets.length,
       totalMarketsCount: markets.length,
     };
-  }, [wagers, withdrawals, deposits, markets]);
+  }, [wagers, withdrawals, deposits, markets, pendingWagers]);
+  const selectedMarketContext = useMemo(() => {
+    if (!selectedMarket) return null;
+    const marketOutcomes = outcomes.filter((outcome) => outcome.market_id === selectedMarket.id);
+    const marketWagers = wagers.filter((wager) => wager.market_id === selectedMarket.id);
+    const totalStake = marketWagers.reduce((sum, wager) => sum + (wager.stake || 0), 0);
+    const eventContext = events.find((event) => event.id === selectedMarket.event_id);
+    return {
+      outcomes: marketOutcomes,
+      totalStake,
+      wagerCount: marketWagers.length,
+      event: eventContext,
+    };
+  }, [selectedMarket, outcomes, wagers, events]);
+
+  const resetSettlementForm = () => {
+    setSettlementOutcomeId(null);
+    setSettlementNotes('');
+    setTimingEvidence('');
+    setIsSubmittingSettlement(false);
+  };
+
+  const dismissModal = () => {
+    setIsModalOpen(false);
+    setModalMode(null);
+    setSelectedMarket(null);
+    resetSettlementForm();
+  };
+
+  const openSettlementModal = (market) => {
+    if (!market) return;
+    const marketOutcomes = getOutcomesByMarketId(market.id);
+    setSelectedMarket(market);
+    setModalMode('settle');
+    setSettlementOutcomeId(marketOutcomes[0]?.id ?? null);
+    setSettlementNotes('');
+    setTimingEvidence('');
+    setIsModalOpen(true);
+  };
 
   const filteredWithdrawals = useMemo(
     () => withdrawals.filter((withdrawal) => withdrawal.status === withdrawalStatusFilter),
@@ -207,31 +254,49 @@ const AdminMarketsPage = () => {
   // Close market handler
   const handleCloseMarket = async (marketId) => {
     try {
-      const { error } = await supabase.rpc('close_market', { market_id: marketId });
+      const { error } = await supabase.rpc('close_market', { p_market_id: marketId });
       if (error) throw error;
       await fetchData();
-      setIsModalOpen(false);
-      setSelectedMarket(null);
+      dismissModal();
     } catch (err) {
       console.error('Failed to close market:', err);
       alert(`Failed to close market: ${err.message}`);
     }
   };
 
-  // Settle market handler
-  const handleSettleMarket = async (marketId, winningOutcomeId) => {
+  // Settlement proposal handler
+  const handleSubmitSettlementProposal = async () => {
+    if (!selectedMarket || !settlementOutcomeId) {
+      return;
+    }
+    setIsSubmittingSettlement(true);
     try {
-      const { error } = await supabase.rpc('settle_market', {
-        market_id: marketId,
-        winning_outcome_id: winningOutcomeId,
+      const contextEvent = events.find((event) => event.id === selectedMarket.event_id);
+      const timingPayload = timingEvidence.trim()
+        ? {
+            recorded_at: new Date().toISOString(),
+            session_id: contextEvent?.session_id ?? null,
+            event_id: contextEvent?.id ?? null,
+            note: timingEvidence.trim(),
+          }
+        : null;
+      const settlementId = await proposeSettlement({
+        marketId: selectedMarket.id,
+        outcomeId: settlementOutcomeId,
+        notes: settlementNotes.trim() || null,
+        timingData: timingPayload,
       });
-      if (error) throw error;
+      setToast({
+        type: 'success',
+        message: `Settlement proposed (${String(settlementId).slice(0, 8)}…). Awaiting approval.`,
+      });
       await fetchData();
-      setIsModalOpen(false);
-      setSelectedMarket(null);
+      dismissModal();
     } catch (err) {
-      console.error('Failed to settle market:', err);
-      alert(`Failed to settle market: ${err.message}`);
+      console.error('Failed to propose settlement:', err);
+      alert(`Failed to propose settlement: ${err.message}`);
+    } finally {
+      setIsSubmittingSettlement(false);
     }
   };
 
@@ -282,6 +347,42 @@ const AdminMarketsPage = () => {
       setToast({ type: 'error', message: err.message || 'Something went wrong. Please try again.' });
     } finally {
       setProcessingWithdrawalId(null);
+    }
+  };
+
+  const handleApprovePendingWager = async (wagerId) => {
+    if (!wagerId) return;
+    try {
+      setProcessingPendingWagerId(wagerId);
+      const { error } = await supabase.rpc('approve_wager', { p_wager_id: wagerId });
+      if (error) throw error;
+      setToast({ type: 'success', message: 'Pending wager approved.' });
+      await fetchData();
+    } catch (err) {
+      console.error('Failed to approve pending wager:', err);
+      setToast({ type: 'error', message: err.message || 'Unable to approve wager.' });
+    } finally {
+      setProcessingPendingWagerId(null);
+    }
+  };
+
+  const handleRejectPendingWager = async (wagerId) => {
+    if (!wagerId) return;
+    const reason = prompt('Reason for rejection (optional):');
+    try {
+      setProcessingPendingWagerId(wagerId);
+      const { error } = await supabase.rpc('reject_wager', {
+        p_wager_id: wagerId,
+        p_reason: reason || null,
+      });
+      if (error) throw error;
+      setToast({ type: 'success', message: 'Pending wager rejected.' });
+      await fetchData();
+    } catch (err) {
+      console.error('Failed to reject pending wager:', err);
+      setToast({ type: 'error', message: err.message || 'Unable to reject wager.' });
+    } finally {
+      setProcessingPendingWagerId(null);
     }
   };
 
@@ -548,11 +649,8 @@ const AdminMarketsPage = () => {
                           )}
                           {market.status === 'closed' && (
                             <button
-                              onClick={() => {
-                                setSelectedMarket(market);
-                                setModalMode('settle');
-                                setIsModalOpen(true);
-                              }}
+                              type="button"
+                              onClick={() => openSettlementModal(market)}
                               className="inline-flex items-center gap-2 rounded-full border border-[#9FF7D3]/40 bg-[#9FF7D3]/10 px-3 py-1.5 text-xs text-[#9FF7D3] transition hover:border-[#9FF7D3]/70"
                             >
                               <CheckCircle className="h-3 w-3" />
@@ -624,29 +722,75 @@ const AdminMarketsPage = () => {
             <div className="flex flex-col gap-4 rounded-2xl border border-white/5 bg-[#05070F]/80 p-6">
               <h3 className="text-lg font-semibold text-white">Pending Wagers</h3>
               <div className="flex flex-col gap-3">
-                {wagers.filter(w => w.status === 'pending').length === 0 ? (
+                {pendingWagers.length === 0 ? (
                   <p className="text-sm text-neutral-500">No pending wagers</p>
                 ) : (
-                  wagers
-                    .filter(w => w.status === 'pending')
-                    .slice(0, 10)
-                    .map((wager) => (
+                  pendingWagers.slice(0, 10).map((wager) => {
+                    const wagerId = wager.wager_id ?? wager.id;
+                    const isProcessing = processingPendingWagerId === wagerId;
+                    return (
                       <div
-                        key={wager.id}
-                        className="flex items-center justify-between rounded-xl border border-white/5 bg-[#000000]/40 p-4"
+                        key={wagerId}
+                        className="flex flex-col gap-3 rounded-xl border border-white/5 bg-[#000000]/40 p-4"
                       >
-                        <div className="flex flex-col gap-1">
-                          <span className="text-sm font-medium text-white">{wager.markets?.name || 'Unknown Market'}</span>
-                          <span className="text-xs text-[#9FF7D3]">{wager.outcomes?.label || 'Unknown Outcome'}</span>
-                          <span className="text-xs text-neutral-500">
-                            {new Date(wager.placed_at).toLocaleString()}
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="flex flex-col gap-1">
+                            <span className="text-sm font-medium text-white">
+                              {wager.market_name || 'Unknown Market'}
+                            </span>
+                            <span className="text-xs text-[#9FF7D3]">
+                              {wager.outcome_label || 'Unknown Outcome'}
+                            </span>
+                            <span className="text-xs text-neutral-500">
+                              {wager.bettor_name ? `By ${wager.bettor_name}` : `User: ${String(wager.user_id).slice(0, 8)}...`}
+                            </span>
+                            <span className="text-xs text-neutral-500">
+                              {new Date(wager.placed_at).toLocaleString()}
+                            </span>
+                          </div>
+                          <span className="text-sm font-semibold text-white">
+                            💎 {(Number(wager.stake || 0) / 1000).toFixed(1)}K
                           </span>
                         </div>
-                        <span className="text-sm font-semibold text-white">
-                          💎 {(wager.stake / 1000).toFixed(1)}K
-                        </span>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <button
+                            onClick={() => handleApprovePendingWager(wagerId)}
+                            disabled={isProcessing}
+                            className="inline-flex items-center gap-2 rounded-full border border-emerald-500/40 bg-emerald-500/10 px-3 py-1 text-xs font-semibold uppercase tracking-[0.3em] text-emerald-200 transition hover:border-emerald-500/70 disabled:cursor-not-allowed disabled:opacity-60"
+                          >
+                            {isProcessing ? (
+                              <>
+                                <Loader2 className="h-3 w-3 animate-spin" />
+                                Approving
+                              </>
+                            ) : (
+                              <>
+                                <CheckCircle className="h-3 w-3" />
+                                Approve
+                              </>
+                            )}
+                          </button>
+                          <button
+                            onClick={() => handleRejectPendingWager(wagerId)}
+                            disabled={isProcessing}
+                            className="inline-flex items-center gap-2 rounded-full border border-rose-500/40 bg-rose-500/10 px-3 py-1 text-xs font-semibold uppercase tracking-[0.3em] text-rose-200 transition hover:border-rose-500/70 disabled:cursor-not-allowed disabled:opacity-60"
+                          >
+                            {isProcessing ? (
+                              <>
+                                <Loader2 className="h-3 w-3 animate-spin" />
+                                Rejecting
+                              </>
+                            ) : (
+                              <>
+                                <X className="h-3 w-3" />
+                                Reject
+                              </>
+                            )}
+                          </button>
+                        </div>
                       </div>
-                    ))
+                    );
+                  })
                 )}
               </div>
             </div>
@@ -963,45 +1107,127 @@ const AdminMarketsPage = () => {
       {/* Settlement Modal */}
       {isModalOpen && modalMode === 'settle' && selectedMarket && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4">
-          <div className="w-full max-w-lg rounded-3xl border border-white/10 bg-[#05070F] p-6 shadow-2xl">
-            <div className="mb-4 flex items-center justify-between">
-              <h3 className="text-xl font-semibold text-white">Settle Market</h3>
+          <div className="w-full max-w-2xl rounded-3xl border border-white/10 bg-[#05070F] p-6 shadow-2xl">
+            <div className="mb-6 flex items-start justify-between">
+              <div>
+                <p className="text-xs uppercase tracking-[0.4em] text-neutral-500">Propose Settlement</p>
+                <h3 className="mt-1 text-2xl font-semibold text-white">{selectedMarket.name}</h3>
+                <p className="text-sm text-neutral-400">
+                  {selectedMarketContext?.event?.title ?? 'Unlinked Event'} • Session{' '}
+                  {selectedMarketContext?.event?.session_id
+                    ? `${selectedMarketContext.event.session_id.slice(0, 8)}…`
+                    : '—'}
+                </p>
+              </div>
               <button
-                onClick={() => {
-                  setIsModalOpen(false);
-                  setSelectedMarket(null);
-                }}
-                className="text-neutral-400 hover:text-white"
+                type="button"
+                onClick={dismissModal}
+                className="rounded-full p-2 text-neutral-400 transition hover:bg-white/10 hover:text-white"
               >
                 <X className="h-5 w-5" />
               </button>
             </div>
-            <div className="mb-6">
-              <p className="text-sm text-neutral-400">
-                Select the winning outcome for: <strong className="text-white">{selectedMarket.name}</strong>
-              </p>
+
+            <div className="mb-6 grid gap-4 sm:grid-cols-3">
+              <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+                <p className="text-xs uppercase tracking-[0.3em] text-neutral-500">Total Pool</p>
+                <p className="mt-1 text-lg font-semibold text-white">
+                  {formatWalletBalance(selectedMarketContext?.totalStake ?? 0, { compact: false })}
+                </p>
+              </div>
+              <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+                <p className="text-xs uppercase tracking-[0.3em] text-neutral-500">Wagers</p>
+                <p className="mt-1 text-lg font-semibold text-white">
+                  {selectedMarketContext?.wagerCount ?? 0}
+                </p>
+              </div>
+              <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+                <p className="text-xs uppercase tracking-[0.3em] text-neutral-500">Outcomes</p>
+                <p className="mt-1 text-lg font-semibold text-white">
+                  {selectedMarketContext?.outcomes?.length ?? 0}
+                </p>
+              </div>
             </div>
-            <div className="mb-6 flex flex-col gap-3">
-              {getOutcomesByMarketId(selectedMarket.id).map((outcome) => (
-                <button
-                  key={outcome.id}
-                  onClick={() => handleSettleMarket(selectedMarket.id, outcome.id)}
-                  className="flex items-center justify-between rounded-xl border border-white/10 bg-[#000000]/40 p-4 text-left transition hover:border-[#9FF7D3]/40 hover:bg-[#9FF7D3]/5"
-                >
-                  <span className="text-sm font-medium text-white">{outcome.label}</span>
-                  <ArrowRight className="h-4 w-4 text-neutral-400" />
-                </button>
-              ))}
+
+            <div className="mb-6 space-y-3">
+              {(selectedMarketContext?.outcomes ?? []).length === 0 ? (
+                <p className="text-sm text-neutral-400">
+                  This market has no outcomes configured. Please add outcomes before proposing a settlement.
+                </p>
+              ) : (
+                selectedMarketContext?.outcomes?.map((outcome) => (
+                  <label
+                    key={outcome.id}
+                    className={`flex cursor-pointer items-center justify-between rounded-2xl border px-4 py-3 ${
+                      settlementOutcomeId === outcome.id
+                        ? 'border-[#9FF7D3]/60 bg-[#9FF7D3]/10'
+                        : 'border-white/10 bg-white/5 hover:border-white/30'
+                    }`}
+                  >
+                    <div>
+                      <p className="text-sm font-semibold text-white">{outcome.label}</p>
+                      <p className="text-xs text-neutral-400">{outcome.abbreviation || '—'}</p>
+                    </div>
+                    <input
+                      type="radio"
+                      name="settlement-outcome"
+                      value={outcome.id}
+                      checked={settlementOutcomeId === outcome.id}
+                      onChange={() => setSettlementOutcomeId(outcome.id)}
+                      className="h-4 w-4 accent-[#9FF7D3]"
+                    />
+                  </label>
+                ))
+              )}
             </div>
-            <button
-              onClick={() => {
-                setIsModalOpen(false);
-                setSelectedMarket(null);
-              }}
-              className="w-full rounded-full border border-white/10 py-2 text-sm text-neutral-400 transition hover:border-white/30 hover:text-white"
-            >
-              Cancel
-            </button>
+
+            <div className="space-y-4">
+              <div>
+                <label className="text-xs uppercase tracking-[0.3em] text-neutral-500">
+                  Notes for approvers
+                </label>
+                <textarea
+                  value={settlementNotes}
+                  onChange={(event) => setSettlementNotes(event.target.value.slice(0, 500))}
+                  rows={3}
+                  placeholder="Describe the finishing order, steward notes, or anything relevant for reviewers."
+                  className="mt-2 w-full rounded-2xl border border-white/10 bg-black/40 px-3 py-2 text-sm text-white placeholder:text-neutral-500 focus:border-[#9FF7D3]/40 focus:outline-none"
+                />
+              </div>
+              <div>
+                <label className="text-xs uppercase tracking-[0.3em] text-neutral-500">
+                  Timing evidence (JSON, lap summary, or link)
+                </label>
+                <textarea
+                  value={timingEvidence}
+                  onChange={(event) => setTimingEvidence(event.target.value.slice(0, 1000))}
+                  rows={4}
+                  placeholder="Paste lap export, penalty breakdown, or a link to timing spreadsheet."
+                  className="mt-2 w-full rounded-2xl border border-white/10 bg-black/40 px-3 py-2 text-sm text-white placeholder:text-neutral-500 focus:border-[#9FF7D3]/40 focus:outline-none"
+                />
+                <p className="mt-1 text-xs text-neutral-500">
+                  Shared with stewards before approvals are executed.
+                </p>
+              </div>
+            </div>
+
+            <div className="mt-6 flex flex-col gap-3 sm:flex-row">
+              <button
+                type="button"
+                onClick={dismissModal}
+                className="flex-1 rounded-full border border-white/10 px-4 py-2 text-sm text-neutral-300 transition hover:border-white/30 hover:text-white"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleSubmitSettlementProposal}
+                disabled={!settlementOutcomeId || isSubmittingSettlement}
+                className="flex-1 rounded-full border border-[#9FF7D3]/40 bg-[#9FF7D3]/10 px-4 py-2 text-sm font-semibold text-[#9FF7D3] transition hover:border-[#9FF7D3]/70 hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {isSubmittingSettlement ? 'Submitting…' : 'Send to Approval Queue'}
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -1013,10 +1239,8 @@ const AdminMarketsPage = () => {
             <div className="mb-4 flex items-center justify-between">
               <h3 className="text-xl font-semibold text-white">Close Market</h3>
               <button
-                onClick={() => {
-                  setIsModalOpen(false);
-                  setSelectedMarket(null);
-                }}
+                type="button"
+                onClick={dismissModal}
                 className="text-neutral-400 hover:text-white"
               >
                 <X className="h-5 w-5" />
@@ -1032,10 +1256,8 @@ const AdminMarketsPage = () => {
             </div>
             <div className="flex gap-3">
               <button
-                onClick={() => {
-                  setIsModalOpen(false);
-                  setSelectedMarket(null);
-                }}
+                type="button"
+                onClick={dismissModal}
                 className="flex-1 rounded-full border border-white/10 py-2 text-sm text-neutral-400 transition hover:border-white/30 hover:text-white"
               >
                 Cancel

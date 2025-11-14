@@ -94,6 +94,13 @@ const resolveTakeout = (market, fallback = 0.1) => {
   return fallback;
 };
 
+const createIdempotencyKey = () => {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return `wager-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+};
+
 const createEmptyHistoryEntry = () => ({
   windows: {},
   isLoading: {},
@@ -1008,10 +1015,11 @@ export function ParimutuelProvider({ children }) {
       }
 
       try {
-        const { data, error } = await supabase.rpc('quote_market_outcome', {
+        const { data, error } = await supabase.rpc('preview_wager', {
           p_market_id: targetMarketId,
           p_outcome_id: outcome.id,
           p_stake: numericStake,
+          p_sample_rate: sampleRate,
         });
         if (error) {
           throw error;
@@ -1026,31 +1034,40 @@ export function ParimutuelProvider({ children }) {
         const remotePayload = data ?? {};
         const remoteQuote = {
           baselineMultiplier: normalise(
-            remotePayload.baselineMultiplier ?? remotePayload.baseline_multiplier,
+            remotePayload.baselineOdds ?? remotePayload.baseline_multiplier ?? remotePayload.baseline_odds,
             localQuote.baselineMultiplier,
           ),
           effectiveMultiplier: normalise(
-            remotePayload.effectiveMultiplier ?? remotePayload.effective_multiplier,
+            remotePayload.effectiveOdds ?? remotePayload.effective_multiplier ?? remotePayload.effective_odds,
             localQuote.effectiveMultiplier,
           ),
           estPayout: normalise(
-            remotePayload.estPayout ?? remotePayload.est_payout,
+            remotePayload.estimatedPayout ?? remotePayload.estimated_payout ?? remotePayload.estPayout ?? remotePayload.est_payout,
             localQuote.estPayout,
           ),
           impliedProb: normalise(
-            remotePayload.impliedProb ?? remotePayload.implied_prob,
+            remotePayload.impliedProbability ??
+              remotePayload.implied_probability ??
+              remotePayload.shareAfter ??
+              remotePayload.share_after,
             localQuote.impliedProb,
           ),
           priceImpact: normalise(
-            remotePayload.priceImpact ?? remotePayload.price_impact,
+            remotePayload.priceImpactPercent ??
+              remotePayload.price_impact_percent ??
+              remotePayload.priceImpact ??
+              remotePayload.price_impact,
             localQuote.priceImpact,
           ),
           maxPossiblePayout: normalise(
-            remotePayload.maxPossiblePayout ?? remotePayload.max_possible_payout,
+            remotePayload.maxPayout ?? remotePayload.max_payout ?? remotePayload.maxPossiblePayout,
             localQuote.maxPossiblePayout,
           ),
           shareAfterBet: normalise(
-            remotePayload.shareAfterBet ?? remotePayload.share_after_bet,
+            remotePayload.shareAfter ??
+              remotePayload.share_after ??
+              remotePayload.shareAfterBet ??
+              remotePayload.share_after_bet,
             localQuote.shareAfterBet ?? localQuote.impliedProb,
           ),
         };
@@ -1066,25 +1083,6 @@ export function ParimutuelProvider({ children }) {
             updatedAt: new Date().toISOString(),
           },
         });
-
-        if (sampleRate > 0 && Math.random() <= sampleRate && supabase) {
-          supabase
-            .rpc('log_quote_telemetry', {
-              p_market_id: targetMarketId,
-              p_outcome_id: outcome.id,
-              p_stake: numericStake,
-              p_baseline:
-                remoteQuote.baselineMultiplier ?? localQuote.baselineMultiplier ?? null,
-              p_effective:
-                remoteQuote.effectiveMultiplier ?? localQuote.effectiveMultiplier ?? null,
-              p_price_impact:
-                remoteQuote.priceImpact ?? localQuote.priceImpact ?? null,
-              p_sample_rate: sampleRate,
-            })
-            .catch((telemetryError) => {
-              console.warn('Failed to record quote telemetry', telemetryError);
-            });
-        }
 
         return { success: true, quote: remoteQuote };
       } catch (error) {
@@ -1117,8 +1115,9 @@ export function ParimutuelProvider({ children }) {
       const activeMarketId = marketId ?? currentState.selectedMarketId;
       const market = findMarket(currentState.events, activeMarketId);
       const outcome = findOutcome(market, outcomeId);
+      const numericStake = Number(stake) || 0;
       const { valid, issues } = validateWager({
-        stake,
+        stake: numericStake,
         balance,
         market,
         outcome,
@@ -1136,18 +1135,18 @@ export function ParimutuelProvider({ children }) {
       if (!isSupabaseConfigured || !supabase) {
         dispatch({
           type: ActionTypes.PLACE_WAGER_SUCCESS,
-          payload: {
-            marketId: activeMarketId,
+        payload: {
+          marketId: activeMarketId,
+          outcomeId: outcome.id,
+          stake: numericStake,
+          wager: {
+            id: `local-${Date.now()}`,
+            stake: numericStake,
             outcomeId: outcome.id,
-            stake: Number(stake) || 0,
-            wager: {
-              id: `local-${Date.now()}`,
-              stake: Number(stake) || 0,
-              outcomeId: outcome.id,
-              marketId: activeMarketId,
-            },
-            message: 'Wager recorded locally (offline mode).',
+            marketId: activeMarketId,
           },
+          message: 'Wager recorded locally (offline mode).',
+        },
         });
         return { success: true, offline: true };
       }
@@ -1161,7 +1160,9 @@ export function ParimutuelProvider({ children }) {
         const { data, error } = await supabase.rpc('place_wager', {
           p_market_id: activeMarketId,
           p_outcome_id: outcome.id,
-          p_stake: Number(stake) || 0,
+          p_stake: numericStake,
+          p_idempotency_key: createIdempotencyKey(),
+          p_sample_rate: 0.25,
         });
         if (error) {
           throw error;
@@ -1169,19 +1170,27 @@ export function ParimutuelProvider({ children }) {
         if (!data?.success) {
           throw new Error(data?.message || 'Failed to place wager');
         }
+        const resolvedWagerId = data.wagerId ?? data.wager_id;
+        const requiresApproval =
+          data?.requiresApproval ?? market?.requires_approval ?? false;
+        const resolvedStatus = data?.status ?? (requiresApproval ? 'pending' : 'accepted');
         dispatch({
           type: ActionTypes.PLACE_WAGER_SUCCESS,
           payload: {
             marketId: activeMarketId,
             outcomeId: outcome.id,
-            stake: Number(stake) || 0,
+            stake: numericStake,
             wager: {
-              id: data.wager_id,
-              stake: Number(stake) || 0,
+              id: resolvedWagerId,
+              stake: numericStake,
               outcomeId: outcome.id,
               marketId: activeMarketId,
+              status: resolvedStatus,
+              requiresApproval,
             },
-            message: data.message ?? 'Wager placed successfully.',
+            message:
+              data.message ??
+              (requiresApproval ? 'Wager submitted for approval.' : 'Wager placed successfully.'),
           },
         });
         return { success: true, data };
@@ -1247,4 +1256,3 @@ export const useParimutuelStore = () => {
   }
   return context;
 };
-

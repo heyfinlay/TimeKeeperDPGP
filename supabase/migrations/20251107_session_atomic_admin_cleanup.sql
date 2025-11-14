@@ -1,17 +1,16 @@
 -- Create transactional session RPCs and simplify RLS without recursive helpers.
 
-begin;
-
 -- Replace legacy session seeding helper with create_session_atomic.
-drop function if exists public.seed_session_rpc(jsonb);
-drop function if exists public.create_session_atomic(jsonb);
 
+do $create_session$
+begin
+  execute $func$
 create or replace function public.create_session_atomic(p_session jsonb)
 returns uuid
 language plpgsql
 security definer
 set search_path = public
-as $$
+as $body$
 declare
   v_session_id uuid;
   v_creator_id uuid := auth.uid();
@@ -48,14 +47,22 @@ exception
   when others then
     raise;
 end;
-$$;
+$body$;
+$func$;
+end
+$create_session$;
 
-grant execute on function public.create_session_atomic(jsonb) to authenticated, service_role;
+do $grant_create_session$
+begin
+  execute 'grant execute on function public.create_session_atomic(jsonb) to authenticated, service_role';
+end
+$grant_create_session$;
 
 -- Helper RPCs so race control can manage membership despite restrictive RLS.
-drop function if exists public.ensure_session_member(uuid, uuid, text);
-drop function if exists public.remove_session_member(uuid, uuid, text);
 
+do $ensure_member$
+begin
+  execute $func$
 create or replace function public.ensure_session_member(
   p_session_id uuid,
   p_user_id uuid,
@@ -65,17 +72,27 @@ returns void
 language plpgsql
 security definer
 set search_path = public
-as $$
+as $body$
 begin
   insert into public.session_members (session_id, user_id, role)
   values (p_session_id, p_user_id, coalesce(nullif(p_role, ''), 'marshal'))
   on conflict (session_id, user_id)
   do update set role = excluded.role, inserted_at = timezone('utc', now());
 end;
-$$;
+$body$;
+$func$;
+end
+$ensure_member$;
 
-grant execute on function public.ensure_session_member(uuid, uuid, text) to authenticated, service_role;
+do $grant_ensure_member$
+begin
+  execute 'grant execute on function public.ensure_session_member(uuid, uuid, text) to authenticated, service_role';
+end
+$grant_ensure_member$;
 
+do $remove_member$
+begin
+  execute $func$
 create or replace function public.remove_session_member(
   p_session_id uuid,
   p_user_id uuid,
@@ -85,7 +102,7 @@ returns void
 language plpgsql
 security definer
 set search_path = public
-as $$
+as $body$
 begin
   if p_role is null then
     delete from public.session_members
@@ -98,9 +115,16 @@ begin
        and role = p_role;
   end if;
 end;
-$$;
+$body$;
+$func$;
+end
+$remove_member$;
 
-grant execute on function public.remove_session_member(uuid, uuid, text) to authenticated, service_role;
+do $grant_remove_member$
+begin
+  execute 'grant execute on function public.remove_session_member(uuid, uuid, text) to authenticated, service_role';
+end
+$grant_remove_member$;
 
 -- Strengthen core table constraints and supporting indexes.
 
@@ -132,7 +156,6 @@ alter table public.sessions
   alter column created_by set default auth.uid();
 
 -- Remove recursive helper and re-author policies directly.
-drop function if exists public.session_has_access(uuid);
 
 -- RLS: drop legacy policies referencing session_has_access.
 drop policy if exists "Admin full access to drivers" on public.drivers;
@@ -360,4 +383,100 @@ create policy "wagers_admin_select"
   to authenticated
   using (public.is_admin());
 
-commit;
+
+-- ============================================================================
+-- Legacy admin credential deprecation migration
+-- ===========================================================================
+-- ============================================================================
+-- Migration: Deprecate admin_credentials table and legacy admin auth
+-- ============================================================================
+-- Diamond Sports Book now uses Discord OAuth for ALL authentication.
+-- Admin access is gated by profiles.role='admin' (single source of truth).
+--
+-- This migration:
+-- 1. Locks down admin_credentials table with restrictive RLS policies
+-- 2. Drops the verify_admin_credentials() function (no longer needed)
+-- 3. Adds deprecation comments to the table
+--
+-- The table is preserved for historical reference but made read-only for admins.
+-- ============================================================================
+
+-- ============================================================================
+-- Drop legacy admin credential verification function
+-- ============================================================================
+
+DROP FUNCTION IF EXISTS public.verify_admin_credentials(text, text);
+
+-- ============================================================================
+-- Lock down admin_credentials table with restrictive RLS
+-- ============================================================================
+
+-- Ensure RLS is enabled
+ALTER TABLE IF EXISTS public.admin_credentials ENABLE ROW LEVEL SECURITY;
+
+-- Drop all existing policies
+DROP POLICY IF EXISTS "Admin credentials are private" ON public.admin_credentials;
+DROP POLICY IF EXISTS "Only admins can view credentials" ON public.admin_credentials;
+DROP POLICY IF EXISTS "Only admins can insert credentials" ON public.admin_credentials;
+DROP POLICY IF EXISTS "Only admins can update credentials" ON public.admin_credentials;
+DROP POLICY IF EXISTS "Only admins can delete credentials" ON public.admin_credentials;
+
+-- Create read-only policy for admins only (for historical reference)
+CREATE POLICY "admin_credentials_read_only_for_admins"
+  ON public.admin_credentials
+  FOR SELECT
+  TO authenticated
+  USING (public.is_admin());
+
+-- Explicitly deny all modifications
+CREATE POLICY "admin_credentials_no_inserts"
+  ON public.admin_credentials
+  FOR INSERT
+  TO authenticated
+  WITH CHECK (false);
+
+CREATE POLICY "admin_credentials_no_updates"
+  ON public.admin_credentials
+  FOR UPDATE
+  TO authenticated
+  USING (false)
+  WITH CHECK (false);
+
+CREATE POLICY "admin_credentials_no_deletes"
+  ON public.admin_credentials
+  FOR DELETE
+  TO authenticated
+  USING (false);
+
+-- ============================================================================
+-- Add deprecation comment to table
+-- ============================================================================
+
+COMMENT ON TABLE public.admin_credentials IS
+  'DEPRECATED: This table is no longer used for authentication. Diamond Sports Book now uses Discord OAuth exclusively. Admin access is controlled by profiles.role="admin". This table is preserved for historical reference only and is read-only.';
+
+COMMENT ON COLUMN public.admin_credentials.username IS
+  'DEPRECATED: No longer used. All authentication is via Discord OAuth.';
+
+COMMENT ON COLUMN public.admin_credentials.password_hash IS
+  'DEPRECATED: No longer used. All authentication is via Discord OAuth.';
+
+-- ============================================================================
+-- Revoke Edge Function access
+-- ============================================================================
+
+-- Revoke any grants that might have been given to the anon role
+REVOKE ALL ON public.admin_credentials FROM anon;
+REVOKE ALL ON public.admin_credentials FROM authenticated;
+
+-- Grant SELECT only to authenticated users (via RLS policies above)
+GRANT SELECT ON public.admin_credentials TO authenticated;
+
+-- ============================================================================
+-- Migration complete
+-- ============================================================================
+
+-- Verification query (for manual testing):
+-- SELECT tablename, policyname, permissive, roles, cmd, qual, with_check
+-- FROM pg_policies
+-- WHERE schemaname = 'public' AND tablename = 'admin_credentials';

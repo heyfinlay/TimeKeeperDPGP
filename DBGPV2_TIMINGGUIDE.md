@@ -575,3 +575,477 @@ For management/debugging:
 ---
 
 _End of DBGP V2 Timing spec._
+
+
+1. Design goals for a “perfect” Control Panel
+
+Everything below is guided by 5 goals:
+
+Zero mental tax – in a live race you should never be hunting for buttons or wondering what state the system is in.
+
+One glance = full picture – phase, flags, clock, who’s leading, who’s in trouble.
+
+Bulletproof actions – every click does exactly one obvious thing, and you can always see the result.
+
+Marshal-friendly – marshals get a clean, single-driver-focused UI, not a noisy director view.
+
+Post-race truth – everything visible is reconstructable from the DB (no “magic client state”).
+
+2. Final Control Panel Layout (V3)
+
+Route: /control/:sessionId
+
+Think of the page as 4 horizontal bands:
+
+Global Header & Status Bar (top)
+
+Race Controls Strip (just below header)
+
+Driver Timing Grid (left 70%)
+
+Events / Logs & Context (right 30%)
+
+2.1 Global Header & Status Bar
+
+Always visible, pinned to top.
+
+Left: Session / Event info
+
+Series badge: DayBreak Grand Prix
+
+Session name: Paleto Bay GP – Race 1
+
+Event type: Race | Qualifying
+
+Session status chip: Draft | Scheduled | Active | Completed
+
+Phase chip (colour-coded):
+
+SETUP, WARMUP, GRID, RACE, FINISHED
+
+Centre: Race clock & laps
+
+Large race clock: MM:SS (or HH:MM:SS if long)
+
+Subtext:
+
+For laps mode: Laps: 23 / 30
+
+For time mode: Remaining: 12:34
+
+Right: Track + system health
+
+Track status pill:
+
+GREEN, YELLOW, VSC, SC, RED, CHECKERED
+
+Small health indicators:
+
+Realtime: Connected / Reconnecting / Offline
+
+Lap feed: Live / Lagging
+
+DB: OK / Error (e.g. if last RPC failed)
+
+All of this is read-only here – no controls in the header. It’s purely informational.
+
+2.2 Race Controls Strip (Command Bar)
+
+Just under the header, think of it as the “cockpit switches”.
+
+Left cluster – Phase controls
+
+Segmented control with clear states:
+
+Setup → Warmup → Grid → Race → Finished
+
+You can only move:
+
+Forward one step at a time
+
+Or back one step if the session hasn’t been marked Finished
+
+Each click:
+
+Calls update_session_state_atomic
+
+Logs to control_logs
+
+Adds a race_events entry like:
+"Phase changed: GRID → RACE by @Virgil"
+
+Middle cluster – Timing controls
+
+Buttons:
+
+Start Clock (only when phase = Race and is_timing = false)
+
+Pause / Resume (toggles based on is_paused)
+
+Finish (sets procedure_phase = 'finished', is_timing = false, track_status = 'checkered')
+
+Each button has:
+
+Short label + icon
+
+Sub-label: e.g. Space for Start/Pause/Resume hotkey
+
+Right cluster – Flag / track status control
+
+Horizontal pill group:
+
+Green, Yellow, VSC, SC, Red, Checkered
+
+Selecting a flag:
+
+Calls update_session_state_atomic with track_status
+
+Writes race_events ("Safety Car Deployed", "Green Flag – Racing Resumes")
+
+Optional confirmation only for Red flag and Checkered (to avoid misclicks).
+
+2.3 Driver Timing Grid (Main Body Left)
+
+This is where race control actually stares 90% of the time.
+
+2.3.1 Core table columns (per driver row)
+
+Columns, left to right:
+
+Pos – computed from laps, total_time_ms, classification
+
+Car / Team – car number + driver name + team chip
+
+Status – Running, Retired, DNF, DNS, Box, flags
+
+Laps – 21 or 21 / 30 (if total known)
+
+Last Lap – formatted + delta vs previous: 1:23.456 (+0.312)
+
+Best Lap – formatted + rank number (e.g. 1:22.900 (P2))
+
+Gap to Leader – +0.000 (leader) then +2.341, +12.455
+
+Interval – gap to car in front: –, +0.423, etc.
+
+Pits – 0, 1, 2 (maybe with 🔺 if they just pitted)
+
+Flags – icons:
+
+Blue, black, white flags for that driver
+
+Actions – inline minimal controls:
+
+Lap button
+
+Invalidate (dropdown / long-press)
+
+For race director, hotkeys are the default; buttons are backup / confirmation.
+
+2.3.2 Row interactions
+
+Click any driver row opens a side detail drawer (not modals):
+
+Tabs:
+
+Laps – list of laps with times + invalidation icons.
+
+Pit – pit in/out events + durations.
+
+Penalties – existing time penalties for this driver.
+
+Actions:
+
+Apply Penalty (opens a small inline form)
+
+Mark Retired
+
+Blue Flag / Black Flag toggle (sends event + sets driver_flag)
+
+This keeps the main grid clean but gives you deep powers when you need them.
+
+2.4 Events / Logs & Context (Right Panel)
+
+Split vertically into 2:
+
+Top: Race Events Feed
+
+E.g.
+
+12:03:21 – Green Flag
+
+12:04:10 – Lap 3 logged for #12 – 1:22.541
+
+12:05:33 – Safety Car deployed
+
+12:08:00 – Penalty +5s for #27 – Track limits
+
+Colored badges for type:
+
+Flag change / Lap / Penalty / Incident / System
+
+Bottom: Control Logs / System Feed
+
+More technical:
+
+“phase_changed by user”
+
+“log_lap_atomic success/failed”
+
+“invalidate_last_lap_atomic (remove_lap) for #8”
+
+Useful for debugging when something feels off.
+
+You can filter which stream is visible.
+
+3. Marshal Panel – “Perfect” Single-Driver View
+
+Route: /marshal/:sessionId (or /control/:sessionId?view=marshal)
+
+Imagine this on a second monitor for your 1–2 marshals.
+
+Layout:
+
+Top: same header strip but minimal (session, clock, track status).
+
+Middle: big driver tile
+
+Bottom: recent laps + quick incident reporting.
+
+Middle – Driver focus card
+
+Huge car number + driver name + team colours.
+
+Big lap timer:
+
+When race active and driver running:
+
+Shows current lap time ticking.
+
+Buttons (large, easy to hit):
+
+“LOG LAP” (primary, huge)
+
+INVALIDATE LAST (secondary; opens mode choice “Time Only / Remove Lap”)
+
+Quick status badges:
+
+Blue flag, Black flag, Box, Retired.
+
+Bottom – Laps list
+
+Last 5–10 laps:
+
+Lap 12 – 1:23.441 (-0.112)
+
+Lap 11 – 1:23.553 (+0.221)
+
+Each shows:
+
+valid / invalid badge
+
+Delta vs best and vs previous lap
+
+Invalidate action here only for last lap if allowed.
+
+Permissions & safety:
+
+Marshal can only touch:
+
+log_lap_atomic for their assigned driver
+
+invalidate_last_lap_atomic for that driver (optionally restricted)
+
+They cannot change session phase, flags, or other drivers.
+
+4. Behaviour & Interactions – Making It Feel Perfect
+4.1 Hotkeys
+
+Map to session-specific drivers (top 9 or top 12):
+
+1–9 – log lap for driver in that row index (order after sorting by position).
+
+Shift + 1–9 – invalidate last lap for that driver (with default mode remove_lap).
+
+Space – Start / Pause / Resume clock.
+
+R – Red flag (with confirm).
+
+G – Green flag.
+
+S – Safety car.
+
+V – VSC.
+
+C – Checkered flag (with confirm).
+
+W – Warmup.
+
+D – GriD.
+
+F – Finish.
+
+Show a tiny “Hotkeys” legend pinned bottom-left so new Race Directors can learn quickly.
+
+4.2 Sorting & Stability
+
+To avoid jitter:
+
+Primary sort:
+
+classification (FIN/Running vs DNF/Retired)
+
+then laps desc
+
+then total_time_ms asc.
+
+Smooth row movement:
+
+Animate changes in position (small slide/flash) instead of hard jumps.
+
+Keep per-driver row “anchored” by driver_id so UI doesn’t flicker when data updates.
+
+4.3 Gap & Interval Calculation
+
+For each driver:
+
+Leader’s reference:
+leader_time = leader.total_time_ms
+
+Gap to leader:
+
+gap_ms = driver.total_time_ms - leader_time
+
+
+Interval:
+
+interval_ms = driver.total_time_ms - car_in_front.total_time_ms
+
+
+If laps differ:
+
+Show +1 LAP, +2 LAPS instead of ms times.
+
+This logic should live in a shared helper (e.g. calculateGaps(drivers[])) so Control and Live Timing both use the same code.
+
+4.4 Red flag / Finish safety
+
+These are “dangerous” actions:
+
+Red flag:
+
+Pops mini confirmation:
+“Red flag this session? Clock will pause and track status will be RED.”
+
+Checkered / Finish:
+
+Confirmation that also hints:
+
+“This will stop the clock and set procedure to FINISHED. You can still finalize results later.”
+
+After confirm:
+
+Immediately log race_events:
+
+RED FLAG – Session Suspended
+
+CHECKERED FLAG – Race Finished
+
+5. Technical Hooks & Data Flow (How to Wire It)
+
+You can hand this section explicitly to Codex.
+
+5.1 Data sources used in Control Panel
+
+session_state:
+
+Phase, track status, timing flags, race clock base.
+
+sessions:
+
+Mode (race/quali), status (draft/active/completed).
+
+drivers:
+
+Laps, last/best, total time, status, flags, pits.
+
+laps (optional subscription):
+
+Lap feed and per-driver detail.
+
+race_events:
+
+Public race events feed.
+
+control_logs:
+
+System logs panel.
+
+All reads go via custom hooks like:
+
+useSessionState(sessionId)
+
+useSessionDrivers(sessionId)
+
+useRaceEvents(sessionId)
+
+useControlLogs(sessionId)
+
+5.2 All writes via RPCs
+
+From the Control Panel:
+
+Phase & track status:
+
+update_session_state_atomic
+
+Clock controls:
+
+same RPC with is_timing, is_paused, etc.
+
+Lap logging:
+
+log_lap_atomic
+
+Lap invalidation:
+
+invalidate_last_lap_atomic
+
+Penalties:
+
+apply_penalty
+
+Finalization:
+
+finalize_session_results (usually from admin sessions/results view).
+
+No direct .update('drivers') or .update('session_state') from the client.
+
+6. Small Polishes that Make It Feel “Pro”
+
+These are tiny, but they add a lot:
+
+Flashing row for updated driver
+When a lap logs, flash that driver row background for ~400ms.
+
+Delta color coding
+
+Faster than previous: green -0.123
+
+Slower: red +0.456
+
+Equal: grey +0.000
+
+Persistent leader highlight
+The P1 row has a subtle crown or highlight.
+
+Sticky header row
+Driver grid headers stick when you scroll.
+
+“Live” dot
+A pulsing dot near “Race Clock” when is_timing is true.
+
+Offline warning banner
+If realtime disconnects, show a small banner:
+
+“Realtime disconnected. You can still log laps, but updates may be delayed.”

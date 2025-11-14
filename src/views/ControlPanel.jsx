@@ -25,7 +25,6 @@
  */
 import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import DriverTimingPanel from '@/components/DriverTimingPanel.jsx';
 import SingleMarshalBoard from '@/components/SingleMarshalBoard.jsx';
 import { useSessionContext, useSessionId } from '@/state/SessionContext.jsx';
 import { SessionActionsProvider } from '@/context/SessionActionsContext.jsx';
@@ -34,10 +33,12 @@ import { isSupabaseConfigured, supabase } from '@/lib/supabaseClient.js';
 import { useAuth } from '@/context/AuthContext.jsx';
 import { TRACK_STATUS_OPTIONS, TRACK_STATUS_MAP } from '@/constants/trackStatus.js';
 import { DEFAULT_SESSION_STATE, sessionRowToState } from '@/utils/raceData.js';
-import { formatRaceClock } from '@/utils/time.js';
+import { formatRaceClock, formatLapTime } from '@/utils/time.js';
 import { logLapAtomic, invalidateLastLap } from '@/services/laps.js';
 import { finalizeAndExport } from '@/services/results.js';
 import { logPitEvent } from '@/services/pitEvents.js';
+
+const createFeedId = () => `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
 
 const roleLabels = {
   admin: 'Admin',
@@ -50,6 +51,36 @@ const PROCEDURE_PHASE_LABELS = {
   warmup: 'Warm-Up',
   grid: 'Grid',
   race: 'Race',
+  finished: 'Finished',
+};
+
+const PROCEDURE_SEQUENCE = ['setup', 'warmup', 'grid', 'race', 'finished'];
+
+const DRIVER_STATUS_META = {
+  ready: { label: 'Running', tone: 'text-emerald-200', bg: 'bg-emerald-500/10', border: 'border border-emerald-400/30' },
+  active: { label: 'Running', tone: 'text-emerald-200', bg: 'bg-emerald-500/10', border: 'border border-emerald-400/30' },
+  finished: { label: 'Finished', tone: 'text-violet-200', bg: 'bg-violet-500/15', border: 'border border-violet-400/30' },
+  retired: { label: 'Retired', tone: 'text-amber-200', bg: 'bg-amber-500/15', border: 'border border-amber-400/30' },
+  dnf: { label: 'DNF', tone: 'text-rose-200', bg: 'bg-rose-500/15', border: 'border border-rose-400/30' },
+  dns: { label: 'DNS', tone: 'text-slate-300', bg: 'bg-slate-500/15', border: 'border border-slate-500/30' },
+};
+
+const DRIVER_FLAG_META = {
+  none: { label: '—', tone: 'text-slate-400', dot: 'bg-slate-500/40' },
+  blue: { label: 'Blue', tone: 'text-sky-200', dot: 'bg-sky-400' },
+  black: { label: 'Black', tone: 'text-slate-100', dot: 'bg-slate-50' },
+  white: { label: 'White', tone: 'text-slate-100', dot: 'bg-white' },
+  yellow: { label: 'Yellow', tone: 'text-amber-200', dot: 'bg-amber-300' },
+  red: { label: 'Red', tone: 'text-rose-200', dot: 'bg-rose-300' },
+};
+
+const FLAG_HOTKEYS = {
+  KeyG: 'green',
+  KeyY: 'yellow',
+  KeyV: 'vsc',
+  KeyS: 'sc',
+  KeyR: 'red',
+  KeyC: 'checkered',
 };
 
 const toPanelDriver = (driver) => ({
@@ -77,6 +108,9 @@ const toPanelDriver = (driver) => ({
       : Number.isFinite(driver.total_time_ms)
         ? driver.total_time_ms
         : Number.parseInt(driver.total_time_ms, 10) || null,
+  status: driver.status ?? 'ready',
+  driver_flag: driver.driver_flag ?? 'none',
+  pit_complete: driver.pit_complete ?? false,
 });
 
 export default function ControlPanel() {
@@ -223,8 +257,20 @@ export default function ControlPanel() {
     onlyMine: driverScope.onlyMine && !!driverScope.userId,
     userId: driverScope.onlyMine ? driverScope.userId ?? undefined : undefined,
   });
+  useEffect(() => {
+    setDriverHeartbeatAt(Date.now());
+  }, [drivers]);
 
   const panelDrivers = useMemo(() => drivers.map(toPanelDriver), [drivers]);
+  const driverLookupRef = useRef({});
+  useEffect(() => {
+    const nextLookup = {};
+    panelDrivers.forEach((driver) => {
+      nextLookup[driver.id] = driver;
+    });
+    driverLookupRef.current = nextLookup;
+  }, [panelDrivers]);
+  const describeDriver = useCallback((driverId) => driverLookupRef.current[driverId] ?? null, []);
 
   const canWrite = !isSupabaseConfigured || hasAdminAccess || role === 'admin' || role === 'marshal';
   const resolvedRole = !isSupabaseConfigured || hasAdminAccess ? 'admin' : role ?? 'spectator';
@@ -249,6 +295,16 @@ export default function ControlPanel() {
 
   // -------- Session state (track status, announcements, race timer) ---------
   const [sessionState, setSessionState] = useState(DEFAULT_SESSION_STATE);
+  const [sessionHeartbeatAt, setSessionHeartbeatAt] = useState(Date.now());
+  const [driverHeartbeatAt, setDriverHeartbeatAt] = useState(Date.now());
+  const [eventFeed, setEventFeed] = useState([]);
+  const [controlFeed, setControlFeed] = useState([]);
+  const pushEventEntry = useCallback((entry) => {
+    setEventFeed((prev) => [{ id: createFeedId(), timestamp: new Date().toISOString(), ...entry }, ...prev].slice(0, 40));
+  }, []);
+  const pushControlEntry = useCallback((entry) => {
+    setControlFeed((prev) => [{ id: createFeedId(), timestamp: new Date().toISOString(), ...entry }, ...prev].slice(0, 40));
+  }, []);
   const [announcementDraft, setAnnouncementDraft] = useState('');
   const [isEditingAnnouncement, setIsEditingAnnouncement] = useState(false);
   const [sessionError, setSessionError] = useState(null);
@@ -291,6 +347,7 @@ export default function ControlPanel() {
   const applySessionStateRow = useCallback((row) => {
     const next = sessionRowToState(row);
     setSessionState(next);
+    setSessionHeartbeatAt(Date.now());
     // Only update announcementDraft if user is not actively editing
     setAnnouncementDraft(prev => isEditingAnnouncement ? prev : (next.announcement ?? ''));
     tickingRef.current = next.isTiming && !next.isPaused;
@@ -340,17 +397,22 @@ export default function ControlPanel() {
     return () => { supabase.removeChannel(channel); };
   }, [applySessionStateRow, sessionId]);
 
-  const persistSessionPatch = useCallback(async (patch) => {
-    if (!isSupabaseConfigured || !supabase) return;
-    const rows = [{ id: sessionId, session_id: sessionId, updated_at: new Date().toISOString(), ...patch }];
-    const { data, error } = await supabase
-      .from('session_state')
-      .upsert(rows, { onConflict: 'session_id' })
-      .select('*')
-      .maybeSingle();
-    if (error) throw error;
-    if (data) applySessionStateRow(data);
-  }, [applySessionStateRow, sessionId]);
+  const persistSessionPatch = useCallback(
+    async (patch = {}) => {
+      if (!isSupabaseConfigured || !supabase) {
+        return;
+      }
+      const { data, error } = await supabase.rpc('update_session_state_atomic', {
+        p_session_id: sessionId,
+        p_patch: patch,
+      });
+      if (error) throw error;
+      if (data?.session_state) {
+        applySessionStateRow(data.session_state);
+      }
+    },
+    [applySessionStateRow, isSupabaseConfigured, sessionId, supabase],
+  );
 
   const setProcedurePhase = useCallback(
     async (phase) => {
@@ -359,6 +421,13 @@ export default function ControlPanel() {
       setIsPhaseMutating(true);
       try {
         await persistSessionPatch({ procedure_phase: phase });
+        const phaseLabel = PROCEDURE_PHASE_LABELS[phase] ?? phase;
+        pushControlEntry({
+          kind: 'phase',
+          title: `Procedure → ${phaseLabel}`,
+          subtitle: `Updated by ${roleLabel}`,
+          accent: 'text-sky-200',
+        });
       } catch (error) {
         console.error('Failed to update procedure phase', error);
         setSessionError('Unable to update procedure phase.');
@@ -366,7 +435,7 @@ export default function ControlPanel() {
         setIsPhaseMutating(false);
       }
     },
-    [canWrite, persistSessionPatch, sessionState.procedurePhase],
+    [canWrite, persistSessionPatch, pushControlEntry, roleLabel, sessionState.procedurePhase],
   );
 
   const startTimer = useCallback(async () => {
@@ -391,17 +460,19 @@ export default function ControlPanel() {
     });
 
     try {
-      if (!isSupabaseConfigured || !supabase) {
-        await persistSessionPatch({ is_timing: true, is_paused: false, procedure_phase: 'race' });
-      } else {
-        await supabase.rpc('start_race_rpc', { p_session_id: sessionId });
-      }
+      await persistSessionPatch({ command: 'start_clock' });
+      pushControlEntry({
+        kind: 'timer',
+        title: 'Race timer started',
+        subtitle: 'Grid → Race',
+        accent: 'text-emerald-300',
+      });
     } catch (error) {
       console.error('Failed to start race timer', error);
       tickingRef.current = false;
       setSessionError('Unable to start race timer.');
     }
-  }, [canWrite, gridReadyConfirmed, persistSessionPatch, sessionState.procedurePhase, drivers, sessionId]);
+  }, [canWrite, gridReadyConfirmed, persistSessionPatch, pushControlEntry, sessionState.procedurePhase, drivers]);
 
   // SAFETY NET: Auto-arm driver lap timers for REMOTE clients/observers
   // When remote clients see procedurePhase change to 'race' via realtime,
@@ -431,32 +502,36 @@ export default function ControlPanel() {
     if (!canWrite) return;
     tickingRef.current = false;
     try {
-      if (!isSupabaseConfigured || !supabase) {
-        const current = computeDisplayTime();
-        await persistSessionPatch({ is_timing: true, is_paused: true, race_time_ms: current });
-      } else {
-        await supabase.rpc('pause_race_rpc', { p_session_id: sessionId });
-      }
+      const current = computeDisplayTime();
+      await persistSessionPatch({ command: 'pause_clock', race_time_ms: current });
+      pushControlEntry({
+        kind: 'timer',
+        title: 'Race paused',
+        subtitle: 'Timer held',
+        accent: 'text-amber-200',
+      });
     } catch (error) {
       console.error('Failed to pause race timer', error);
       setSessionError('Unable to pause race timer.');
     }
-  }, [canWrite, computeDisplayTime, persistSessionPatch, sessionId]);
+  }, [canWrite, computeDisplayTime, persistSessionPatch, pushControlEntry]);
 
   const resumeTimer = useCallback(async () => {
     if (!canWrite) return;
     tickingRef.current = true;
     try {
-      if (!isSupabaseConfigured || !supabase) {
-        await persistSessionPatch({ is_paused: false, is_timing: true });
-      } else {
-        await supabase.rpc('resume_race_rpc', { p_session_id: sessionId });
-      }
+      await persistSessionPatch({ command: 'resume_clock' });
+      pushControlEntry({
+        kind: 'timer',
+        title: 'Race resumed',
+        subtitle: 'Green flag',
+        accent: 'text-emerald-200',
+      });
     } catch (error) {
       console.error('Failed to resume race timer', error);
       setSessionError('Unable to resume race timer.');
     }
-  }, [canWrite, persistSessionPatch, sessionId]);
+  }, [canWrite, persistSessionPatch, pushControlEntry]);
 
   const resetTimer = useCallback(async () => {
     if (!canWrite) return;
@@ -473,8 +548,14 @@ export default function ControlPanel() {
       }
     });
 
-    await persistSessionPatch({ is_timing: false, is_paused: false, race_time_ms: 0, procedure_phase: 'setup' });
-  }, [canWrite, persistSessionPatch, drivers, sessionId]);
+    await persistSessionPatch({ command: 'reset_session', race_time_ms: 0, procedure_phase: 'setup' });
+    pushControlEntry({
+      kind: 'timer',
+      title: 'Session reset',
+      subtitle: 'Clock cleared',
+      accent: 'text-neutral-300',
+    });
+  }, [canWrite, persistSessionPatch, pushControlEntry, drivers, sessionId]);
 
   const finishRace = useCallback(async () => {
     if (!canWrite) return;
@@ -497,24 +578,24 @@ export default function ControlPanel() {
     });
 
     try {
-      if (!isSupabaseConfigured || !supabase) {
-        await persistSessionPatch({ is_timing: false, is_paused: false, race_time_ms: current, procedure_phase: 'setup' });
-      } else {
-        await supabase.rpc('finish_race_rpc', { p_session_id: sessionId });
-
-        if (shouldExport) {
-          // Finalize results and export CSV
-          const sessionName = sessionState.eventType || 'Session';
-          await finalizeAndExport(sessionId, sessionName);
-          setSessionError(null); // Clear any previous errors
-          alert('Results finalized and downloaded successfully!');
-        }
+      await persistSessionPatch({ command: 'finish_session', race_time_ms: current });
+      if (shouldExport && isSupabaseConfigured && supabase) {
+        const sessionName = sessionState.eventType || 'Session';
+        await finalizeAndExport(sessionId, sessionName);
+        setSessionError(null);
+        alert('Results finalized and downloaded successfully!');
       }
+      pushControlEntry({
+        kind: 'timer',
+        title: 'Race finished',
+        subtitle: shouldExport ? 'Results exported' : 'Timing stopped',
+        accent: 'text-emerald-200',
+      });
     } catch (error) {
       console.error('Failed to finish race', error);
       setSessionError(error.message || 'Unable to finish race.');
     }
-  }, [canWrite, computeDisplayTime, persistSessionPatch, drivers, sessionId, sessionState.eventType]);
+  }, [canWrite, computeDisplayTime, isSupabaseConfigured, persistSessionPatch, pushControlEntry, drivers, sessionId, sessionState.eventType, supabase]);
 
   // SAFETY NET: Clear driver lap timers for REMOTE clients/observers
   // When remote clients see procedurePhase change to 'setup' via realtime,
@@ -553,11 +634,28 @@ export default function ControlPanel() {
     const normalized = TRACK_STATUS_MAP[statusId] ? statusId : 'green';
     try {
       await persistSessionPatch({ track_status: normalized, flag_status: normalized });
+      const statusLabel = TRACK_STATUS_MAP[normalized]?.label ?? normalized;
+      pushControlEntry({
+        kind: 'flag',
+        title: `Track status → ${statusLabel}`,
+        subtitle: TRACK_STATUS_MAP[normalized]?.description ?? '',
+        accent: 'text-cyan-200',
+      });
     } catch (error) {
       console.error('Failed to update track status', error);
       setSessionError('Unable to update track status.');
     }
-  }, [canWrite, persistSessionPatch]);
+  }, [canWrite, persistSessionPatch, pushControlEntry]);
+
+  const handleTrackStatusClick = useCallback(
+    async (statusId) => {
+      if ((statusId === 'red' || statusId === 'checkered') && !window.confirm(`Confirm ${TRACK_STATUS_MAP[statusId]?.label ?? statusId}?`)) {
+        return;
+      }
+      await setTrackStatus(statusId);
+    },
+    [setTrackStatus],
+  );
 
   const updateAnnouncement = useCallback(async () => {
     if (!canWrite) return;
@@ -565,11 +663,17 @@ export default function ControlPanel() {
       const text = (announcementDraft ?? '').slice(0, 500);
       await persistSessionPatch({ announcement: text });
       setIsEditingAnnouncement(false); // Stop editing after successful update
+      pushControlEntry({
+        kind: 'announcement',
+        title: text ? 'Announcement updated' : 'Announcement cleared',
+        subtitle: text || 'No active announcements',
+        accent: 'text-purple-200',
+      });
     } catch (error) {
       console.error('Failed to update announcement', error);
       setSessionError('Unable to update announcement.');
     }
-  }, [announcementDraft, canWrite, persistSessionPatch]);
+  }, [announcementDraft, canWrite, persistSessionPatch, pushControlEntry]);
 
   // ---------------- Keyboard Hotkeys -----------------
   const HOTKEYS_STORAGE_KEY = `timekeeper.hotkeys.v1`;
@@ -638,6 +742,72 @@ export default function ControlPanel() {
 
   const [displayTime, setDisplayTime] = useState(0);
   const [currentLapTimes, setCurrentLapTimes] = useState({});
+  const computeGapLabel = useCallback((leader, target) => {
+    if (!leader || !target || leader.id === target.id) {
+      return 'Leader';
+    }
+    const leaderLaps = leader.laps ?? 0;
+    const targetLaps = target.laps ?? 0;
+    const lapDiff = leaderLaps - targetLaps;
+    if (lapDiff > 0) {
+      return `+${lapDiff} lap${lapDiff > 1 ? 's' : ''}`;
+    }
+    const leaderTime = Number.isFinite(leader.total_time_ms) ? leader.total_time_ms : null;
+    const targetTime = Number.isFinite(target.total_time_ms) ? target.total_time_ms : null;
+    if (leaderTime !== null && targetTime !== null) {
+      const diff = targetTime - leaderTime;
+      if (diff > 0) {
+        return `+${formatLapTime(diff)}`;
+      }
+    }
+    return '—';
+  }, []);
+  const driverRows = useMemo(() => {
+    const sorted = [...panelDrivers].sort((a, b) => {
+      const lapsA = a.laps ?? 0;
+      const lapsB = b.laps ?? 0;
+      if (lapsA !== lapsB) {
+        return lapsB - lapsA;
+      }
+      const timeA = Number.isFinite(a.total_time_ms) ? a.total_time_ms : Number.POSITIVE_INFINITY;
+      const timeB = Number.isFinite(b.total_time_ms) ? b.total_time_ms : Number.POSITIVE_INFINITY;
+      return timeA - timeB;
+    });
+    const leader = sorted[0] ?? null;
+    return sorted.map((driver, index) => {
+      const prev = index > 0 ? sorted[index - 1] : null;
+      return {
+        ...driver,
+        position: index + 1,
+        gap: index === 0 ? 'Leader' : computeGapLabel(leader, driver),
+        interval: prev ? computeGapLabel(prev, driver) : '—',
+        liveLap: currentLapTimes[driver.id] ?? null,
+        lastLapDelta:
+          prev && Number.isFinite(driver.last_lap_ms) && Number.isFinite(prev.last_lap_ms)
+            ? driver.last_lap_ms - prev.last_lap_ms
+            : null,
+      };
+    });
+  }, [panelDrivers, computeGapLabel, currentLapTimes]);
+  const bestLapRanks = useMemo(() => {
+    const ranking = new Map();
+    const valid = panelDrivers
+      .filter((driver) => Number.isFinite(driver.best_lap_ms) && driver.best_lap_ms > 0)
+      .sort((a, b) => a.best_lap_ms - b.best_lap_ms);
+    valid.forEach((driver, index) => {
+      ranking.set(driver.id, index + 1);
+    });
+    return ranking;
+  }, [panelDrivers]);
+  const resolveHealthState = useCallback((ageMs) => {
+    if (ageMs <= 6000) {
+      return { label: 'Live', tone: 'text-emerald-200', dot: 'bg-emerald-400' };
+    }
+    if (ageMs <= 15000) {
+      return { label: 'Lagging', tone: 'text-amber-200', dot: 'bg-amber-400' };
+    }
+    return { label: 'Offline', tone: 'text-rose-200', dot: 'bg-rose-400' };
+  }, []);
   const pauseEpochRef = useRef(null);
   const wasPausedRef = useRef(sessionState.isPaused);
 
@@ -734,12 +904,19 @@ export default function ControlPanel() {
         const lapTime = Math.max(1, now - armed);
         await logLapAtomic({ sessionId, driverId, lapTimeMs: lapTime });
         setArmedStart(driverId, now);
+        const driverInfo = describeDriver(driverId);
+        pushEventEntry({
+          kind: 'lap',
+          title: `${driverInfo?.name ?? 'Driver'} lap logged`,
+          subtitle: driverInfo?.number ? `Car #${driverInfo.number}` : null,
+          accent: 'text-emerald-300',
+        });
       } catch (err) {
         console.error('Panel log lap failed', err);
         setSessionError(`Lap logging failed: ${err.message || 'Unknown error'}`);
       }
     },
-    [canWrite, getArmedStart, setArmedStart, sessionId, setSessionError, sessionState.procedurePhase, sessionState.isTiming],
+    [canWrite, describeDriver, getArmedStart, pushEventEntry, setArmedStart, sessionId, setSessionError, sessionState.procedurePhase, sessionState.isTiming],
   );
 
   const handlePitIn = useCallback(
@@ -747,12 +924,19 @@ export default function ControlPanel() {
       if (!canWrite || !driverId) return;
       try {
         await logPitEvent({ sessionId, driverId, eventType: 'in' });
+        const driverInfo = describeDriver(driverId);
+        pushEventEntry({
+          kind: 'pit',
+          title: `${driverInfo?.name ?? 'Driver'} entered pit`,
+          subtitle: driverInfo?.number ? `Car #${driverInfo.number}` : null,
+          accent: 'text-amber-300',
+        });
       } catch (err) {
         console.error('Pit in failed', err);
         setSessionError(`Pit in failed: ${err.message || 'Unknown error'}`);
       }
     },
-    [canWrite, sessionId]
+    [canWrite, describeDriver, pushEventEntry, sessionId]
   );
 
   const handlePitOut = useCallback(
@@ -760,12 +944,19 @@ export default function ControlPanel() {
       if (!canWrite || !driverId) return;
       try {
         await logPitEvent({ sessionId, driverId, eventType: 'out' });
+        const driverInfo = describeDriver(driverId);
+        pushEventEntry({
+          kind: 'pit',
+          title: `${driverInfo?.name ?? 'Driver'} exited pit`,
+          subtitle: driverInfo?.number ? `Car #${driverInfo.number}` : null,
+          accent: 'text-cyan-300',
+        });
       } catch (err) {
         console.error('Pit out failed', err);
         setSessionError(`Pit out failed: ${err.message || 'Unknown error'}`);
       }
     },
-    [canWrite, sessionId]
+    [canWrite, describeDriver, pushEventEntry, sessionId]
   );
 
   const handleInvalidateLap = useCallback(
@@ -773,6 +964,16 @@ export default function ControlPanel() {
       if (!canWrite || !driverId) return false;
       try {
         await invalidateLastLap({ sessionId, driverId, mode });
+        const driverInfo = describeDriver(driverId);
+        pushEventEntry({
+          kind: 'lap',
+          title:
+            mode === 'remove_lap'
+              ? `${driverInfo?.name ?? 'Driver'} lap removed`
+              : `${driverInfo?.name ?? 'Driver'} lap invalidated`,
+          subtitle: driverInfo?.number ? `Car #${driverInfo.number}` : null,
+          accent: mode === 'remove_lap' ? 'text-rose-300' : 'text-amber-200',
+        });
         return true;
       } catch (err) {
         console.error('Lap invalidation failed', err);
@@ -780,7 +981,7 @@ export default function ControlPanel() {
         return false;
       }
     },
-    [canWrite, sessionId, setSessionError],
+    [canWrite, describeDriver, pushEventEntry, sessionId, setSessionError],
   );
 
   const togglePitComplete = useCallback(
@@ -806,7 +1007,7 @@ export default function ControlPanel() {
         setSessionError('Unable to toggle pit status.');
       }
     },
-    [canWrite, sessionId],
+    [canWrite, isSupabaseConfigured, sessionId, setSessionError, supabase],
   );
 
   const normalizeKey = (k) => (typeof k === 'string' ? k.toLowerCase() : '');
@@ -857,11 +1058,45 @@ export default function ControlPanel() {
   const handleHotkey = useCallback(
     async (event) => {
       if (!canWrite) return;
-      // ignore typing in inputs
       const tag = (event.target?.tagName || '').toLowerCase();
       if (tag === 'input' || tag === 'textarea' || event.isComposing) return;
       if (event.type !== 'keyup') return;
+      const code = event.code || '';
+
+      if (code === 'Space') {
+        event.preventDefault();
+        if (sessionState.isTiming && !sessionState.isPaused) {
+          await pauseTimer();
+          return;
+        }
+        if (sessionState.isTiming && sessionState.isPaused) {
+          await resumeTimer();
+          return;
+        }
+        if (!sessionState.isTiming && sessionState.procedurePhase === 'grid' && gridReadyConfirmed) {
+          await startTimer();
+        }
+        return;
+      }
+
+      if (code === 'KeyF' && sessionState.procedurePhase === 'race') {
+        event.preventDefault();
+        await finishRace();
+        return;
+      }
+
+      const flagTarget = FLAG_HOTKEYS[code];
+      if (flagTarget) {
+        event.preventDefault();
+        if ((flagTarget === 'red' || flagTarget === 'checkered') && !window.confirm(`Confirm ${flagTarget} flag?`)) {
+          return;
+        }
+        await setTrackStatus(flagTarget);
+        return;
+      }
+
       const index = resolveIndexFromEvent(event);
+      if (index === -1) return;
       const driver = drivers[index];
       if (!driver) return;
 
@@ -875,8 +1110,6 @@ export default function ControlPanel() {
           await togglePitComplete(driver);
           return;
         }
-        // Log a lap using armed start time per driver
-        // Do NOT manually arm timers - they are auto-armed on race start
         const armed = getArmedStart(driver.id);
         const now = Date.now();
         if (!armed) {
@@ -886,7 +1119,11 @@ export default function ControlPanel() {
             `Cannot log lap via hotkey: timer not armed. Driver: ${driver.name}, Phase: ${currentPhase}, isTiming: ${isTiming}`
           );
           setSessionError(
-            `Cannot log lap for ${driver.name} - timer not armed. Current phase: ${currentPhase}. ${currentPhase !== 'race' ? 'Start the race first (Grid → Grid Ready → Start Race).' : 'Race is running but timer not armed - check localStorage.'}`
+            `Cannot log lap for ${driver.name} - timer not armed. Current phase: ${currentPhase}. ${
+              currentPhase !== 'race'
+                ? 'Start the race first (Grid → Grid Ready → Start Race).'
+                : 'Race is running but timer not armed - check localStorage.'
+            }`
           );
           return;
         }
@@ -898,7 +1135,26 @@ export default function ControlPanel() {
         setSessionError(`Hotkey failed: ${err.message || 'Unknown error'}`);
       }
     },
-    [canWrite, drivers, handleInvalidateLap, togglePitComplete, hotkeys, getArmedStart, setArmedStart, sessionId, setSessionError, sessionState.procedurePhase, sessionState.isTiming],
+    [
+      canWrite,
+      drivers,
+      finishRace,
+      gridReadyConfirmed,
+      handleInvalidateLap,
+      hotkeys,
+      getArmedStart,
+      pauseTimer,
+      resumeTimer,
+      setArmedStart,
+      setSessionError,
+      sessionId,
+      sessionState.isPaused,
+      sessionState.isTiming,
+      sessionState.procedurePhase,
+      setTrackStatus,
+      startTimer,
+      togglePitComplete,
+    ],
   );
 
   useEffect(() => {
@@ -952,6 +1208,41 @@ export default function ControlPanel() {
     [handleInvalidateLap],
   );
 
+  const sessionStatusLabel = useMemo(() => {
+    if (procedurePhase === 'finished') return 'Completed';
+    if (procedurePhase === 'race' || procedurePhase === 'grid') return 'Active';
+    if (procedurePhase === 'warmup') return 'Warm-Up';
+    return 'Scheduled';
+  }, [procedurePhase]);
+  const phaseChipClass = useMemo(() => {
+    switch (procedurePhase) {
+      case 'grid':
+        return 'border-cyan-400/40 bg-cyan-500/20 text-cyan-100';
+      case 'race':
+        return 'border-emerald-400/40 bg-emerald-500/20 text-emerald-100';
+      case 'finished':
+        return 'border-violet-400/40 bg-violet-500/20 text-violet-100';
+      case 'warmup':
+        return 'border-amber-400/40 bg-amber-500/20 text-amber-100';
+      default:
+        return 'border-white/10 bg-white/5 text-white/80';
+    }
+  }, [procedurePhase]);
+  const now = Date.now();
+  const realtimeHealth = resolveHealthState(Math.max(0, now - sessionHeartbeatAt));
+  const lapFeedHealth = resolveHealthState(Math.max(0, now - driverHeartbeatAt));
+  const dbHealth = sessionError
+    ? { label: 'Error', tone: 'text-rose-200', dot: 'bg-rose-500' }
+    : { label: 'OK', tone: 'text-emerald-200', dot: 'bg-emerald-400' };
+  const trackStatusMeta = TRACK_STATUS_MAP[sessionState.trackStatus] ?? TRACK_STATUS_OPTIONS[0];
+  const leaderLaps = Number.isFinite(driverRows[0]?.laps) ? driverRows[0].laps : 0;
+  const lapProgressLabel = sessionState.totalLaps
+    ? `${Math.max(leaderLaps || 0, 0)} / ${sessionState.totalLaps}`
+    : leaderLaps || '—';
+  const eventFeedItems = eventFeed.slice(0, 10);
+  const controlFeedItems = controlFeed.slice(0, 10);
+  const driverTableEmpty = !drivers.length && !isDriversLoading;
+
   const layoutButtonClass = (mode) =>
     mode === layoutMode
       ? 'border-white/40 bg-white/15 text-white'
@@ -960,331 +1251,579 @@ export default function ControlPanel() {
   return (
     <SessionActionsProvider value={sessionActionsValue}>
       <div className="mx-auto flex w-full max-w-6xl flex-col gap-6">
-      <header className="flex flex-col gap-3 text-center">
-        <h1 className="text-3xl font-semibold text-white">Race control</h1>
-        <p className="text-sm text-neutral-400">Manage lap timing and marshal operations for the active session.</p>
-        <div className="mt-4 flex flex-wrap items-center justify-center gap-3 text-xs uppercase tracking-[0.35em] text-neutral-400">
-          <span className="rounded-full border border-white/10 px-4 py-2 text-white/80">Session {sessionId.slice(0, 8)}…</span>
-          <span className="rounded-full border border-white/5 bg-white/5 px-4 py-2 text-white/90">{roleLabel}</span>
-          <button
-            type="button"
-            onClick={() => refresh?.()}
-            disabled={isDriversLoading}
-            className="rounded-full border border-white/10 px-4 py-2 font-semibold uppercase tracking-[0.35em] text-white/70 transition hover:border-white/40 hover:text-white disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            {isDriversLoading ? 'Refreshing…' : 'Refresh'}
-          </button>
-          <div className="flex gap-2">
-            <button
-              type="button"
-              onClick={() => setLayoutMode('control')}
-              className={`rounded-full border px-4 py-2 font-semibold uppercase tracking-[0.35em] transition ${layoutButtonClass('control')}`}
-            >
-              Control Layout
-            </button>
-            <button
-              type="button"
-              onClick={() => setLayoutMode('marshal')}
-              className={`rounded-full border px-4 py-2 font-semibold uppercase tracking-[0.35em] transition ${layoutButtonClass('marshal')}`}
-            >
-              Marshal Layout
-            </button>
+        <section className="rounded-3xl border border-white/5 bg-[#04060C]/95 p-6 text-white shadow-2xl shadow-black/60">
+          <div className="flex flex-wrap items-start justify-between gap-6">
+            <div className="space-y-3">
+              <p className="text-xs uppercase tracking-[0.45em] text-sky-300/80">DayBreak Grand Prix</p>
+              <h1 className="text-3xl font-semibold">Race Control</h1>
+              <div className="flex flex-wrap gap-2 text-xs uppercase tracking-[0.35em] text-neutral-400">
+                <span className="rounded-full border border-white/10 px-3 py-1 text-white/80">Session {sessionId.slice(0, 8)}…</span>
+                <span className="rounded-full border border-white/10 px-3 py-1 text-white/90">{roleLabel}</span>
+                <span className="rounded-full border border-white/10 px-3 py-1 text-white/90">{sessionStatusLabel}</span>
+                <span className={`rounded-full px-3 py-1 font-semibold ${phaseChipClass}`}>
+                  {procedurePhaseLabel}
+                </span>
+              </div>
+            </div>
+            <div className="text-right">
+              <p className="font-mono text-5xl tracking-tight">{formatRaceClock(displayTime)}</p>
+              <p className="text-sm text-neutral-400">Laps {lapProgressLabel}</p>
+            </div>
+            <div className="space-y-3">
+              <div className="rounded-2xl border border-white/10 bg-black/40 px-4 py-3">
+                <p className="text-[10px] uppercase tracking-[0.4em] text-neutral-500">Track</p>
+                <p className="text-lg font-semibold">
+                  {trackStatusMeta?.label ?? 'Green Flag'}
+                </p>
+                <p className="text-xs text-neutral-400">
+                  {trackStatusMeta?.description ?? 'Track clear. Full racing speed permitted.'}
+                </p>
+              </div>
+              <div className="space-y-2 text-xs text-neutral-400">
+                {[ 
+                  { label: 'Realtime', health: realtimeHealth },
+                  { label: 'Lap Feed', health: lapFeedHealth },
+                  { label: 'DB', health: dbHealth },
+                ].map((indicator) => (
+                  <div key={indicator.label} className="flex items-center gap-2">
+                    <span className={`h-2.5 w-2.5 rounded-full ${indicator.health.dot}`} />
+                    <span className="text-[10px] uppercase tracking-[0.35em]">{indicator.label}</span>
+                    <span className={`text-sm font-semibold ${indicator.health.tone}`}>
+                      {indicator.health.label}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
           </div>
-        </div>
-      </header>
-
-      {roleError ? (
-        <div className="rounded-2xl border border-rose-500/40 bg-rose-500/10 px-6 py-4 text-sm text-rose-200">{roleError}</div>
-      ) : null}
-      {driversError ? (
-        <div className="rounded-2xl border border-rose-500/40 bg-rose-500/10 px-6 py-4 text-sm text-rose-200">
-          {driversError}
-        </div>
-      ) : null}
-      {sessionError ? (
-        <div className="rounded-2xl border border-rose-500/40 bg-rose-500/10 px-6 py-4 text-sm text-rose-200">{sessionError}</div>
-      ) : null}
-
-      {isRoleLoading ? (
-        <div className="flex min-h-[20vh] items-center justify-center text-sm text-neutral-400">Resolving access…</div>
-      ) : null}
-      {!isRoleLoading && resolvedRole === 'spectator' && isSupabaseConfigured ? (
-        <div className="rounded-3xl border border-white/5 bg-[#060910]/80 px-6 py-5 text-center text-sm text-neutral-300">
-          <p className="text-base font-semibold text-white">Spectator access</p>
-          <p className="mt-2 text-neutral-400">
-            You do not have marshal permissions for this session. Timing data will appear once a marshal assigns you to drivers.
-          </p>
-        </div>
-      ) : null}
-
-      {!isMarshalLayout ? (
-        <section className="grid gap-6 md:grid-cols-2">
-          <div className="rounded-3xl border border-white/5 bg-[#060910]/80 p-6">
-            <p className="text-xs uppercase tracking-widest text-neutral-400">Track Status</p>
-            <p className="mt-1 text-xl font-semibold text-white">{TRACK_STATUS_MAP[sessionState.trackStatus]?.label ?? 'Green Flag'}</p>
-            <p className="mt-1 text-sm text-neutral-400">{TRACK_STATUS_MAP[sessionState.trackStatus]?.description ?? 'Track clear. Full racing speed permitted.'}</p>
-          </div>
-          <div className="rounded-3xl border border-white/5 bg-[#060910]/80 p-6">
-            <p className="text-xs uppercase tracking-widest text-neutral-400">Live Announcements</p>
-            <p className="mt-1 text-sm text-neutral-300">{sessionState.announcement?.trim() ? sessionState.announcement : 'No active announcements.'}</p>
-            <div className="mt-4 flex gap-3">
-              <input
-                type="text"
-                value={announcementDraft}
-                onChange={(e) => {
-                  setAnnouncementDraft(e.target.value);
-                  setIsEditingAnnouncement(true);
-                }}
-                onFocus={() => setIsEditingAnnouncement(true)}
-                onBlur={() => setIsEditingAnnouncement(false)}
-                placeholder="Enter live message..."
-                disabled={!canWrite}
-                className="flex-1 rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-sm text-white placeholder:text-neutral-500 focus:outline-none focus:ring-2 focus:ring-white/20 disabled:cursor-not-allowed disabled:opacity-60"
-              />
+          <div className="mt-6 flex flex-wrap items-center justify-between gap-3">
+            <div className="flex flex-wrap items-center gap-3">
               <button
                 type="button"
-                onClick={updateAnnouncement}
-                disabled={!canWrite}
-                className="rounded-xl bg-emerald-700 px-4 py-2 text-sm font-semibold text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400 disabled:cursor-not-allowed disabled:opacity-60"
+                onClick={() => refresh?.()}
+                disabled={isDriversLoading}
+                className="rounded-full border border-white/10 px-4 py-2 text-xs font-semibold uppercase tracking-[0.35em] text-white/80 transition hover:border-white/30 hover:text-white disabled:cursor-not-allowed disabled:opacity-60"
               >
-                Update
+                {isDriversLoading ? 'Refreshing…' : 'Refresh Data'}
               </button>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => setLayoutMode('control')}
+                  className={`rounded-full border px-4 py-2 text-xs font-semibold uppercase tracking-[0.35em] transition ${layoutButtonClass('control')}`}
+                >
+                  Control Layout
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setLayoutMode('marshal')}
+                  className={`rounded-full border px-4 py-2 text-xs font-semibold uppercase tracking-[0.35em] transition ${layoutButtonClass('marshal')}`}
+                >
+                  Marshal Layout
+                </button>
+              </div>
+            </div>
+            <div className="flex items-center gap-3 text-xs uppercase tracking-[0.35em] text-neutral-400">
+              <span className="rounded-full border border-white/10 px-3 py-1">{sessionState.eventType}</span>
+              <span className="rounded-full border border-white/10 px-3 py-1">{sessionState.totalLaps} laps</span>
+              <span className="rounded-full border border-white/10 px-3 py-1">{sessionState.totalDuration} min</span>
             </div>
           </div>
         </section>
-      ) : null}
 
-      {!isMarshalLayout ? (
-        <section className="rounded-3xl border border-white/5 bg-[#05070F]/80 p-6">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <p className="text-white">
-              <span className="font-semibold">{sessionState.eventType}</span>
-              <span className="mx-2 text-neutral-500">•</span>
-              <span className="text-neutral-300">{sessionState.totalLaps} laps target</span>
-              <span className="mx-2 text-neutral-500">•</span>
-              <span className="text-neutral-300">{sessionState.totalDuration} min duration</span>
+        {roleError ? (
+          <div className="rounded-2xl border border-rose-500/40 bg-rose-500/10 px-6 py-4 text-sm text-rose-200">{roleError}</div>
+        ) : null}
+        {driversError ? (
+          <div className="rounded-2xl border border-rose-500/40 bg-rose-500/10 px-6 py-4 text-sm text-rose-200">{driversError}</div>
+        ) : null}
+        {sessionError ? (
+          <div className="rounded-2xl border border-rose-500/40 bg-rose-500/10 px-6 py-4 text-sm text-rose-200">{sessionError}</div>
+        ) : null}
+
+        {isRoleLoading ? (
+          <div className="flex min-h-[20vh] items-center justify-center text-sm text-neutral-400">Resolving access…</div>
+        ) : null}
+
+        {!isRoleLoading && resolvedRole === 'spectator' && isSupabaseConfigured ? (
+          <div className="rounded-3xl border border-white/5 bg-[#060910]/80 px-6 py-5 text-center text-sm text-neutral-300">
+            <p className="text-base font-semibold text-white">Spectator access</p>
+            <p className="mt-2 text-neutral-400">
+              You do not have marshal permissions for this session. Timing data will appear once a marshal assigns you to drivers.
             </p>
           </div>
-          <div className="rounded-xl border border-white/10 bg-black/30 px-3 py-1 text-sm text-white/90">
-            {formatRaceClock(displayTime)}
-          </div>
-        </div>
-
-        <div className="mt-4 flex flex-wrap items-center gap-3">
-          <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-white/10 bg-white/5 px-3 py-2">
-            <div className="flex items-center gap-2 text-xs text-neutral-400">
-              <span className="text-[10px] uppercase tracking-[0.35em]">Procedure</span>
-              <span className="text-sm font-semibold text-white">{procedurePhaseLabel}</span>
-            </div>
-            <div className="h-6 w-px bg-white/10" />
-            <button
-              type="button"
-              disabled={!canWrite || isPhaseMutating || isRacePhase || procedurePhase === 'warmup'}
-              onClick={() => setProcedurePhase('warmup')}
-              className={`rounded-xl border px-3 py-2 text-xs font-semibold focus:outline-none focus-visible:ring-2 focus-visible:ring-white/30 disabled:cursor-not-allowed disabled:opacity-60 ${
-                procedurePhase === 'warmup'
-                  ? 'border-amber-400/40 bg-amber-500/20 text-amber-100'
-                  : 'border-white/10 bg-black/30 text-white/80 hover:bg-white/10'
-              }`}
-            >
-              Begin Warm-Up
-            </button>
-            <button
-              type="button"
-              disabled={!canWrite || isPhaseMutating || isRacePhase || procedurePhase === 'grid'}
-              onClick={() => setProcedurePhase('grid')}
-              className={`rounded-xl border px-3 py-2 text-xs font-semibold focus:outline-none focus-visible:ring-2 focus-visible:ring-white/30 disabled:cursor-not-allowed disabled:opacity-60 ${
-                procedurePhase === 'grid'
-                  ? 'border-cyan-400/40 bg-cyan-500/20 text-cyan-100'
-                  : 'border-white/10 bg-black/30 text-white/80 hover:bg-white/10'
-              }`}
-            >
-              Move to Grid
-            </button>
-          </div>
-          <label className="flex items-center gap-2 rounded-2xl border border-white/10 bg-white/5 px-3 py-2 text-xs text-neutral-300">
-            <input
-              type="checkbox"
-              checked={gridReadyConfirmed}
-              onChange={(event) => {
-                if (!isGridPhase) return;
-                setGridReadyConfirmed(event.target.checked);
-              }}
-              disabled={!canWrite || !isGridPhase || isPhaseMutating || isRacePhase}
-              className="h-4 w-4 rounded border border-white/20 bg-black/40 text-emerald-400 focus:ring-emerald-400"
-            />
-            <span className="text-[11px] font-semibold text-neutral-100">Grid ready for race start</span>
-          </label>
-
-          <button
-            type="button"
-            disabled={!canWrite || sessionState.isTiming || !isGridPhase || !gridReadyConfirmed}
-            onClick={startTimer}
-            className="rounded-xl border border-emerald-500/40 bg-emerald-600/20 px-3 py-2 text-sm font-semibold text-emerald-200 hover:bg-emerald-600/30 disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            Start Timer
-          </button>
-          <button
-            type="button"
-            disabled={!canWrite || !sessionState.isTiming || sessionState.isPaused}
-            onClick={pauseTimer}
-            className="rounded-xl border border-amber-400/40 bg-amber-500/20 px-3 py-2 text-sm font-semibold text-amber-100 hover:bg-amber-500/30 disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            Pause Timer
-          </button>
-          <button
-            type="button"
-            disabled={!canWrite || !sessionState.isTiming || !sessionState.isPaused}
-            onClick={resumeTimer}
-            className="rounded-xl border border-cyan-400/40 bg-cyan-500/20 px-3 py-2 text-sm font-semibold text-cyan-100 hover:bg-cyan-500/30 disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            Resume Timer
-          </button>
-          <button
-            type="button"
-            disabled={!canWrite || !sessionState.isTiming}
-            onClick={finishRace}
-            className="rounded-xl border border-emerald-500/40 bg-emerald-600/20 px-3 py-2 text-sm font-semibold text-emerald-200 hover:bg-emerald-600/30 disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            Finish Race
-          </button>
-          <button
-            type="button"
-            disabled={!canWrite}
-            onClick={resetTimer}
-            className="rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm font-semibold text-white/80 hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            Reset Timer
-          </button>
-
-          <div className="h-6 w-px bg-white/10" />
-
-          {TRACK_STATUS_OPTIONS.map((opt) => (
-            <button
-              key={`control-${opt.id}`}
-              type="button"
-              disabled={!canWrite}
-              onClick={() => setTrackStatus(opt.id)}
-              className={`rounded-xl px-3 py-2 text-sm font-semibold text-white/90 focus:outline-none focus-visible:ring-2 ${opt.controlClass} disabled:cursor-not-allowed disabled:opacity-60`}
-            >
-              {opt.shortLabel}
-            </button>
-          ))}
-
-          <div className="h-6 w-px bg-white/10" />
-          <button
-            type="button"
-            onClick={() => setIsEditingHotkeys((v) => !v)}
-            className="rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm font-semibold text-white/80 hover:bg-white/10"
-          >
-            {isEditingHotkeys ? 'Close Hotkeys' : 'Hotkey Settings'}
-          </button>
-        </div>
-        <p className="mt-3 text-[10px] uppercase tracking-[0.35em] text-neutral-500">Keyboard hotkeys 1-0 log laps, shift toggles pit, and Alt invalidates the last lap.</p>
-
-        {isEditingHotkeys ? (
-          <div className="mt-4 rounded-2xl border border-white/10 bg-black/30 p-4">
-            <p className="text-xs uppercase tracking-[0.35em] text-neutral-400">Configure Hotkeys</p>
-            <div className="mt-3 grid grid-cols-2 gap-2 md:grid-cols-5">
-              {hotkeyDraft.keys.map((val, idx) => (
-                <label key={idx} className="flex items-center gap-2 text-xs text-neutral-300">
-                  <span className="w-16 text-neutral-500">Slot {idx + 1}</span>
-                  <input
-                    value={val}
-                    onChange={(e) => updateKeyDraft(idx, e.target.value)}
-                    placeholder={String(idx + 1)}
-                    className="flex-1 rounded-md border border-white/10 bg-black/40 px-2 py-1 text-sm text-white placeholder:text-neutral-600 focus:outline-none focus:ring-2 focus:ring-white/20"
-                  />
-                </label>
-              ))}
-            </div>
-            <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2">
-              <label className="flex items-center gap-2 text-xs text-neutral-300">
-                <span className="w-40 text-neutral-500">Pit modifier</span>
-                <select
-                  value={hotkeyDraft.pitModifier}
-                  onChange={(e) => setHotkeyDraft((prev) => ({ ...prev, pitModifier: e.target.value }))}
-                  className="flex-1 rounded-md border border-white/10 bg-black/40 px-2 py-1 text-sm text-white focus:outline-none focus:ring-2 focus:ring-white/20"
-                >
-                  <option>Shift</option>
-                  <option>Alt</option>
-                  <option>Control</option>
-                  <option>None</option>
-                </select>
-              </label>
-              <label className="flex items-center gap-2 text-xs text-neutral-300">
-                <span className="w-40 text-neutral-500">Invalidate modifier</span>
-                <select
-                  value={hotkeyDraft.invalidateModifier}
-                  onChange={(e) => setHotkeyDraft((prev) => ({ ...prev, invalidateModifier: e.target.value }))}
-                  className="flex-1 rounded-md border border-white/10 bg-black/40 px-2 py-1 text-sm text-white focus:outline-none focus:ring-2 focus:ring-white/20"
-                >
-                  <option>Alt</option>
-                  <option>Shift</option>
-                  <option>Control</option>
-                  <option>None</option>
-                </select>
-              </label>
-            </div>
-            <div className="mt-4 flex gap-2">
-              <button
-                type="button"
-                onClick={() => setHotkeyDraft(defaultHotkeys)}
-                className="rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white/80 hover:bg-white/10"
-              >
-                Reset Defaults
-              </button>
-              <button
-                type="button"
-                onClick={saveHotkeyDraft}
-                className="rounded-lg bg-emerald-700 px-3 py-2 text-sm font-semibold text-white hover:bg-emerald-600"
-              >
-                Save Hotkeys
-              </button>
-            </div>
-          </div>
         ) : null}
-      </section>
-      ) : null}
 
-      {isMarshalLayout ? (
-        <SingleMarshalBoard
-          sessionId={sessionId}
-          drivers={panelDrivers}
-          currentLapTimes={currentLapTimes}
-          sessionState={sessionState}
-          displayTime={displayTime}
-          canWrite={canWrite}
-          onLogLap={handleDriverPanelLogLap}
-          onInvalidateLap={invalidateLapTimeOnly}
-          onRemoveLap={removeLap}
-        />
-      ) : (
-        <section className="rounded-3xl border border-white/5 bg-[#05070F]/80 p-6">
-          {isDriversLoading && !drivers.length ? (
-            <p className="text-sm text-neutral-400">Loading drivers…</p>
-          ) : null}
-          {!isDriversLoading && drivers.length === 0 ? (
-            <p className="text-sm text-neutral-400">No drivers are available for this session.</p>
-          ) : null}
-          <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-            {panelDrivers.map((driver) => (
-              <DriverTimingPanel
-                key={driver.id}
-                driver={driver}
-                canWrite={canWrite}
-                currentLapMs={currentLapTimes[driver.id] ?? null}
-                onPitIn={handlePitIn}
-                onPitOut={handlePitOut}
-              />
-            ))}
-          </div>
-        </section>
-      )}
+        {isMarshalLayout ? (
+          <SingleMarshalBoard
+            sessionId={sessionId}
+            drivers={panelDrivers}
+            currentLapTimes={currentLapTimes}
+            sessionState={sessionState}
+            displayTime={displayTime}
+            canWrite={canWrite}
+            onLogLap={handleDriverPanelLogLap}
+            onInvalidateLap={invalidateLapTimeOnly}
+            onRemoveLap={removeLap}
+            onPitIn={handlePitIn}
+            onPitOut={handlePitOut}
+          />
+        ) : (
+          <>
+            <section className="rounded-3xl border border-white/5 bg-[#05070F]/85 p-6">
+              <div className="flex flex-wrap items-center gap-4">
+                <div>
+                  <p className="text-[10px] uppercase tracking-[0.35em] text-neutral-500">Phase</p>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {PROCEDURE_SEQUENCE.map((phaseKey) => {
+                      const label = PROCEDURE_PHASE_LABELS[phaseKey] ?? phaseKey;
+                      const isActive = procedurePhase === phaseKey;
+                      const blockChange = phaseKey === 'race' || phaseKey === 'finished';
+                      const disabled =
+                        !canWrite || isPhaseMutating || blockChange || procedurePhase === phaseKey;
+                      return (
+                        <button
+                          key={phaseKey}
+                          type="button"
+                          disabled={disabled}
+                          onClick={() => setProcedurePhase(phaseKey)}
+                          className={`rounded-full border px-3 py-1.5 text-xs font-semibold transition ${
+                            isActive
+                              ? 'border-white/40 bg-white/15 text-white'
+                              : 'border-white/10 text-white/70 hover:border-white/30 hover:text-white'
+                          } disabled:cursor-not-allowed disabled:opacity-40`}
+                        >
+                          {label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+                <label className="flex items-center gap-2 rounded-2xl border border-white/10 bg-white/5 px-4 py-2 text-xs text-neutral-300">
+                  <input
+                    type="checkbox"
+                    checked={gridReadyConfirmed}
+                    onChange={(event) => {
+                      if (!isGridPhase) return;
+                      setGridReadyConfirmed(event.target.checked);
+                    }}
+                    disabled={!canWrite || !isGridPhase || isPhaseMutating || isRacePhase}
+                    className="h-4 w-4 rounded border border-white/20 bg-black/40 text-emerald-400 focus:ring-emerald-400"
+                  />
+                  Grid ready
+                </label>
+              </div>
+
+              <div className="mt-6 flex flex-wrap gap-4">
+                <div className="flex flex-wrap gap-3">
+                  <button
+                    type="button"
+                    onClick={startTimer}
+                    disabled={!canWrite || sessionState.isTiming || !isGridPhase || !gridReadyConfirmed}
+                    className="flex flex-col rounded-2xl border border-emerald-400/40 bg-emerald-500/15 px-4 py-3 text-left text-white disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    <span className="text-sm font-semibold">Start Clock</span>
+                    <span className="text-[10px] uppercase tracking-[0.35em] text-emerald-100/80">Space</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={pauseTimer}
+                    disabled={!canWrite || !sessionState.isTiming || sessionState.isPaused}
+                    className="flex flex-col rounded-2xl border border-amber-400/40 bg-amber-500/15 px-4 py-3 text-left text-white disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    <span className="text-sm font-semibold">Pause</span>
+                    <span className="text-[10px] uppercase tracking-[0.35em] text-amber-100/80">Space</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={resumeTimer}
+                    disabled={!canWrite || !sessionState.isPaused}
+                    className="flex flex-col rounded-2xl border border-emerald-400/40 bg-emerald-500/10 px-4 py-3 text-left text-white disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    <span className="text-sm font-semibold">Resume</span>
+                    <span className="text-[10px] uppercase tracking-[0.35em] text-emerald-100/80">Space</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={finishRace}
+                    disabled={!canWrite || procedurePhase === 'finished'}
+                    className="flex flex-col rounded-2xl border border-violet-400/40 bg-violet-500/15 px-4 py-3 text-left text-white disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    <span className="text-sm font-semibold">Finish Session</span>
+                    <span className="text-[10px] uppercase tracking-[0.35em] text-violet-100/80">F</span>
+                  </button>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {TRACK_STATUS_OPTIONS.map((status) => {
+                    const active = sessionState.trackStatus === status.id;
+                    return (
+                      <button
+                        key={status.id}
+                        type="button"
+                        onClick={() => handleTrackStatusClick(status.id)}
+                        className={`rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-[0.35em] ${
+                          active ? status.controlClass : 'border border-white/10 text-white/70 hover:border-white/30'
+                        }`}
+                        disabled={!canWrite}
+                      >
+                        {status.shortLabel}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            </section>
+
+            <section className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_320px] xl:grid-cols-[minmax(0,1fr)_360px]">
+              <div className="rounded-3xl border border-white/5 bg-[#05070F]/85">
+                <div className="flex items-center justify-between border-b border-white/5 px-4 py-3 text-xs uppercase tracking-[0.35em] text-neutral-400">
+                  <span>Driver Timing Grid</span>
+                  <span>{drivers.length} entries</span>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="min-w-full divide-y divide-white/5 text-sm text-white">
+                    <thead className="bg-white/5 text-xs uppercase tracking-[0.3em] text-neutral-400">
+                      <tr>
+                        <th className="px-4 py-3 text-left">Pos</th>
+                        <th className="px-4 py-3 text-left">Car / Driver</th>
+                        <th className="px-4 py-3 text-left">Status</th>
+                        <th className="px-4 py-3 text-left">Laps</th>
+                        <th className="px-4 py-3 text-left">Last Lap</th>
+                        <th className="px-4 py-3 text-left">Best</th>
+                        <th className="px-4 py-3 text-left">Gap</th>
+                        <th className="px-4 py-3 text-left">Interval</th>
+                        <th className="px-4 py-3 text-left">Live</th>
+                        <th className="px-4 py-3 text-left">Pits</th>
+                        <th className="px-4 py-3 text-left">Flag</th>
+                        <th className="px-4 py-3 text-left">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-white/5">
+                      {isDriversLoading ? (
+                        <tr>
+                          <td colSpan={12} className="px-4 py-6 text-center text-sm text-neutral-400">
+                            Loading drivers…
+                          </td>
+                        </tr>
+                      ) : null}
+                      {driverTableEmpty ? (
+                        <tr>
+                          <td colSpan={12} className="px-4 py-6 text-center text-sm text-neutral-400">
+                            No drivers are configured for this session.
+                          </td>
+                        </tr>
+                      ) : null}
+                      {driverRows.map((driver) => {
+                        const statusMeta =
+                          DRIVER_STATUS_META[(driver.status ?? 'ready').toLowerCase()] ??
+                          {
+                            label: driver.status ?? '—',
+                            tone: 'text-neutral-200',
+                            bg: 'bg-white/10',
+                            border: 'border border-white/10',
+                          };
+                        const flagMeta =
+                          DRIVER_FLAG_META[(driver.driver_flag ?? 'none').toLowerCase()] ??
+                          DRIVER_FLAG_META.none;
+                        const lastLapLabel = Number.isFinite(driver.last_lap_ms)
+                          ? formatLapTime(driver.last_lap_ms)
+                          : '—';
+                        const lastLapDelta = Number.isFinite(driver.lastLapDelta)
+                          ? `${driver.lastLapDelta > 0 ? '+' : '−'}${formatLapTime(
+                              Math.abs(driver.lastLapDelta),
+                            )}`
+                          : null;
+                        const bestLapLabel = Number.isFinite(driver.best_lap_ms)
+                          ? formatLapTime(driver.best_lap_ms)
+                          : '—';
+                        const bestRank = bestLapRanks.get(driver.id);
+                        const liveLapLabel = Number.isFinite(driver.liveLap)
+                          ? formatLapTime(driver.liveLap)
+                          : '—';
+                        const lapCountLabel = sessionState.totalLaps
+                          ? `${driver.laps ?? 0} / ${sessionState.totalLaps}`
+                          : driver.laps ?? '—';
+                        return (
+                          <tr key={driver.id} className="hover:bg-white/5">
+                            <td className="px-4 py-3 font-mono text-xs text-neutral-400">{driver.position}</td>
+                            <td className="px-4 py-3">
+                              <div className="flex items-center gap-3">
+                                <div className="text-2xl font-semibold text-neutral-200">
+                                  {driver.number ?? '—'}
+                                </div>
+                                <div>
+                                  <p className="font-semibold">{driver.name}</p>
+                                  <p className="text-xs text-neutral-400">{driver.team ?? '—'}</p>
+                                </div>
+                              </div>
+                            </td>
+                            <td className="px-4 py-3">
+                              <span className={`inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs font-semibold ${statusMeta.bg} ${statusMeta.tone} ${statusMeta.border}`}>
+                                {statusMeta.label}
+                              </span>
+                            </td>
+                            <td className="px-4 py-3 font-mono text-sm">{lapCountLabel}</td>
+                            <td className="px-4 py-3 font-mono text-sm">
+                              <div className="flex flex-col">
+                                <span>{lastLapLabel}</span>
+                                {lastLapDelta ? (
+                                  <span className="text-xs text-neutral-400">{lastLapDelta}</span>
+                                ) : null}
+                              </div>
+                            </td>
+                            <td className="px-4 py-3 font-mono text-sm">
+                              <div className="flex flex-col">
+                                <span>{bestLapLabel}</span>
+                                {bestRank ? (
+                                  <span className="text-xs text-neutral-400">P{bestRank}</span>
+                                ) : null}
+                              </div>
+                            </td>
+                            <td className="px-4 py-3 font-mono text-sm text-neutral-100">{driver.gap}</td>
+                            <td className="px-4 py-3 font-mono text-sm text-neutral-100">{driver.interval}</td>
+                            <td className="px-4 py-3 font-mono text-sm">{liveLapLabel}</td>
+                            <td className="px-4 py-3 text-center">
+                              <span className="font-mono text-sm">
+                                {driver.pits ?? 0}
+                                {driver.pit_complete ? ' ✓' : ''}
+                              </span>
+                            </td>
+                            <td className="px-4 py-3">
+                              <span className={`inline-flex items-center gap-1 rounded-full border border-white/10 px-2 py-1 text-xs ${flagMeta.tone}`}>
+                                <span className={`h-2 w-2 rounded-full ${flagMeta.dot}`} />
+                                {flagMeta.label}
+                              </span>
+                            </td>
+                            <td className="px-4 py-3">
+                              <div className="flex flex-wrap gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => handleDriverPanelLogLap(driver.id)}
+                                  disabled={!canWrite || !sessionState.isTiming}
+                                  className="rounded-full border border-white/10 px-3 py-1 text-xs text-white/80 hover:border-white/30 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
+                                >
+                                  Lap
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => invalidateLapTimeOnly(driver.id)}
+                                  disabled={!canWrite}
+                                  className="rounded-full border border-amber-400/40 px-3 py-1 text-xs text-amber-100 hover:border-amber-300 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
+                                >
+                                  Invalidate
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => removeLap(driver.id)}
+                                  disabled={!canWrite}
+                                  className="rounded-full border border-rose-400/40 px-3 py-1 text-xs text-rose-100 hover:border-rose-300 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
+                                >
+                                  Remove
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => togglePitComplete(driver)}
+                                  disabled={!canWrite}
+                                  className="rounded-full border border-cyan-400/40 px-3 py-1 text-xs text-cyan-100 hover:border-cyan-300 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
+                                >
+                                  Pit
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              <div className="flex flex-col gap-4">
+                <div className="rounded-3xl border border-white/5 bg-[#070A14]/85 p-5">
+                  <div className="mb-4 flex items-center justify-between">
+                    <h3 className="text-sm uppercase tracking-[0.35em] text-neutral-400">Race Events</h3>
+                    <span className="text-xs text-neutral-500">{eventFeedItems.length} entries</span>
+                  </div>
+                  {eventFeedItems.length === 0 ? (
+                    <p className="text-sm text-neutral-400">Events will appear once laps, pits, or penalties are logged.</p>
+                  ) : (
+                    <div className="space-y-3">
+                      {eventFeedItems.map((entry) => (
+                        <div key={entry.id} className="rounded-2xl border border-white/5 bg-black/30 px-3 py-2">
+                          <div className="flex items-center justify-between text-[11px] text-neutral-500">
+                            <span className="uppercase tracking-[0.35em]">{entry.kind ?? 'Event'}</span>
+                            <span>{formatFeedTimestamp(entry.timestamp)}</span>
+                          </div>
+                          <p className={`text-sm font-semibold ${entry.accent ?? 'text-white'}`}>{entry.title}</p>
+                          {entry.subtitle ? (
+                            <p className="text-xs text-neutral-400">{entry.subtitle}</p>
+                          ) : null}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                <div className="rounded-3xl border border-white/5 bg-[#070A14]/85 p-5">
+                  <div className="mb-4 flex items-center justify-between">
+                    <h3 className="text-sm uppercase tracking-[0.35em] text-neutral-400">Control Feed</h3>
+                    <span className="text-xs text-neutral-500">{controlFeedItems.length} entries</span>
+                  </div>
+                  {controlFeedItems.length === 0 ? (
+                    <p className="text-sm text-neutral-400">Clock, flag, and announcement changes will appear here.</p>
+                  ) : (
+                    <div className="space-y-3">
+                      {controlFeedItems.map((entry) => (
+                        <div key={entry.id} className="rounded-2xl border border-white/5 bg-black/30 px-3 py-2">
+                          <div className="flex items-center justify-between text-[11px] text-neutral-500">
+                            <span className="uppercase tracking-[0.35em]">{entry.kind ?? 'Control'}</span>
+                            <span>{formatFeedTimestamp(entry.timestamp)}</span>
+                          </div>
+                          <p className={`text-sm font-semibold ${entry.accent ?? 'text-white'}`}>{entry.title}</p>
+                          {entry.subtitle ? (
+                            <p className="text-xs text-neutral-400">{entry.subtitle}</p>
+                          ) : null}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                <div className="rounded-3xl border border-white/5 bg-[#070A14]/85 p-5">
+                  <h3 className="text-sm uppercase tracking-[0.35em] text-neutral-400">Live Announcement</h3>
+                  <p className="mt-2 text-sm text-neutral-300">
+                    {sessionState.announcement?.trim() ? sessionState.announcement : 'No active announcements.'}
+                  </p>
+                  <div className="mt-3 flex gap-2">
+                    <input
+                      type="text"
+                      value={announcementDraft}
+                      onChange={(e) => {
+                        setAnnouncementDraft(e.target.value);
+                        setIsEditingAnnouncement(true);
+                      }}
+                      onFocus={() => setIsEditingAnnouncement(true)}
+                      onBlur={() => setIsEditingAnnouncement(false)}
+                      placeholder="Enter live message…"
+                      disabled={!canWrite}
+                      className="flex-1 rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-sm text-white placeholder:text-neutral-500 focus:outline-none focus:ring-2 focus:ring-white/20 disabled:cursor-not-allowed disabled:opacity-60"
+                    />
+                    <button
+                      type="button"
+                      onClick={updateAnnouncement}
+                      disabled={!canWrite}
+                      className="rounded-xl bg-emerald-700 px-4 py-2 text-sm font-semibold text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      Update
+                    </button>
+                  </div>
+                </div>
+
+                <div className="rounded-3xl border border-white/5 bg-[#070A14]/85 p-5">
+                  <div className="mb-4 flex items-center justify-between">
+                    <h3 className="text-sm uppercase tracking-[0.35em] text-neutral-400">Hotkeys</h3>
+                    <button
+                      type="button"
+                      onClick={() => setIsEditingHotkeys((prev) => !prev)}
+                      className="text-xs text-[#9FF7D3] transition hover:text-white"
+                    >
+                      {isEditingHotkeys ? 'Close' : 'Edit'}
+                    </button>
+                  </div>
+                  <div className="space-y-2 text-sm text-neutral-300">
+                    <div className="flex items-center justify-between">
+                      <span>Digits 1–0</span>
+                      <span className="text-xs uppercase tracking-[0.35em] text-neutral-500">Log lap</span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span>{hotkeys.pitModifier || 'Shift'} + Digit</span>
+                      <span className="text-xs uppercase tracking-[0.35em] text-neutral-500">Toggle pit</span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span>{hotkeys.invalidateModifier || 'Alt'} + Digit</span>
+                      <span className="text-xs uppercase tracking-[0.35em] text-neutral-500">Invalidate lap</span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span>Space</span>
+                      <span className="text-xs uppercase tracking-[0.35em] text-neutral-500">Start / Pause / Resume</span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span>G / V / S / R / C</span>
+                      <span className="text-xs uppercase tracking-[0.35em] text-neutral-500">Flag presets</span>
+                    </div>
+                  </div>
+
+                  {isEditingHotkeys ? (
+                    <div className="mt-4 space-y-3">
+                      <div className="grid grid-cols-5 gap-2">
+                        {hotkeyDraft.keys.map((key, index) => (
+                          <input
+                            key={`${index}-${hotkeys.keys[index]}`}
+                            type="text"
+                            value={key}
+                            onChange={(event) => updateKeyDraft(index, event.target.value)}
+                            className="rounded-lg border border-white/10 bg-black/30 px-2 py-1 text-center text-xs text-white focus:border-white/40 focus:outline-none"
+                          />
+                        ))}
+                      </div>
+                      <div className="grid grid-cols-2 gap-3 text-xs text-neutral-300">
+                        <label className="flex flex-col gap-1">
+                          <span>Pit modifier</span>
+                          <select
+                            value={hotkeyDraft.pitModifier}
+                            onChange={(event) =>
+                              setHotkeyDraft((prev) => ({ ...prev, pitModifier: event.target.value }))
+                            }
+                            className="rounded-lg border border-white/10 bg-black/40 px-2 py-2 text-white focus:border-white/40 focus:outline-none"
+                          >
+                            {['Shift', 'Alt', 'Ctrl', 'None'].map((option) => (
+                              <option key={option} value={option}>
+                                {option}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                        <label className="flex flex-col gap-1">
+                          <span>Invalidate modifier</span>
+                          <select
+                            value={hotkeyDraft.invalidateModifier}
+                            onChange={(event) =>
+                              setHotkeyDraft((prev) => ({ ...prev, invalidateModifier: event.target.value }))
+                            }
+                            className="rounded-lg border border-white/10 bg-black/40 px-2 py-2 text-white focus:border-white/40 focus:outline-none"
+                          >
+                            {['Alt', 'Shift', 'Ctrl', 'None'].map((option) => (
+                              <option key={option} value={option}>
+                                {option}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                      </div>
+                      <div className="flex gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setHotkeyDraft(defaultHotkeys)}
+                          className="flex-1 rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white/80 hover:border-white/30 hover:text-white"
+                        >
+                          Reset Defaults
+                        </button>
+                        <button
+                          type="button"
+                          onClick={saveHotkeyDraft}
+                          className="flex-1 rounded-lg bg-emerald-700 px-3 py-2 text-sm font-semibold text-white hover:bg-emerald-600"
+                        >
+                          Save Hotkeys
+                        </button>
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+            </section>
+          </>
+        )}
       </div>
     </SessionActionsProvider>
   );
 }
-
-

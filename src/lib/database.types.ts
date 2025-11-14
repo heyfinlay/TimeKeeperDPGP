@@ -1291,6 +1291,10 @@ export type Database = {
         Returns: Json
       }
       start_race_rpc: { Args: { p_session_id: string }; Returns: undefined }
+      update_session_state_atomic: {
+        Args: { p_patch?: Json | null; p_session_id: string }
+        Returns: Json
+      }
     }
     Enums: {
       profile_role: "marshal" | "admin" | "race_control"
