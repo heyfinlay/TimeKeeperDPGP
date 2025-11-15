@@ -442,7 +442,8 @@ export default function ControlPanel() {
       if (sessionState.procedurePhase === phase) return;
       setIsPhaseMutating(true);
       try {
-        await persistSessionPatch({ procedure_phase: phase });
+        const didPersist = await persistSessionPatch({ procedure_phase: phase });
+        if (!didPersist) return;
         const phaseLabel = PROCEDURE_PHASE_LABELS[phase] ?? phase;
         pushControlEntry({
           kind: 'phase',
@@ -468,16 +469,8 @@ export default function ControlPanel() {
     tickingRef.current = true;
 
     try {
-      // Start race clock and initialize all lap timers server-side
-      await persistSessionPatch({ command: 'start_clock' });
-
-      // Initialize lap timers for all drivers in the database
-      if (isSupabaseConfigured && supabase) {
-        await supabase.rpc('initialize_lap_timers_for_session', {
-          p_session_id: sessionId,
-        });
-      }
-
+      const didPersist = await persistSessionPatch({ command: 'start_clock' });
+      if (!didPersist) return;
       pushControlEntry({
         kind: 'timer',
         title: 'Race timer started',
@@ -499,7 +492,8 @@ export default function ControlPanel() {
     tickingRef.current = false;
     try {
       const current = computeDisplayTime();
-      await persistSessionPatch({ command: 'pause_clock', race_time_ms: current });
+      const didPersist = await persistSessionPatch({ command: 'pause_clock', race_time_ms: current });
+      if (!didPersist) return;
       pushControlEntry({
         kind: 'timer',
         title: 'Race paused',
@@ -516,7 +510,8 @@ export default function ControlPanel() {
     if (!canWrite) return;
     tickingRef.current = true;
     try {
-      await persistSessionPatch({ command: 'resume_clock' });
+      const didPersist = await persistSessionPatch({ command: 'resume_clock' });
+      if (!didPersist) return;
       pushControlEntry({
         kind: 'timer',
         title: 'Race resumed',
@@ -544,13 +539,19 @@ export default function ControlPanel() {
       }
     });
 
-    await persistSessionPatch({ command: 'reset_session', race_time_ms: 0 });
-    pushControlEntry({
-      kind: 'timer',
-      title: 'Session reset',
-      subtitle: 'Clock cleared',
-      accent: 'text-neutral-300',
-    });
+    try {
+      const didPersist = await persistSessionPatch({ command: 'reset_session', race_time_ms: 0 });
+      if (!didPersist) return;
+      pushControlEntry({
+        kind: 'timer',
+        title: 'Session reset',
+        subtitle: 'Clock cleared',
+        accent: 'text-neutral-300',
+      });
+    } catch (error) {
+      console.error('Failed to reset session', error);
+      setSessionError('Unable to reset session.');
+    }
   }, [canWrite, persistSessionPatch, pushControlEntry, drivers, sessionId]);
 
   const finishRace = useCallback(async () => {
@@ -574,7 +575,8 @@ export default function ControlPanel() {
     });
 
     try {
-      await persistSessionPatch({ command: 'finish_session', race_time_ms: current });
+      const didPersist = await persistSessionPatch({ command: 'finish_session', race_time_ms: current });
+      if (!didPersist) return;
       if (shouldExport && isSupabaseConfigured && supabase) {
         const sessionName = sessionState.eventType || 'Session';
         await finalizeAndExport(sessionId, sessionName);
@@ -629,7 +631,8 @@ export default function ControlPanel() {
     if (!canWrite) return;
     const normalized = TRACK_STATUS_MAP[statusId] ? statusId : 'green';
     try {
-      await persistSessionPatch({ track_status: normalized, flag_status: normalized });
+      const didPersist = await persistSessionPatch({ track_status: normalized, flag_status: normalized });
+      if (!didPersist) return;
       const statusLabel = TRACK_STATUS_MAP[normalized]?.label ?? normalized;
       pushControlEntry({
         kind: 'flag',
@@ -657,7 +660,8 @@ export default function ControlPanel() {
     if (!canWrite) return;
     try {
       const text = (announcementDraft ?? '').slice(0, 500);
-      await persistSessionPatch({ announcement: text });
+      const didPersist = await persistSessionPatch({ announcement: text });
+      if (!didPersist) return;
       setIsEditingAnnouncement(false); // Stop editing after successful update
       pushControlEntry({
         kind: 'announcement',
