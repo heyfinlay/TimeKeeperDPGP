@@ -5,12 +5,12 @@
 do $$
 begin
   if exists (select 1 from information_schema.tables where table_schema='public' and table_name='session_state') then
-    execute $$
+    execute $ddl$
       alter table public.session_state
         add column if not exists race_started_at timestamptz,
         add column if not exists accumulated_pause_ms bigint not null default 0,
         add column if not exists pause_started_at timestamptz
-    $$;
+    $ddl$;
   end if;
 end $$;
 
@@ -39,25 +39,25 @@ begin
     select 1 from information_schema.columns
     where table_schema='public' and table_name='sessions' and column_name='updated_at'
   ) then
-    execute $$drop trigger if exists trg_touch_sessions on public.sessions$$;
-    execute $$create trigger trg_touch_sessions before update on public.sessions
-             for each row execute function public.touch_updated_at()$$;
+    execute $ddl$drop trigger if exists trg_touch_sessions on public.sessions$ddl$;
+    execute $ddl$create trigger trg_touch_sessions before update on public.sessions
+             for each row execute function public.touch_updated_at()$ddl$;
   end if;
   if exists (
     select 1 from information_schema.columns
     where table_schema='public' and table_name='drivers' and column_name='updated_at'
   ) then
-    execute $$drop trigger if exists trg_touch_drivers on public.drivers$$;
-    execute $$create trigger trg_touch_drivers before update on public.drivers
-             for each row execute function public.touch_updated_at()$$;
+    execute $ddl$drop trigger if exists trg_touch_drivers on public.drivers$ddl$;
+    execute $ddl$create trigger trg_touch_drivers before update on public.drivers
+             for each row execute function public.touch_updated_at()$ddl$;
   end if;
   if exists (
     select 1 from information_schema.columns
     where table_schema='public' and table_name='session_state' and column_name='updated_at'
   ) then
-    execute $$drop trigger if exists trg_touch_session_state on public.session_state$$;
-    execute $$create trigger trg_touch_session_state before update on public.session_state
-             for each row execute function public.touch_updated_at()$$;
+    execute $ddl$drop trigger if exists trg_touch_session_state on public.session_state$ddl$;
+    execute $ddl$create trigger trg_touch_session_state before update on public.session_state
+             for each row execute function public.touch_updated_at()$ddl$;
   end if;
 end $$;
 
@@ -70,7 +70,6 @@ begin
 end $$;
 
 -- 5) Atomic session seeding
-drop function if exists public.seed_session_rpc(jsonb);
 create or replace function public.seed_session_rpc(p_session jsonb)
 returns uuid
 language plpgsql
@@ -123,7 +122,6 @@ $$;
 grant execute on function public.seed_session_rpc(jsonb) to authenticated, service_role;
 
 -- 6) Race control RPCs
-drop function if exists public.start_race_rpc(uuid);
 create or replace function public.start_race_rpc(p_session_id uuid)
 returns void
 language plpgsql
@@ -146,7 +144,6 @@ end
 $$;
 grant execute on function public.start_race_rpc(uuid) to authenticated, service_role;
 
-drop function if exists public.pause_race_rpc(uuid);
 create or replace function public.pause_race_rpc(p_session_id uuid)
 returns void
 language plpgsql
@@ -167,7 +164,6 @@ end
 $$;
 grant execute on function public.pause_race_rpc(uuid) to authenticated, service_role;
 
-drop function if exists public.resume_race_rpc(uuid);
 create or replace function public.resume_race_rpc(p_session_id uuid)
 returns void
 language plpgsql
@@ -189,7 +185,6 @@ end
 $$;
 grant execute on function public.resume_race_rpc(uuid) to authenticated, service_role;
 
-drop function if exists public.finish_race_rpc(uuid);
 create or replace function public.finish_race_rpc(p_session_id uuid)
 returns void
 language plpgsql
@@ -211,7 +206,9 @@ $$;
 grant execute on function public.finish_race_rpc(uuid) to authenticated, service_role;
 
 -- 7) Harden log_lap_atomic: ensure running and retry on unique conflict
-drop function if exists public.log_lap_atomic(uuid, uuid, bigint, text);
+do $create_log_lap$
+begin
+  execute $func$
 create or replace function public.log_lap_atomic(
   p_session_id uuid,
   p_driver_id uuid,
@@ -230,11 +227,11 @@ returns table (
 language plpgsql
 security definer
 set search_path = public
-as $$
+as $body$
 declare
   v_new_lap_id uuid;
   v_best bigint;
-  v_retries int := 0;
+  attempt int;
 begin
   if p_lap_time_ms is null or p_lap_time_ms <= 0 then
     raise exception 'invalid lap time';
@@ -251,50 +248,52 @@ begin
     raise exception 'race not running';
   end if;
 
-  <<retry>>
-  begin
-    perform 1 from public.drivers d
-     where d.id = p_driver_id and d.session_id = p_session_id
-     for update;
-    if not found then
-      raise exception 'driver not in session';
-    end if;
+  for attempt in 1..2 loop
+    begin
+      perform 1 from public.drivers d
+       where d.id = p_driver_id and d.session_id = p_session_id
+       for update;
+      if not found then
+        raise exception 'driver not in session';
+      end if;
 
-    insert into public.laps (session_id, driver_id, lap_number, lap_time_ms, source)
-    values (
-      p_session_id,
-      p_driver_id,
-      coalesce((select max(lap_number) from public.laps where session_id=p_session_id and driver_id=p_driver_id),0) + 1,
-      p_lap_time_ms,
-      p_source
-    )
-    returning id into v_new_lap_id;
+      insert into public.laps (session_id, driver_id, lap_number, lap_time_ms, source)
+      values (
+        p_session_id,
+        p_driver_id,
+        coalesce((select max(lap_number) from public.laps where session_id=p_session_id and driver_id=p_driver_id),0) + 1,
+        p_lap_time_ms,
+        p_source
+      )
+      returning id into v_new_lap_id;
 
-    select best_lap_ms into v_best from public.drivers where id = p_driver_id;
+      select best_lap_ms into v_best from public.drivers where id = p_driver_id;
 
-    update public.drivers
-       set laps = coalesce(laps,0)+1,
-           last_lap_ms = p_lap_time_ms,
-           best_lap_ms = case when v_best is null then p_lap_time_ms else least(v_best, p_lap_time_ms) end,
-           total_time_ms = coalesce(total_time_ms,0)+p_lap_time_ms,
-           updated_at = timezone('utc', now())
-     where id = p_driver_id and session_id = p_session_id;
+      update public.drivers
+         set laps = coalesce(laps,0)+1,
+             last_lap_ms = p_lap_time_ms,
+             best_lap_ms = case when v_best is null then p_lap_time_ms else least(v_best, p_lap_time_ms) end,
+             total_time_ms = coalesce(total_time_ms,0)+p_lap_time_ms,
+             updated_at = timezone('utc', now())
+       where id = p_driver_id and session_id = p_session_id;
 
-    return query
-      select v_new_lap_id, p_session_id, p_driver_id, d.laps, d.last_lap_ms, d.best_lap_ms, d.total_time_ms
-      from public.drivers d
-      where d.id = p_driver_id and d.session_id = p_session_id;
+      return query
+        select v_new_lap_id, p_session_id, p_driver_id, d.laps, d.last_lap_ms, d.best_lap_ms, d.total_time_ms
+        from public.drivers d
+        where d.id = p_driver_id and d.session_id = p_session_id;
 
-  exception when unique_violation then
-    if v_retries < 1 then
-      v_retries := v_retries + 1;
+    exception when unique_violation then
+      if attempt >= 2 then
+        raise;
+      end if;
       perform pg_sleep(0.02);
-      goto retry;
-    else
-      raise;
-    end if;
-  end;
-end
-$$;
-grant execute on function public.log_lap_atomic(uuid, uuid, bigint, text) to authenticated, service_role;
+    end;
+  end loop;
 
+  raise exception 'retry limit exceeded for log_lap_atomic';
+end
+$body$;
+$func$;
+end
+$create_log_lap$;
+grant execute on function public.log_lap_atomic(uuid, uuid, bigint, text) to authenticated, service_role;

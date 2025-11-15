@@ -3,6 +3,52 @@ import { CheckCircle, XCircle, Clock, AlertTriangle, RefreshCcw } from 'lucide-r
 import { supabaseSelect, supabase } from '@/lib/supabaseClient.js';
 import { formatCurrency } from '@/utils/betting.js';
 
+const formatTimestamp = (value) => {
+  if (!value) return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return null;
+  }
+  return date.toLocaleString();
+};
+
+const safeStringify = (value) => {
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return typeof value === 'string' ? value : String(value);
+  }
+};
+
+const normalizeTimingEvidence = (raw) => {
+  if (!raw) {
+    return null;
+  }
+  let parsed = raw;
+  if (typeof raw === 'string') {
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      return { raw };
+    }
+  }
+  if (Array.isArray(parsed)) {
+    return { laps: parsed };
+  }
+  if (typeof parsed === 'object' && parsed !== null) {
+    const laps =
+      Array.isArray(parsed.laps) ? parsed.laps :
+      Array.isArray(parsed.drivers) ? parsed.drivers :
+      null;
+    return {
+      ...parsed,
+      laps,
+      note: parsed.note || parsed.summary || parsed.text || null,
+    };
+  }
+  return { raw: parsed };
+};
+
 /**
  * SettlementApprovalQueue Component
  *
@@ -180,11 +226,11 @@ export default function SettlementApprovalQueue({ className = '' }) {
         </div>
       </header>
 
-      {settlements.length === 0 ? (
-        <div className="rounded-xl border border-dashed border-accent-emerald/20 bg-shell-800/60 p-6 text-center">
-          <CheckCircle className="mx-auto mb-3 h-8 w-8 text-accent-emerald/50" />
-          <p className="text-sm text-slate-400">
-            No pending settlements. All markets are up to date!
+          {settlements.length === 0 ? (
+            <div className="rounded-xl border border-dashed border-accent-emerald/20 bg-shell-800/60 p-6 text-center">
+              <CheckCircle className="mx-auto mb-3 h-8 w-8 text-accent-emerald/50" />
+              <p className="text-sm text-slate-400">
+                No pending settlements. All markets are up to date!
           </p>
         </div>
       ) : (
@@ -197,6 +243,14 @@ export default function SettlementApprovalQueue({ className = '' }) {
             const payoutMultiplier = settlement.winning_pool > 0
               ? (settlement.total_pool / settlement.winning_pool).toFixed(2)
               : 0;
+            const timingEvidence = normalizeTimingEvidence(settlement.timing_data);
+            const timingRows = Array.isArray(timingEvidence?.laps) ? timingEvidence.laps : null;
+            const timingNote = timingEvidence?.note;
+            const timingRecordedAt =
+              timingEvidence?.recorded_at ||
+              timingEvidence?.captured_at ||
+              timingEvidence?.timestamp ||
+              null;
 
             return (
               <div
@@ -270,62 +324,91 @@ export default function SettlementApprovalQueue({ className = '' }) {
                 </div>
 
                 {/* Timing Data */}
-                {settlement.timing_data && Array.isArray(settlement.timing_data) && (
-                  <div className="mb-4">
-                    <p className="mb-2 text-xs uppercase tracking-wider text-slate-500">
-                      Race Results (from timing system)
-                    </p>
-                    <div className="overflow-hidden rounded-lg border border-accent-emerald/15">
-                      <table className="min-w-full divide-y divide-shell-800/80 text-left text-sm">
-                        <thead className="bg-shell-900/80 text-xs uppercase tracking-wider text-slate-500">
-                          <tr>
-                            <th className="px-3 py-2">Pos</th>
-                            <th className="px-3 py-2">Driver</th>
-                            <th className="px-3 py-2 text-right">Laps</th>
-                            <th className="px-3 py-2 text-right">Best Lap</th>
-                            <th className="px-3 py-2 text-right">Total Time</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-shell-800/60 bg-shell-900/30">
-                          {settlement.timing_data.map((driver, idx) => {
-                            const isWinner = driver.driver_id === settlement.driver_id;
-                            return (
-                              <tr
-                                key={driver.driver_id}
-                                className={isWinner ? 'bg-accent-emerald/10' : ''}
-                              >
-                                <td className="px-3 py-2 font-semibold text-white">
-                                  {idx + 1}
-                                </td>
-                                <td className="px-3 py-2">
-                                  <span className="text-white">
-                                    #{driver.driver_number} {driver.driver_name}
-                                  </span>
-                                  {isWinner && (
-                                    <span className="ml-2 text-xs text-accent-emerald">
-                                      ← Proposed Winner
-                                    </span>
-                                  )}
-                                </td>
-                                <td className="px-3 py-2 text-right text-white">
-                                  {driver.laps ?? 0}
-                                </td>
-                                <td className="px-3 py-2 text-right text-slate-400">
-                                  {driver.best_lap_ms
-                                    ? `${(driver.best_lap_ms / 1000).toFixed(3)}s`
-                                    : '-'}
-                                </td>
-                                <td className="px-3 py-2 text-right text-slate-400">
-                                  {driver.total_time_ms
-                                    ? `${(driver.total_time_ms / 1000).toFixed(3)}s`
-                                    : '-'}
-                                </td>
-                              </tr>
-                            );
-                          })}
-                        </tbody>
-                      </table>
+                {timingEvidence ? (
+                  <div className="mb-4 rounded-lg border border-accent-emerald/20 bg-shell-900/40 p-4">
+                    <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+                      <div>
+                        <p className="text-xs uppercase tracking-wider text-slate-500">Timing Evidence</p>
+                        <p className="text-sm text-slate-300">
+                          {formatTimestamp(timingRecordedAt) ?? 'Provided by proposer'}
+                        </p>
+                      </div>
+                      <div className="flex flex-wrap gap-2 text-xs text-slate-400">
+                        {timingEvidence.session_id && (
+                          <span className="rounded-full border border-white/10 px-3 py-1">
+                            Session {timingEvidence.session_id.slice(0, 8)}…
+                          </span>
+                        )}
+                        {timingEvidence.event_id && (
+                          <span className="rounded-full border border-white/10 px-3 py-1">
+                            Event {timingEvidence.event_id.slice(0, 8)}…
+                          </span>
+                        )}
+                      </div>
                     </div>
+                    {timingNote ? (
+                      <p className="mb-3 text-sm text-slate-200">{timingNote}</p>
+                    ) : null}
+                    {timingRows && timingRows.length > 0 ? (
+                      <div className="overflow-hidden rounded-lg border border-accent-emerald/15">
+                        <table className="min-w-full divide-y divide-shell-800/80 text-left text-sm">
+                          <thead className="bg-shell-900/80 text-xs uppercase tracking-wider text-slate-500">
+                            <tr>
+                              <th className="px-3 py-2">Pos</th>
+                              <th className="px-3 py-2">Driver</th>
+                              <th className="px-3 py-2 text-right">Laps</th>
+                              <th className="px-3 py-2 text-right">Best Lap</th>
+                              <th className="px-3 py-2 text-right">Total Time</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-shell-800/60 bg-shell-900/30">
+                            {timingRows.map((driver, idx) => {
+                              const driverId = driver.driver_id || driver.id || driver.outcome_id || idx;
+                              const driverNumber = driver.driver_number ?? driver.number ?? '—';
+                              const driverName = driver.driver_name || driver.name || driver.label || 'Driver';
+                              const laps = driver.laps ?? driver.total_laps ?? driver.totalLaps ?? 0;
+                              const bestLap = driver.best_lap_ms ?? driver.bestLapMs ?? null;
+                              const totalTime = driver.total_time_ms ?? driver.totalTimeMs ?? null;
+                              const isWinner =
+                                driver.driver_id === settlement.driver_id ||
+                                driver.outcome_id === settlement.outcome_id ||
+                                driver.is_winner;
+                              return (
+                                <tr key={`${driverId}-${idx}`} className={isWinner ? 'bg-accent-emerald/10' : ''}>
+                                  <td className="px-3 py-2 font-semibold text-white">{idx + 1}</td>
+                                  <td className="px-3 py-2">
+                                    <span className="text-white">
+                                      #{driverNumber} {driverName}
+                                    </span>
+                                    {isWinner && (
+                                      <span className="ml-2 text-xs text-accent-emerald">← Proposed Winner</span>
+                                    )}
+                                  </td>
+                                  <td className="px-3 py-2 text-right text-white">{laps}</td>
+                                  <td className="px-3 py-2 text-right text-slate-400">
+                                    {bestLap ? `${(bestLap / 1000).toFixed(3)}s` : '—'}
+                                  </td>
+                                  <td className="px-3 py-2 text-right text-slate-400">
+                                    {totalTime ? `${(totalTime / 1000).toFixed(3)}s` : '—'}
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    ) : (
+                      <p className="text-xs text-slate-500">No lap table attached.</p>
+                    )}
+                    {timingEvidence.raw && (
+                      <pre className="mt-3 max-h-48 overflow-auto rounded-lg border border-slate-800/60 bg-black/40 p-3 text-xs text-slate-300">
+                        {safeStringify(timingEvidence.raw)}
+                      </pre>
+                    )}
+                  </div>
+                ) : (
+                  <div className="mb-4 rounded-lg border border-slate-800/60 bg-shell-900/20 p-3 text-sm text-slate-400">
+                    No timing evidence attached yet. Ask the proposer to include a lap export or steward note.
                   </div>
                 )}
 

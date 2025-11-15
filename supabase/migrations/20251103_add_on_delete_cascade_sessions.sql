@@ -29,7 +29,7 @@ BEGIN
       con.confkey,
       con.confupdtype,
       con.confdeltype,
-      con.conmatchtype,
+      con.confmatchtype,
       con.condeferrable,
       con.condeferred,
       con.convalidated
@@ -70,7 +70,7 @@ BEGIN
     END;
 
     -- Preserve MATCH type
-    v_match := CASE r.conmatchtype
+    v_match := CASE r.confmatchtype
       WHEN 'f' THEN 'MATCH FULL'
       WHEN 's' THEN 'MATCH SIMPLE'
       ELSE ''

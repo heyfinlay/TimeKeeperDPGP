@@ -1,0 +1,3 @@
+-- Remote migration 20251112180028 was effectively a no-op.
+-- Creating this placeholder locally keeps migration history in sync
+-- with the Supabase project so later migrations can be applied safely.
