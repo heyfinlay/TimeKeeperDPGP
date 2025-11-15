@@ -44,38 +44,38 @@ const AppRoutes = () => (
       <Route
         path="/sessions/new"
         element={
-          <ProtectedRoute>
+          <AuthGuard requireAdmin>
             <NewSession />
-          </ProtectedRoute>
+          </AuthGuard>
         }
       />
       <Route
         path="/control/:sessionId"
         element={
-          <ProtectedRoute>
+          <AuthGuard requireAdmin>
             <SessionAccessGuard>
               <Control />
             </SessionAccessGuard>
-          </ProtectedRoute>
+          </AuthGuard>
         }
       />
       <Route
         path="/marshal/:sessionId"
         element={
-          <ProtectedRoute>
+          <AuthGuard requireAdmin>
             <SessionAccessGuard>
               <Control />
             </SessionAccessGuard>
-          </ProtectedRoute>
+          </AuthGuard>
         }
       />
       <Route path="/live/:sessionId" element={<LiveTiming />} />
       <Route
         path="/admin/sessions"
         element={
-          <ProtectedRoute>
+          <AuthGuard requireAdmin>
             <AdminSessions />
-          </ProtectedRoute>
+          </AuthGuard>
         }
       />
       {/* Legacy /admin/login route - redirect to home with Discord OAuth */}

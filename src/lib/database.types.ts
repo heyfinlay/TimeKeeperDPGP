@@ -335,6 +335,7 @@ export type Database = {
           id: string
           name: string
           rake_bps: number
+          requires_approval: boolean
           takeout: number
           status: string
           type: string
@@ -346,6 +347,7 @@ export type Database = {
           id?: string
           name: string
           rake_bps?: number
+          requires_approval?: boolean
           takeout?: number
           status?: string
           type: string
@@ -357,6 +359,7 @@ export type Database = {
           id?: string
           name?: string
           rake_bps?: number
+          requires_approval?: boolean
           takeout?: number
           status?: string
           type?: string
@@ -966,28 +969,52 @@ export type Database = {
       }
       wagers: {
         Row: {
+          approved_at: string | null
+          approved_by: string | null
           id: string
           market_id: string
+          odds_after: number | null
+          odds_before: number | null
           outcome_id: string
+          payout_amount: number
           placed_at: string
+          price_impact_pp: number | null
+          rejected_reason: string | null
+          settled_at: string | null
           stake: number
           status: string
           user_id: string
         }
         Insert: {
+          approved_at?: string | null
+          approved_by?: string | null
           id?: string
           market_id: string
+          odds_after?: number | null
+          odds_before?: number | null
           outcome_id: string
+          payout_amount?: number
           placed_at?: string
+          price_impact_pp?: number | null
+          rejected_reason?: string | null
+          settled_at?: string | null
           stake: number
           status?: string
           user_id: string
         }
         Update: {
+          approved_at?: string | null
+          approved_by?: string | null
           id?: string
           market_id?: string
+          odds_after?: number | null
+          odds_before?: number | null
           outcome_id?: string
+          payout_amount?: number
           placed_at?: string
+          price_impact_pp?: number | null
+          rejected_reason?: string | null
+          settled_at?: string | null
           stake?: number
           status?: string
           user_id?: string
@@ -1081,6 +1108,87 @@ export type Database = {
         }
         Relationships: []
       }
+      pending_settlements: {
+        Row: {
+          created_at: string
+          id: string
+          market_id: string
+          notes: string | null
+          proposed_by: string | null
+          proposed_outcome_id: string
+          rejection_reason: string | null
+          reviewed_at: string | null
+          reviewed_by: string | null
+          session_id: string | null
+          status: string
+          timing_data: Json | null
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          market_id: string
+          notes?: string | null
+          proposed_by?: string | null
+          proposed_outcome_id: string
+          rejection_reason?: string | null
+          reviewed_at?: string | null
+          reviewed_by?: string | null
+          session_id?: string | null
+          status?: string
+          timing_data?: Json | null
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          market_id?: string
+          notes?: string | null
+          proposed_by?: string | null
+          proposed_outcome_id?: string
+          rejection_reason?: string | null
+          reviewed_at?: string | null
+          reviewed_by?: string | null
+          session_id?: string | null
+          status?: string
+          timing_data?: Json | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "pending_settlements_market_id_fkey"
+            columns: ["market_id"]
+            isOneToOne: false
+            referencedRelation: "markets"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "pending_settlements_proposed_outcome_id_fkey"
+            columns: ["proposed_outcome_id"]
+            isOneToOne: false
+            referencedRelation: "outcomes"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "pending_settlements_proposed_by_fkey"
+            columns: ["proposed_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "pending_settlements_reviewed_by_fkey"
+            columns: ["reviewed_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "pending_settlements_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       withdrawals: {
         Row: {
           amount: number
@@ -1125,6 +1233,38 @@ export type Database = {
         }
         Relationships: []
       }
+      pending_settlements_with_context: {
+        Row: {
+          driver_id: string | null
+          driver_name: string | null
+          driver_number: number | null
+          market_id: string | null
+          market_name: string | null
+          market_status: string | null
+          market_type: string | null
+          notes: string | null
+          outcome_id: string | null
+          outcome_label: string | null
+          proposed_at: string | null
+          proposed_by: string | null
+          proposed_by_name: string | null
+          rejection_reason: string | null
+          requires_approval: boolean | null
+          reviewed_at: string | null
+          reviewed_by: string | null
+          reviewed_by_name: string | null
+          session_id: string | null
+          session_name: string | null
+          session_status: string | null
+          settlement_id: string | null
+          settlement_status: string | null
+          timing_data: Json | null
+          total_pool: number | null
+          total_wagers: number | null
+          winning_pool: number | null
+        }
+        Relationships: []
+      }
     }
     Functions: {
       adjust_wallet_balance: {
@@ -1154,6 +1294,7 @@ export type Database = {
           p_rake_bps?: number
           p_session_id: string
           p_takeout?: number
+          p_requires_approval?: boolean
         }
         Returns: Json
       }
@@ -1178,6 +1319,23 @@ export type Database = {
           wager_id: string
         }[]
       }
+      approve_settlement: {
+        Args: { p_payout_policy?: string; p_settlement_id: string }
+        Returns: Json
+      }
+      propose_settlement: {
+        Args: {
+          p_market_id: string
+          p_notes?: string | null
+          p_proposed_outcome_id: string
+          p_timing_data?: Json | null
+        }
+        Returns: string
+      }
+      reject_settlement: {
+        Args: { p_rejection_reason?: string | null; p_settlement_id: string }
+        Returns: undefined
+      }
       apply_penalty: {
         Args: {
           p_category: string
@@ -1195,6 +1353,14 @@ export type Database = {
       approve_withdrawal: { Args: { p_withdrawal_id: string }; Returns: Json }
       close_market: { Args: { p_market_id: string }; Returns: Json }
       create_session_atomic: { Args: { p_session: Json }; Returns: string }
+      settle_market_with_approval: {
+        Args: {
+          p_market_id: string
+          p_outcome_id: string
+          p_payout_policy?: string
+        }
+        Returns: Json
+      }
       ensure_session_member: {
         Args: { p_role?: string; p_session_id: string; p_user_id: string }
         Returns: undefined

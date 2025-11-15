@@ -308,6 +308,8 @@ export default function ControlPanel() {
   const [announcementDraft, setAnnouncementDraft] = useState('');
   const [isEditingAnnouncement, setIsEditingAnnouncement] = useState(false);
   const [sessionError, setSessionError] = useState(null);
+  const [isActionLocked, setIsActionLocked] = useState(false);
+  const [lockWarning, setLockWarning] = useState(false);
   const [gridReadyConfirmed, setGridReadyConfirmed] = useState(false);
   const [isPhaseMutating, setIsPhaseMutating] = useState(false);
 
@@ -380,6 +382,12 @@ export default function ControlPanel() {
     }
   }, [applySessionStateRow, sessionId]);
 
+  const handleManualRefresh = useCallback(() => {
+    setLockWarning(false);
+    setSessionError(null);
+    void loadSessionState();
+  }, [loadSessionState]);
+
   useEffect(() => {
     void loadSessionState();
   }, [loadSessionState]);
@@ -400,18 +408,29 @@ export default function ControlPanel() {
   const persistSessionPatch = useCallback(
     async (patch = {}) => {
       if (!isSupabaseConfigured || !supabase) {
-        return;
+        return false;
       }
-      const { data, error } = await supabase.rpc('update_session_state_atomic', {
-        p_session_id: sessionId,
-        p_patch: patch,
-      });
-      if (error) throw error;
-      if (data?.session_state) {
-        applySessionStateRow(data.session_state);
+      if (isActionLocked) {
+        setLockWarning(true);
+        return false;
+      }
+      setIsActionLocked(true);
+      try {
+        const { data, error } = await supabase.rpc('update_session_state_atomic', {
+          p_session_id: sessionId,
+          p_patch: patch,
+        });
+        if (error) throw error;
+        if (data?.session_state) {
+          applySessionStateRow(data.session_state);
+          setLockWarning(false);
+        }
+        return true;
+      } finally {
+        setTimeout(() => setIsActionLocked(false), 750);
       }
     },
-    [applySessionStateRow, isSupabaseConfigured, sessionId, supabase],
+    [applySessionStateRow, isActionLocked, isSupabaseConfigured, sessionId, supabase],
   );
 
   const setProcedurePhase = useCallback(
@@ -1339,6 +1358,20 @@ export default function ControlPanel() {
         ) : null}
         {sessionError ? (
           <div className="rounded-2xl border border-rose-500/40 bg-rose-500/10 px-6 py-4 text-sm text-rose-200">{sessionError}</div>
+        ) : null}
+        {lockWarning ? (
+          <div className="rounded-2xl border border-amber-400/40 bg-amber-500/10 px-6 py-4 text-sm text-amber-100">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <p>Previous action is still processing to prevent duplicate logs. Wait a moment or refresh the session state.</p>
+              <button
+                type="button"
+                onClick={handleManualRefresh}
+                className="inline-flex items-center justify-center rounded-full border border-white/20 px-4 py-2 text-xs font-semibold uppercase tracking-[0.35em] text-white transition hover:border-white/40"
+              >
+                Refresh session state
+              </button>
+            </div>
+          </div>
         ) : null}
 
         {isRoleLoading ? (
