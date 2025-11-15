@@ -20,6 +20,10 @@ export default function NewSession() {
   const [scheduledFor, setScheduledFor] = useState('');
   const [totalLaps, setTotalLaps] = useState(String(DEFAULT_LAPS));
   const [totalDuration, setTotalDuration] = useState(String(DEFAULT_DURATION));
+  const [drivers, setDrivers] = useState([]);
+  const [newDriverNumber, setNewDriverNumber] = useState('');
+  const [newDriverName, setNewDriverName] = useState('');
+  const [newDriverTeam, setNewDriverTeam] = useState('');
   const [sessions, setSessions] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -55,6 +59,36 @@ export default function NewSession() {
     [sessions],
   );
 
+  const handleAddDriver = useCallback(() => {
+    const trimmedName = newDriverName.trim();
+    const number = Number(newDriverNumber) || null;
+
+    if (!trimmedName) {
+      setError('Driver name is required.');
+      return;
+    }
+
+    if (drivers.some(d => d.number === number && number !== null)) {
+      setError(`Driver number ${number} is already in use.`);
+      return;
+    }
+
+    setDrivers(prev => [...prev, {
+      number,
+      name: trimmedName,
+      team: newDriverTeam.trim() || null,
+    }]);
+
+    setNewDriverNumber('');
+    setNewDriverName('');
+    setNewDriverTeam('');
+    setError(null);
+  }, [newDriverNumber, newDriverName, newDriverTeam, drivers]);
+
+  const handleRemoveDriver = useCallback((index) => {
+    setDrivers(prev => prev.filter((_, i) => i !== index));
+  }, []);
+
   const handleCreateSession = useCallback(
     async (event) => {
       event.preventDefault();
@@ -85,7 +119,12 @@ export default function NewSession() {
           total_laps: Number(totalLaps) || DEFAULT_LAPS,
           total_duration: Number(totalDuration) || DEFAULT_DURATION,
           members: [],
-          drivers: [],
+          drivers: drivers.map((d, index) => ({
+            number: d.number,
+            name: d.name,
+            team: d.team,
+            position: index + 1,
+          })),
         };
 
         const sessionId = await seedSessionAtomic(payload);
@@ -99,7 +138,7 @@ export default function NewSession() {
         setIsSubmitting(false);
       }
     },
-    [eventType, seedSessionAtomic, sessionName, totalDuration, totalLaps, scheduledFor, supportsSessions, navigate],
+    [eventType, seedSessionAtomic, sessionName, totalDuration, totalLaps, scheduledFor, supportsSessions, navigate, drivers],
   );
 
   if (!supportsSessions) {
@@ -185,6 +224,62 @@ export default function NewSession() {
               className="rounded-2xl border border-white/10 bg-black/30 px-4 py-3 text-sm text-white outline-none transition focus:border-[#9FF7D3]/60 focus:ring-2 focus:ring-[#9FF7D3]/20"
             />
           </label>
+
+          <div className="flex flex-col gap-3">
+            <span className="text-xs font-semibold uppercase tracking-[0.35em] text-neutral-500">Drivers</span>
+
+            {drivers.length > 0 && (
+              <div className="flex flex-col gap-2">
+                {drivers.map((driver, index) => (
+                  <div key={index} className="flex items-center gap-3 rounded-2xl border border-white/10 bg-black/20 px-4 py-2">
+                    <span className="text-sm font-semibold text-white">#{driver.number || '—'}</span>
+                    <span className="flex-1 text-sm text-white">{driver.name}</span>
+                    {driver.team && <span className="text-xs text-neutral-400">{driver.team}</span>}
+                    <button
+                      type="button"
+                      onClick={() => handleRemoveDriver(index)}
+                      className="text-xs text-rose-400 transition hover:text-rose-300"
+                    >
+                      Remove
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div className="grid gap-3 md:grid-cols-[120px_1fr_1fr_auto]">
+              <input
+                type="number"
+                placeholder="Number"
+                value={newDriverNumber}
+                onChange={(e) => setNewDriverNumber(e.target.value)}
+                className="rounded-2xl border border-white/10 bg-black/30 px-4 py-2 text-sm text-white outline-none transition focus:border-[#9FF7D3]/60 focus:ring-2 focus:ring-[#9FF7D3]/20"
+              />
+              <input
+                type="text"
+                placeholder="Driver name *"
+                value={newDriverName}
+                onChange={(e) => setNewDriverName(e.target.value)}
+                onKeyPress={(e) => e.key === 'Enter' && (e.preventDefault(), handleAddDriver())}
+                className="rounded-2xl border border-white/10 bg-black/30 px-4 py-2 text-sm text-white outline-none transition focus:border-[#9FF7D3]/60 focus:ring-2 focus:ring-[#9FF7D3]/20"
+              />
+              <input
+                type="text"
+                placeholder="Team (optional)"
+                value={newDriverTeam}
+                onChange={(e) => setNewDriverTeam(e.target.value)}
+                onKeyPress={(e) => e.key === 'Enter' && (e.preventDefault(), handleAddDriver())}
+                className="rounded-2xl border border-white/10 bg-black/30 px-4 py-2 text-sm text-white outline-none transition focus:border-[#9FF7D3]/60 focus:ring-2 focus:ring-[#9FF7D3]/20"
+              />
+              <button
+                type="button"
+                onClick={handleAddDriver}
+                className="rounded-2xl border border-[#9FF7D3]/40 bg-[#9FF7D3]/10 px-4 py-2 text-sm font-semibold text-[#9FF7D3] transition hover:bg-[#9FF7D3]/20"
+              >
+                Add
+              </button>
+            </div>
+          </div>
 
           {error ? (
             <div className="rounded-2xl border border-rose-500/40 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">
