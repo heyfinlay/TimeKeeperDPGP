@@ -308,6 +308,8 @@ export default function ControlPanel() {
   const [announcementDraft, setAnnouncementDraft] = useState('');
   const [isEditingAnnouncement, setIsEditingAnnouncement] = useState(false);
   const [sessionError, setSessionError] = useState(null);
+  const [isActionLocked, setIsActionLocked] = useState(false);
+  const [lockWarning, setLockWarning] = useState(false);
   const [gridReadyConfirmed, setGridReadyConfirmed] = useState(false);
   const [isPhaseMutating, setIsPhaseMutating] = useState(false);
 
@@ -380,6 +382,12 @@ export default function ControlPanel() {
     }
   }, [applySessionStateRow, sessionId]);
 
+  const handleManualRefresh = useCallback(() => {
+    setLockWarning(false);
+    setSessionError(null);
+    void loadSessionState();
+  }, [loadSessionState]);
+
   useEffect(() => {
     void loadSessionState();
   }, [loadSessionState]);
@@ -400,18 +408,29 @@ export default function ControlPanel() {
   const persistSessionPatch = useCallback(
     async (patch = {}) => {
       if (!isSupabaseConfigured || !supabase) {
-        return;
+        return false;
       }
-      const { data, error } = await supabase.rpc('update_session_state_atomic', {
-        p_session_id: sessionId,
-        p_patch: patch,
-      });
-      if (error) throw error;
-      if (data?.session_state) {
-        applySessionStateRow(data.session_state);
+      if (isActionLocked) {
+        setLockWarning(true);
+        return false;
+      }
+      setIsActionLocked(true);
+      try {
+        const { data, error } = await supabase.rpc('update_session_state_atomic', {
+          p_session_id: sessionId,
+          p_patch: patch,
+        });
+        if (error) throw error;
+        if (data?.session_state) {
+          applySessionStateRow(data.session_state);
+          setLockWarning(false);
+        }
+        return true;
+      } finally {
+        setTimeout(() => setIsActionLocked(false), 750);
       }
     },
-    [applySessionStateRow, isSupabaseConfigured, sessionId, supabase],
+    [applySessionStateRow, isActionLocked, isSupabaseConfigured, sessionId, supabase],
   );
 
   const setProcedurePhase = useCallback(
@@ -420,7 +439,8 @@ export default function ControlPanel() {
       if (sessionState.procedurePhase === phase) return;
       setIsPhaseMutating(true);
       try {
-        await persistSessionPatch({ procedure_phase: phase });
+        const didPersist = await persistSessionPatch({ procedure_phase: phase });
+        if (!didPersist) return;
         const phaseLabel = PROCEDURE_PHASE_LABELS[phase] ?? phase;
         pushControlEntry({
           kind: 'phase',
@@ -460,7 +480,8 @@ export default function ControlPanel() {
     });
 
     try {
-      await persistSessionPatch({ command: 'start_clock' });
+      const didPersist = await persistSessionPatch({ command: 'start_clock' });
+      if (!didPersist) return;
       pushControlEntry({
         kind: 'timer',
         title: 'Race timer started',
@@ -503,7 +524,8 @@ export default function ControlPanel() {
     tickingRef.current = false;
     try {
       const current = computeDisplayTime();
-      await persistSessionPatch({ command: 'pause_clock', race_time_ms: current });
+      const didPersist = await persistSessionPatch({ command: 'pause_clock', race_time_ms: current });
+      if (!didPersist) return;
       pushControlEntry({
         kind: 'timer',
         title: 'Race paused',
@@ -520,7 +542,8 @@ export default function ControlPanel() {
     if (!canWrite) return;
     tickingRef.current = true;
     try {
-      await persistSessionPatch({ command: 'resume_clock' });
+      const didPersist = await persistSessionPatch({ command: 'resume_clock' });
+      if (!didPersist) return;
       pushControlEntry({
         kind: 'timer',
         title: 'Race resumed',
@@ -548,13 +571,19 @@ export default function ControlPanel() {
       }
     });
 
-    await persistSessionPatch({ command: 'reset_session', race_time_ms: 0 });
-    pushControlEntry({
-      kind: 'timer',
-      title: 'Session reset',
-      subtitle: 'Clock cleared',
-      accent: 'text-neutral-300',
-    });
+    try {
+      const didPersist = await persistSessionPatch({ command: 'reset_session', race_time_ms: 0 });
+      if (!didPersist) return;
+      pushControlEntry({
+        kind: 'timer',
+        title: 'Session reset',
+        subtitle: 'Clock cleared',
+        accent: 'text-neutral-300',
+      });
+    } catch (error) {
+      console.error('Failed to reset session', error);
+      setSessionError('Unable to reset session.');
+    }
   }, [canWrite, persistSessionPatch, pushControlEntry, drivers, sessionId]);
 
   const finishRace = useCallback(async () => {
@@ -578,7 +607,8 @@ export default function ControlPanel() {
     });
 
     try {
-      await persistSessionPatch({ command: 'finish_session', race_time_ms: current });
+      const didPersist = await persistSessionPatch({ command: 'finish_session', race_time_ms: current });
+      if (!didPersist) return;
       if (shouldExport && isSupabaseConfigured && supabase) {
         const sessionName = sessionState.eventType || 'Session';
         await finalizeAndExport(sessionId, sessionName);
@@ -633,7 +663,8 @@ export default function ControlPanel() {
     if (!canWrite) return;
     const normalized = TRACK_STATUS_MAP[statusId] ? statusId : 'green';
     try {
-      await persistSessionPatch({ track_status: normalized, flag_status: normalized });
+      const didPersist = await persistSessionPatch({ track_status: normalized, flag_status: normalized });
+      if (!didPersist) return;
       const statusLabel = TRACK_STATUS_MAP[normalized]?.label ?? normalized;
       pushControlEntry({
         kind: 'flag',
@@ -661,7 +692,8 @@ export default function ControlPanel() {
     if (!canWrite) return;
     try {
       const text = (announcementDraft ?? '').slice(0, 500);
-      await persistSessionPatch({ announcement: text });
+      const didPersist = await persistSessionPatch({ announcement: text });
+      if (!didPersist) return;
       setIsEditingAnnouncement(false); // Stop editing after successful update
       pushControlEntry({
         kind: 'announcement',
@@ -1339,6 +1371,20 @@ export default function ControlPanel() {
         ) : null}
         {sessionError ? (
           <div className="rounded-2xl border border-rose-500/40 bg-rose-500/10 px-6 py-4 text-sm text-rose-200">{sessionError}</div>
+        ) : null}
+        {lockWarning ? (
+          <div className="rounded-2xl border border-amber-400/40 bg-amber-500/10 px-6 py-4 text-sm text-amber-100">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <p>Previous action is still processing to prevent duplicate logs. Wait a moment or refresh the session state.</p>
+              <button
+                type="button"
+                onClick={handleManualRefresh}
+                className="inline-flex items-center justify-center rounded-full border border-white/20 px-4 py-2 text-xs font-semibold uppercase tracking-[0.35em] text-white transition hover:border-white/40"
+              >
+                Refresh session state
+              </button>
+            </div>
+          </div>
         ) : null}
 
         {isRoleLoading ? (

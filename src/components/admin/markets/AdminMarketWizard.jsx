@@ -4,6 +4,14 @@ import { AlertCircle, CheckCircle2, Loader2, Plus, Trash2 } from 'lucide-react';
 
 const RAKE_MIN = 0;
 const RAKE_MAX = 2000;
+const TAKEOUT_MIN = 0;
+const TAKEOUT_MAX = 0.25;
+
+const MARKET_TYPES = [
+  { value: 'parimutuel', label: 'Parimutuel' },
+  { value: 'race_outcome', label: 'Race Outcome' },
+  { value: 'prop', label: 'Prop Bet' },
+];
 
 const defaultOutcome = () => ({
   label: '',
@@ -18,7 +26,10 @@ export default function AdminMarketWizard({ onCreated }) {
 
   const [selectedSessionId, setSelectedSessionId] = useState('');
   const [marketName, setMarketName] = useState('');
+  const [marketType, setMarketType] = useState(MARKET_TYPES[0].value);
   const [rakeBps, setRakeBps] = useState(500);
+  const [takeout, setTakeout] = useState(0.1);
+  const [requiresApproval, setRequiresApproval] = useState(true);
   const [closeTime, setCloseTime] = useState('');
   const [outcomes, setOutcomes] = useState([defaultOutcome(), defaultOutcome()]);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -138,8 +149,16 @@ export default function AdminMarketWizard({ onCreated }) {
         }
       }
     });
+    const numericTakeout = Number(takeout);
+    if (!Number.isFinite(numericTakeout) || numericTakeout < TAKEOUT_MIN || numericTakeout > TAKEOUT_MAX) {
+      issues.push('Takeout must be between 0% and 25%.');
+    }
+    if (!marketType) {
+      issues.push('Select a market type.');
+    }
+
     return issues;
-  }, [selectedSessionId, marketName, rakeBps, closeTime, outcomes, sessionDrivers]);
+  }, [selectedSessionId, marketName, rakeBps, closeTime, outcomes, sessionDrivers, takeout, marketType]);
 
   const handleSubmit = useCallback(
     async (event) => {
@@ -160,6 +179,9 @@ export default function AdminMarketWizard({ onCreated }) {
           p_market_name: marketName.trim(),
           p_rake_bps: Number(rakeBps),
           p_closes_at: closeTime ? new Date(closeTime).toISOString() : null,
+          p_market_type: marketType,
+          p_takeout: takeout,
+          p_requires_approval: requiresApproval,
           p_outcomes: outcomes.map((outcome, index) => ({
             label: outcome.label.trim(),
             color: outcome.color || null,
@@ -177,6 +199,9 @@ export default function AdminMarketWizard({ onCreated }) {
         setToast({ type: 'success', message: 'Market created successfully.' });
         setMarketName('');
         setRakeBps(500);
+        setMarketType(MARKET_TYPES[0].value);
+        setTakeout(0.1);
+        setRequiresApproval(true);
         setCloseTime('');
         setOutcomes([defaultOutcome(), defaultOutcome()]);
         if (typeof onCreated === 'function') {
@@ -220,6 +245,9 @@ export default function AdminMarketWizard({ onCreated }) {
             setSelectedSessionId('');
             setMarketName('');
             setRakeBps(500);
+            setMarketType(MARKET_TYPES[0].value);
+            setTakeout(0.1);
+            setRequiresApproval(true);
             setCloseTime('');
             setOutcomes([defaultOutcome(), defaultOutcome()]);
             setToast(null);
@@ -297,6 +325,74 @@ export default function AdminMarketWizard({ onCreated }) {
               />
               <span className="text-xs text-neutral-500">Optional — prevents wagers after this time.</span>
             </label>
+          </div>
+
+          <div className="grid gap-4 md:grid-cols-3">
+            <label className="flex flex-col gap-2">
+              <span className="text-xs font-semibold uppercase tracking-[0.2em] text-neutral-400">Market Type</span>
+              <select
+                value={marketType}
+                onChange={(event) => setMarketType(event.target.value)}
+                className="rounded-2xl border border-white/10 bg-black/30 px-4 py-3 text-sm text-white focus:border-[#9FF7D3] focus:outline-none"
+              >
+                {MARKET_TYPES.map((entry) => (
+                  <option key={entry.value} value={entry.value}>
+                    {entry.label}
+                  </option>
+                ))}
+              </select>
+              <span className="text-xs text-neutral-500">Controls analytics + settlement helpers.</span>
+            </label>
+
+            <label className="flex flex-col gap-2">
+              <span className="text-xs font-semibold uppercase tracking-[0.2em] text-neutral-400">Takeout (%)</span>
+              <input
+                type="number"
+                min={TAKEOUT_MIN * 100}
+                max={TAKEOUT_MAX * 100}
+                step={0.1}
+                value={(takeout * 100).toFixed(1)}
+                onChange={(event) => {
+                  const percent = Number(event.target.value);
+                  if (Number.isNaN(percent)) {
+                    setTakeout(0);
+                    return;
+                  }
+                  setTakeout(percent / 100);
+                }}
+                className="rounded-2xl border border-white/10 bg-black/30 px-4 py-3 text-sm text-white focus:border-[#9FF7D3] focus:outline-none"
+              />
+              <span className="text-xs text-neutral-500">House take between 0% and 25%.</span>
+            </label>
+
+            <div className="flex flex-col gap-2">
+              <span className="text-xs font-semibold uppercase tracking-[0.2em] text-neutral-400">Requires Steward Approval</span>
+              <button
+                type="button"
+                onClick={() => setRequiresApproval((prev) => !prev)}
+                className={`flex items-center justify-between rounded-2xl border px-4 py-3 text-sm ${
+                  requiresApproval
+                    ? 'border-emerald-400/40 bg-emerald-500/10 text-emerald-100'
+                    : 'border-white/10 bg-black/30 text-neutral-300'
+                }`}
+              >
+                <span>{requiresApproval ? 'Manual approval required' : 'Auto-accept wagers'}</span>
+                <span
+                  className={`inline-flex h-5 w-10 items-center rounded-full px-1 transition ${
+                    requiresApproval ? 'bg-emerald-400/60' : 'bg-neutral-600'
+                  }`}
+                >
+                  <span
+                    className={`h-3.5 w-3.5 rounded-full bg-white transition ${
+                      requiresApproval ? 'translate-x-4' : 'translate-x-0'
+                    }`}
+                  />
+                </span>
+              </button>
+              <span className="text-xs text-neutral-500">
+                Disable only for trusted demo or low-stakes markets.
+              </span>
+            </div>
           </div>
 
           <div className="flex items-center justify-between">

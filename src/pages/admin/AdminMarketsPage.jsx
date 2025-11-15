@@ -216,6 +216,9 @@ const AdminMarketsPage = () => {
     };
   }, [selectedMarket, outcomes, wagers, events]);
 
+  const openMarkets = useMemo(() => markets.filter((market) => market.status === 'open'), [markets]);
+  const closedMarkets = useMemo(() => markets.filter((market) => market.status === 'closed'), [markets]);
+
   const resetSettlementForm = () => {
     setSettlementOutcomeId(null);
     setSettlementNotes('');
@@ -710,9 +713,91 @@ const AdminMarketsPage = () => {
         )}
 
         {activeTab === TABS.SETTLEMENTS && (
-          <div className="flex flex-col gap-6">
-            <SettlementApprovalQueue />
-            <SettlementAuditDashboard />
+          <div className="grid gap-6 lg:grid-cols-3">
+            <div className="flex flex-col gap-6 lg:col-span-2">
+              <SettlementApprovalQueue />
+              <SettlementAuditDashboard />
+            </div>
+            <div className="space-y-6">
+              <div className="rounded-2xl border border-white/5 bg-[#05070F]/80 p-6">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-xs uppercase tracking-[0.3em] text-neutral-500">Ready to Settle</p>
+                    <h3 className="text-lg font-semibold text-white">{closedMarkets.length} markets</h3>
+                  </div>
+                  <span className="text-xs text-neutral-500">Closed, awaiting proposal</span>
+                </div>
+                <div className="mt-4 flex flex-col gap-3">
+                  {closedMarkets.length === 0 && (
+                    <p className="text-sm text-neutral-500">No closed markets waiting on settlements.</p>
+                  )}
+                  {closedMarkets.slice(0, 4).map((market) => (
+                    <div
+                      key={market.id}
+                      className="flex items-center justify-between rounded-xl border border-white/10 bg-black/30 px-3 py-2"
+                    >
+                      <div>
+                        <p className="text-sm font-medium text-white">{market.name}</p>
+                        <p className="text-xs text-neutral-500">
+                          Pool {formatWalletBalance(
+                            wagers.filter((w) => w.market_id === market.id).reduce((sum, w) => sum + (w.stake || 0), 0),
+                            { compact: true },
+                          )}
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => openSettlementModal(market)}
+                        className="rounded-full border border-[#9FF7D3]/40 px-3 py-1 text-xs uppercase tracking-[0.3em] text-[#9FF7D3] transition hover:border-[#9FF7D3]/70"
+                      >
+                        Propose
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="rounded-2xl border border-white/5 bg-[#05070F]/80 p-6">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-xs uppercase tracking-[0.3em] text-neutral-500">Active Markets</p>
+                    <h3 className="text-lg font-semibold text-white">{openMarkets.length} open</h3>
+                  </div>
+                </div>
+                <div className="mt-4 flex flex-col gap-3">
+                  {openMarkets.length === 0 && (
+                    <p className="text-sm text-neutral-500">All markets are currently closed.</p>
+                  )}
+                  {openMarkets.slice(0, 4).map((market) => (
+                    <div
+                      key={market.id}
+                      className="flex items-center justify-between rounded-xl border border-white/10 bg-black/30 px-3 py-2"
+                    >
+                      <div>
+                        <p className="text-sm font-medium text-white">{market.name}</p>
+                        <p className="text-xs text-neutral-500">
+                          Closes{' '}
+                          {market.closes_at
+                            ? new Date(market.closes_at).toLocaleString()
+                            : 'Manual close'}
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSelectedMarket(market);
+                          setModalMode('close');
+                          setIsModalOpen(true);
+                        }}
+                        className="rounded-full border border-rose-500/40 px-3 py-1 text-xs uppercase tracking-[0.3em] text-rose-200 transition hover:border-rose-500/70"
+                      >
+                        Close
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
           </div>
         )}
 
@@ -1103,6 +1188,141 @@ const AdminMarketsPage = () => {
           </div>
         )}
       </section>
+
+      {/* Market Detail Modal */}
+      {isModalOpen && modalMode === 'view' && selectedMarket && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4">
+          <div className="w-full max-w-4xl rounded-3xl border border-white/10 bg-[#05070F] p-6 shadow-2xl">
+            <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div>
+                <p className="text-xs uppercase tracking-[0.4em] text-neutral-500">Market Overview</p>
+                <h3 className="mt-1 text-2xl font-semibold text-white">{selectedMarket.name}</h3>
+                <p className="text-sm text-neutral-400">
+                  {selectedMarketContext?.event?.title ?? 'Unlinked Event'} • Type{' '}
+                  {selectedMarket.type}
+                </p>
+              </div>
+              <div className="flex items-center gap-3">
+                <span
+                  className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium ${
+                    (MARKET_STATUS_CONFIG[selectedMarket.status]?.color ?? 'green') === 'green'
+                      ? 'border-green-500/40 bg-green-500/10 text-green-300'
+                      : (MARKET_STATUS_CONFIG[selectedMarket.status]?.color ?? 'blue') === 'red'
+                        ? 'border-rose-500/40 bg-rose-500/10 text-rose-300'
+                        : 'border-blue-500/40 bg-blue-500/10 text-blue-300'
+                  }`}
+                >
+                  {MARKET_STATUS_CONFIG[selectedMarket.status]?.label ?? selectedMarket.status}
+                </span>
+                <button
+                  type="button"
+                  onClick={dismissModal}
+                  className="rounded-full p-2 text-neutral-400 transition hover:bg-white/10 hover:text-white"
+                >
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+            </div>
+
+            <div className="grid gap-4 md:grid-cols-3">
+              <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+                <p className="text-xs uppercase tracking-[0.3em] text-neutral-500">Takeout</p>
+                <p className="mt-1 text-lg font-semibold text-white">
+                  {(Number(selectedMarket.takeout ?? 0) * 100).toFixed(1)}%
+                </p>
+                <p className="text-xs text-neutral-500">Rake {((selectedMarket.rake_bps ?? 0) / 100).toFixed(1)}%</p>
+              </div>
+              <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+                <p className="text-xs uppercase tracking-[0.3em] text-neutral-500">Approval Mode</p>
+                <p className="mt-1 text-lg font-semibold text-white">
+                  {selectedMarket.requires_approval ? 'Manual' : 'Auto'}
+                </p>
+                <p className="text-xs text-neutral-500">
+                  {selectedMarket.requires_approval
+                    ? 'Pending wagers must be approved'
+                    : 'New wagers auto-accept'}
+                </p>
+              </div>
+              <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+                <p className="text-xs uppercase tracking-[0.3em] text-neutral-500">Closes At</p>
+                <p className="mt-1 text-lg font-semibold text-white">
+                  {selectedMarket.closes_at ? new Date(selectedMarket.closes_at).toLocaleString() : 'Open until closed'}
+                </p>
+                <p className="text-xs text-neutral-500">
+                  Pool: {formatWalletBalance(selectedMarketContext?.totalStake ?? 0, { compact: false })}
+                </p>
+              </div>
+            </div>
+
+            <div className="mt-6 rounded-2xl border border-white/5 bg-black/30 p-4">
+              <p className="text-xs uppercase tracking-[0.3em] text-neutral-500">Outcomes</p>
+              <div className="mt-3 grid gap-3 md:grid-cols-2">
+                {(selectedMarketContext?.outcomes ?? []).map((outcome) => {
+                  const marketWagers = wagers.filter((w) => w.market_id === selectedMarket.id);
+                  const outcomeWagers = marketWagers.filter((w) => w.outcome_id === outcome.id);
+                  const outcomeStake = outcomeWagers.reduce((sum, w) => sum + (w.stake || 0), 0);
+                  const totalStake = selectedMarketContext?.totalStake ?? 0;
+                  const share = totalStake > 0 ? (outcomeStake / totalStake) * 100 : 0;
+                  return (
+                    <div
+                      key={outcome.id}
+                      className="flex flex-col gap-1 rounded-xl border border-white/10 bg-black/40 px-4 py-3"
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="text-sm font-semibold text-white">{outcome.label}</span>
+                        <span className="text-xs text-neutral-400">{share.toFixed(1)}% pool</span>
+                      </div>
+                      <span className="text-xs text-[#9FF7D3]">
+                        💎 {(outcomeStake / 1000).toFixed(1)}K · {outcomeWagers.length} wagers
+                      </span>
+                    </div>
+                  );
+                })}
+                {(selectedMarketContext?.outcomes ?? []).length === 0 && (
+                  <div className="rounded-xl border border-dashed border-white/10 p-4 text-sm text-neutral-500">
+                    No outcomes configured.
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="text-xs text-neutral-500">
+                Manage this market: close wagering, review pending bets, or start settlement proposals.
+              </div>
+              <div className="flex flex-wrap gap-3">
+                {selectedMarket.status === 'open' && (
+                  <button
+                    type="button"
+                    onClick={() => setModalMode('close')}
+                    className="inline-flex items-center gap-2 rounded-full border border-rose-500/40 bg-rose-500/10 px-4 py-2 text-xs font-semibold uppercase tracking-[0.3em] text-rose-200 transition hover:border-rose-500/70"
+                  >
+                    <X className="h-3 w-3" />
+                    Close Market
+                  </button>
+                )}
+                {selectedMarket.status === 'closed' && (
+                  <button
+                    type="button"
+                    onClick={() => openSettlementModal(selectedMarket)}
+                    className="inline-flex items-center gap-2 rounded-full border border-[#9FF7D3]/40 bg-[#9FF7D3]/10 px-4 py-2 text-xs font-semibold uppercase tracking-[0.3em] text-[#9FF7D3] transition hover:border-[#9FF7D3]/70"
+                  >
+                    <Gavel className="h-3 w-3" />
+                    Propose Settlement
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={dismissModal}
+                  className="rounded-full border border-white/10 px-4 py-2 text-xs uppercase tracking-[0.3em] text-neutral-400 transition hover:border-white/30 hover:text-white"
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Settlement Modal */}
       {isModalOpen && modalMode === 'settle' && selectedMarket && (
