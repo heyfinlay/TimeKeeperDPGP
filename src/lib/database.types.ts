@@ -1319,8 +1319,16 @@ export type Database = {
           wager_id: string
         }[]
       }
+      approve_wager: {
+        Args: { p_wager_id: string }
+        Returns: Json
+      }
       approve_settlement: {
         Args: { p_payout_policy?: string; p_settlement_id: string }
+        Returns: Json
+      }
+      reject_wager: {
+        Args: { p_reason?: string | null; p_wager_id: string }
         Returns: Json
       }
       propose_settlement: {

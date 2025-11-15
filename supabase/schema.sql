@@ -1009,14 +1009,19 @@ begin
     raise exception 'Winning outcome does not belong to this market';
   end if;
 
+  perform 1
+    from public.wagers
+    where market_id = p_market_id
+      and status = 'pending'
+    for update;
+
   select
     coalesce(sum(stake), 0),
     coalesce(sum(case when outcome_id = p_winning_outcome_id then stake else 0 end), 0)
   into v_total_pool, v_winning_pool
   from public.wagers
   where market_id = p_market_id
-    and status = 'pending'
-  for update;
+    and status = 'pending';
 
   if v_total_pool = 0 then
     update public.markets set status = 'settled' where id = p_market_id;
@@ -1484,6 +1489,107 @@ $$;
 revoke all on function public.admin_list_pending_wagers() from public;
 grant execute on function public.admin_list_pending_wagers() to authenticated, service_role;
 comment on function public.admin_list_pending_wagers() is 'Admin RPC returning pending wagers (no-arg overload).';
+
+----------------------------
+-- approve_wager
+----------------------------
+create or replace function public.approve_wager(p_wager_id uuid)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  v_wager record;
+begin
+  if not public.is_admin() then
+    raise exception 'Admin access required';
+  end if;
+
+  select w.*, m.requires_approval
+  into v_wager
+  from public.wagers w
+  join public.markets m on m.id = w.market_id
+  where w.id = p_wager_id
+  for update;
+
+  if v_wager.id is null then
+    raise exception 'Wager not found';
+  end if;
+
+  if v_wager.status <> 'pending' then
+    raise exception 'Wager is not pending approval';
+  end if;
+
+  update public.wagers
+  set status = 'accepted',
+      approved_by = auth.uid(),
+      approved_at = timezone('utc', now()),
+      rejected_reason = null
+  where id = p_wager_id;
+
+  return jsonb_build_object(
+    'success', true,
+    'wagerId', p_wager_id,
+    'status', 'accepted'
+  );
+end;
+$$;
+
+revoke all on function public.approve_wager(uuid) from public;
+grant execute on function public.approve_wager(uuid) to authenticated;
+comment on function public.approve_wager(uuid) is 'Admin RPC for approving a pending wager.';
+
+----------------------------
+-- reject_wager
+----------------------------
+create or replace function public.reject_wager(
+  p_wager_id uuid,
+  p_reason text default 'Rejected by admin'
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  v_status text;
+begin
+  if not public.is_admin() then
+    raise exception 'Admin access required';
+  end if;
+
+  select status into v_status
+  from public.wagers
+  where id = p_wager_id
+  for update;
+
+  if v_status is null then
+    raise exception 'Wager not found';
+  end if;
+
+  if v_status <> 'pending' then
+    raise exception 'Wager is not pending approval';
+  end if;
+
+  update public.wagers
+  set status = 'rejected',
+      rejected_reason = nullif(p_reason, ''),
+      approved_by = auth.uid(),
+      approved_at = timezone('utc', now())
+  where id = p_wager_id;
+
+  return jsonb_build_object(
+    'success', true,
+    'wagerId', p_wager_id,
+    'status', 'rejected'
+  );
+end;
+$$;
+
+revoke all on function public.reject_wager(uuid, text) from public;
+grant execute on function public.reject_wager(uuid, text) to authenticated;
+comment on function public.reject_wager(uuid, text) is 'Admin RPC for rejecting a pending wager with an optional reason.';
 
 ----------------------------
 -- update_session_state_atomic
