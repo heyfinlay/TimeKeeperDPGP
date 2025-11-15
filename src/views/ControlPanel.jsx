@@ -3,25 +3,27 @@
  *
  * TIMING ARCHITECTURE:
  * - Session Clock: Global race time tracked in sessionState.raceTime (persisted to DB)
- * - Driver Lap Clocks: Per-driver current lap time stored in localStorage as "armed" timestamps
+ * - Driver Lap Clocks: Per-driver current lap time tracked server-side in drivers.current_lap_started_at
  *
  * RACE START SYNCHRONIZATION:
- * When procedure_phase transitions from 'grid' → 'race', ALL driver lap timers are auto-armed
- * at the exact race start moment. This ensures:
+ * When procedure_phase transitions from 'grid' → 'race', ALL driver lap timers are initialized
+ * server-side at the exact race start moment via initialize_lap_timers_for_session RPC. This ensures:
  *   1. Session clock and all driver lap clocks start simultaneously
- *   2. Live timing displays accurate 1-second precision from race start
+ *   2. Live timing displays accurate timing from race start
  *   3. First lap times are calculated from race start, not first manual log
+ *   4. Timing persists across page reloads and crashes (server-side storage)
  *
  * LAP LOGGING BEHAVIOR:
- * - Hotkey/click press: Logs the lap (calculates time from armed start, re-arms)
- * - All drivers are auto-armed on race start (grid → race phase transition)
- * - Manual arming is DISABLED - timers only arm automatically on race start
- * - Prevents accidental timer arming before race begins
+ * - Hotkey/click press: Logs the lap (calculates time from server timestamp, resets timer server-side)
+ * - All drivers get timers initialized on race start (grid → race phase transition)
+ * - Server automatically sets current_lap_started_at when logging a lap (via log_lap_atomic)
+ * - Timing survives page crashes and reloads (no localStorage dependency)
  *
  * TIMING PERSISTENCE:
- * - Armed start times stored in localStorage (survives page refresh)
- * - Pause/resume logic adjusts armed times to maintain accuracy
- * - Reset clears all armed timers and returns to setup phase
+ * - Lap start times stored in database (drivers.current_lap_started_at)
+ * - Pause/resume handled server-side in session_state
+ * - Reset clears all timers and returns to setup phase
+ * - Marshals can safely reload page without losing live lap timing data
  */
 import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
@@ -427,7 +429,8 @@ export default function ControlPanel() {
         }
         return true;
       } finally {
-        setTimeout(() => setIsActionLocked(false), 750);
+        // Reduce lock timeout from 750ms to 300ms for more responsive UI
+        setTimeout(() => setIsActionLocked(false), 300);
       }
     },
     [applySessionStateRow, isActionLocked, isSupabaseConfigured, sessionId, supabase],
@@ -462,24 +465,19 @@ export default function ControlPanel() {
     if (sessionState.procedurePhase !== 'grid' || !gridReadyConfirmed) {
       return;
     }
-    const raceStartTime = Date.now();
     tickingRef.current = true;
 
-    // CRITICAL: Arm all driver lap timers SYNCHRONOUSLY before network round-trip
-    // This ensures local operator's timers start immediately with race clock.
-    // The useEffect below serves as safety net for remote clients who see the
-    // state change come in via realtime after network latency.
-    drivers.forEach((driver) => {
-      try {
-        const key = `timekeeper.currentLapStart.${sessionId}.${driver.id}`;
-        window.localStorage.setItem(key, String(raceStartTime));
-      } catch {
-        // ignore localStorage errors
-      }
-    });
-
     try {
+      // Start race clock and initialize all lap timers server-side
       await persistSessionPatch({ command: 'start_clock' });
+
+      // Initialize lap timers for all drivers in the database
+      if (isSupabaseConfigured && supabase) {
+        await supabase.rpc('initialize_lap_timers_for_session', {
+          p_session_id: sessionId,
+        });
+      }
+
       pushControlEntry({
         kind: 'timer',
         title: 'Race timer started',
@@ -491,31 +489,10 @@ export default function ControlPanel() {
       tickingRef.current = false;
       setSessionError('Unable to start race timer.');
     }
-  }, [canWrite, gridReadyConfirmed, persistSessionPatch, pushControlEntry, sessionState.procedurePhase, drivers]);
+  }, [canWrite, gridReadyConfirmed, persistSessionPatch, pushControlEntry, sessionState.procedurePhase, sessionId]);
 
-  // SAFETY NET: Auto-arm driver lap timers for REMOTE clients/observers
-  // When remote clients see procedurePhase change to 'race' via realtime,
-  // they need their timers armed. Local operator already armed synchronously
-  // in startTimer callback above (before network round-trip).
-  useEffect(() => {
-    if (sessionState.procedurePhase === 'race' && sessionState.isTiming && !sessionState.isPaused) {
-      const raceStartTime = Date.now();
-      drivers.forEach((driver) => {
-        try {
-          const key = `timekeeper.currentLapStart.${sessionId}.${driver.id}`;
-          const raw = window.localStorage.getItem(key);
-          const currentArmed = raw ? Number.parseInt(raw, 10) : NaN;
-
-          // Only arm if not already armed (prevents overwriting local operator's timestamp)
-          if (Number.isNaN(currentArmed)) {
-            window.localStorage.setItem(key, String(raceStartTime));
-          }
-        } catch {
-          // ignore localStorage errors
-        }
-      });
-    }
-  }, [sessionState.procedurePhase, sessionState.isTiming, sessionState.isPaused, drivers, sessionId]);
+  // Server-side lap timing now handled via current_lap_started_at column in database
+  // No need for localStorage manipulation or safety net effects
 
   const pauseTimer = useCallback(async () => {
     if (!canWrite) return;
@@ -731,33 +708,8 @@ export default function ControlPanel() {
     }
   }, []);
 
-  const hotkeyArmsKey = useCallback((driverId) => `timekeeper.currentLapStart.${sessionId}.${driverId}`, [sessionId]);
-  const getArmedStart = useCallback(
-    (driverId) => {
-      try {
-        const raw = window.localStorage.getItem(hotkeyArmsKey(driverId));
-        const n = raw ? Number.parseInt(raw, 10) : NaN;
-        return Number.isNaN(n) ? null : n;
-      } catch {
-        return null;
-      }
-    },
-    [hotkeyArmsKey],
-  );
-  const setArmedStart = useCallback(
-    (driverId, when) => {
-      try {
-        if (when === null) {
-          window.localStorage.removeItem(hotkeyArmsKey(driverId));
-        } else {
-          window.localStorage.setItem(hotkeyArmsKey(driverId), String(when));
-        }
-      } catch {
-        // ignore storage errors
-      }
-    },
-    [hotkeyArmsKey],
-  );
+  // Lap timing now handled server-side via drivers.current_lap_started_at
+  // No localStorage dependency required
 
   const [displayTime, setDisplayTime] = useState(0);
   const [currentLapTimes, setCurrentLapTimes] = useState({});
@@ -835,16 +787,21 @@ export default function ControlPanel() {
     const map = {};
     let hasActive = false;
     drivers.forEach((driver) => {
-      const start = getArmedStart(driver.id);
-      if (typeof start === 'number' && Number.isFinite(start)) {
-        map[driver.id] = Math.max(0, now - start);
-        hasActive = true;
+      // Use server-side current_lap_started_at instead of localStorage
+      if (driver.current_lap_started_at) {
+        const startMs = new Date(driver.current_lap_started_at).getTime();
+        if (Number.isFinite(startMs)) {
+          map[driver.id] = Math.max(0, now - startMs);
+          hasActive = true;
+        } else {
+          map[driver.id] = null;
+        }
       } else {
         map[driver.id] = null;
       }
     });
     return { map, hasActive };
-  }, [drivers, getArmedStart, sessionState.isPaused]);
+  }, [drivers, sessionState.isPaused]);
 
   useEffect(() => {
     const { map } = computeCurrentLapMap();
@@ -881,48 +838,35 @@ export default function ControlPanel() {
         pauseEpochRef.current = Date.now();
       }
     } else if (wasPaused) {
-      const resumeNow = Date.now();
-      const pausedFor =
-        typeof pauseEpochRef.current === 'number' && Number.isFinite(pauseEpochRef.current)
-          ? resumeNow - pauseEpochRef.current
-          : 0;
       pauseEpochRef.current = null;
-      if (pausedFor > 0) {
-        drivers.forEach((driver) => {
-          const start = getArmedStart(driver.id);
-          if (typeof start === 'number' && Number.isFinite(start)) {
-            setArmedStart(driver.id, start + pausedFor);
-          }
-        });
-      }
     }
     wasPausedRef.current = sessionState.isPaused;
-  }, [sessionState.isPaused, drivers, getArmedStart, setArmedStart]);
+  }, [sessionState.isPaused]);
 
   const handleDriverPanelLogLap = useCallback(
     async (driverId) => {
       if (!canWrite || !driverId) return;
-      const now = Date.now();
-      const armed = getArmedStart(driverId);
 
-      // Only log laps if timer is already armed (race is running)
-      // Do NOT manually arm timers - they are auto-armed on race start
-      if (!armed) {
+      // Get driver's current lap start time from database
+      const driver = panelDrivers.find(d => d.id === driverId);
+      if (!driver || !driver.current_lap_started_at) {
         const currentPhase = sessionState.procedurePhase ?? 'unknown';
         const isTiming = sessionState.isTiming;
         console.warn(
-          `Cannot log lap: timer not armed. Phase: ${currentPhase}, isTiming: ${isTiming}, armed: ${armed}`
+          `Cannot log lap: timer not started. Phase: ${currentPhase}, isTiming: ${isTiming}`
         );
         setSessionError(
-          `Cannot log lap - timer not armed. Current phase: ${currentPhase}. ${currentPhase !== 'race' ? 'Start the race first (Grid → Grid Ready → Start Race).' : 'Race is running but timer not armed - this is a bug.'}`
+          `Cannot log lap - timer not started. Current phase: ${currentPhase}. ${currentPhase !== 'race' ? 'Start the race first (Grid → Grid Ready → Start Race).' : 'Race is running but timer not started - check database.'}`
         );
         return;
       }
 
       try {
-        const lapTime = Math.max(1, now - armed);
+        const now = Date.now();
+        const startMs = new Date(driver.current_lap_started_at).getTime();
+        const lapTime = Math.max(1, now - startMs);
         await logLapAtomic({ sessionId, driverId, lapTimeMs: lapTime });
-        setArmedStart(driverId, now);
+        // Server automatically sets current_lap_started_at for next lap
         const driverInfo = describeDriver(driverId);
         pushEventEntry({
           kind: 'lap',
@@ -935,7 +879,7 @@ export default function ControlPanel() {
         setSessionError(`Lap logging failed: ${err.message || 'Unknown error'}`);
       }
     },
-    [canWrite, describeDriver, getArmedStart, pushEventEntry, setArmedStart, sessionId, setSessionError, sessionState.procedurePhase, sessionState.isTiming],
+    [canWrite, describeDriver, panelDrivers, pushEventEntry, sessionId, setSessionError, sessionState.procedurePhase, sessionState.isTiming],
   );
 
   const handlePitIn = useCallback(
@@ -1129,26 +1073,27 @@ export default function ControlPanel() {
           await togglePitComplete(driver);
           return;
         }
-        const armed = getArmedStart(driver.id);
-        const now = Date.now();
-        if (!armed) {
+        // Check if driver has server-side lap timer started
+        if (!driver.current_lap_started_at) {
           const currentPhase = sessionState.procedurePhase ?? 'unknown';
           const isTiming = sessionState.isTiming;
           console.warn(
-            `Cannot log lap via hotkey: timer not armed. Driver: ${driver.name}, Phase: ${currentPhase}, isTiming: ${isTiming}`
+            `Cannot log lap via hotkey: timer not started. Driver: ${driver.name}, Phase: ${currentPhase}, isTiming: ${isTiming}`
           );
           setSessionError(
-            `Cannot log lap for ${driver.name} - timer not armed. Current phase: ${currentPhase}. ${
+            `Cannot log lap for ${driver.name} - timer not started. Current phase: ${currentPhase}. ${
               currentPhase !== 'race'
                 ? 'Start the race first (Grid → Grid Ready → Start Race).'
-                : 'Race is running but timer not armed - check localStorage.'
+                : 'Race is running but timer not started - check database.'
             }`
           );
           return;
         }
-        const lapTime = Math.max(1, now - armed);
+        const now = Date.now();
+        const startMs = new Date(driver.current_lap_started_at).getTime();
+        const lapTime = Math.max(1, now - startMs);
         await logLapAtomic({ sessionId, driverId: driver.id, lapTimeMs: lapTime });
-        setArmedStart(driver.id, now);
+        // Server automatically sets current_lap_started_at for next lap
       } catch (err) {
         console.error('Hotkey action failed', err);
         setSessionError(`Hotkey failed: ${err.message || 'Unknown error'}`);
@@ -1161,10 +1106,8 @@ export default function ControlPanel() {
       gridReadyConfirmed,
       handleInvalidateLap,
       hotkeys,
-      getArmedStart,
       pauseTimer,
       resumeTimer,
-      setArmedStart,
       setSessionError,
       sessionId,
       sessionState.isPaused,
