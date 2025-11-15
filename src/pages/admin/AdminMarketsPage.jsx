@@ -108,7 +108,7 @@ const AdminMarketsPage = () => {
         supabase.from('withdrawals').select('*').order('created_at', { ascending: false }),
         supabase.from('deposits').select('*').order('created_at', { ascending: false }),
         supabase.from('wallet_accounts').select('*'),
-        supabase.rpc('admin_list_pending_wagers'),
+        supabase.rpc('admin_list_pending_wagers', { p_market_id: null }),
       ]);
 
       if (eventsError) throw eventsError;

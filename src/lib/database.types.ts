@@ -1161,6 +1161,23 @@ export type Database = {
         Args: { p_approve: boolean; p_memo?: string; p_withdrawal_id: string }
         Returns: undefined
       }
+      admin_list_pending_wagers: {
+        Args: { p_market_id?: string | null }
+        Returns: {
+          bettor_name: string | null
+          market_id: string
+          market_name: string
+          odds_after: number | null
+          odds_before: number | null
+          outcome_id: string
+          outcome_label: string
+          placed_at: string
+          price_impact_pp: number | null
+          stake: number
+          user_id: string
+          wager_id: string
+        }[]
+      }
       apply_penalty: {
         Args: {
           p_category: string
