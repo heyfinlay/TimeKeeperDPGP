@@ -176,6 +176,7 @@ export type Database = {
           session_id: string
           status: string | null
           team: string | null
+          team_color: string | null
           total_time_ms: number | null
           updated_at: string | null
         }
@@ -193,6 +194,7 @@ export type Database = {
           session_id: string
           status?: string | null
           team?: string | null
+          team_color?: string | null
           total_time_ms?: number | null
           updated_at?: string | null
         }
@@ -210,6 +212,7 @@ export type Database = {
           session_id?: string
           status?: string | null
           team?: string | null
+          team_color?: string | null
           total_time_ms?: number | null
           updated_at?: string | null
         }
@@ -370,6 +373,76 @@ export type Database = {
             columns: ["event_id"]
             isOneToOne: false
             referencedRelation: "events"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      market_wallet_transactions: {
+        Row: {
+          amount: number
+          created_at: string
+          direction: string
+          id: string
+          kind: string
+          market_id: string
+          meta: Json | null
+          reference_id: string | null
+          reference_type: string | null
+        }
+        Insert: {
+          amount: number
+          created_at?: string
+          direction: string
+          id?: string
+          kind: string
+          market_id: string
+          meta?: Json | null
+          reference_id?: string | null
+          reference_type?: string | null
+        }
+        Update: {
+          amount?: number
+          created_at?: string
+          direction?: string
+          id?: string
+          kind?: string
+          market_id?: string
+          meta?: Json | null
+          reference_id?: string | null
+          reference_type?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "market_wallet_transactions_market_id_fkey"
+            columns: ["market_id"]
+            isOneToOne: false
+            referencedRelation: "market_wallets"
+            referencedColumns: ["market_id"]
+          },
+        ]
+      }
+      market_wallets: {
+        Row: {
+          balance: number
+          market_id: string
+          updated_at: string
+        }
+        Insert: {
+          balance?: number
+          market_id: string
+          updated_at?: string
+        }
+        Update: {
+          balance?: number
+          market_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "market_wallets_market_id_fkey"
+            columns: ["market_id"]
+            isOneToOne: true
+            referencedRelation: "markets"
             referencedColumns: ["id"]
           },
         ]
