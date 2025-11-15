@@ -469,8 +469,20 @@ export default function ControlPanel() {
     tickingRef.current = true;
 
     try {
+      // Start race clock server-side
       const didPersist = await persistSessionPatch({ command: 'start_clock' });
-      if (!didPersist) return;
+      if (!didPersist) {
+        tickingRef.current = false;
+        return;
+      }
+
+      // Initialize lap timers for all drivers in the database
+      if (isSupabaseConfigured && supabase) {
+        await supabase.rpc('initialize_lap_timers_for_session', {
+          p_session_id: sessionId,
+        });
+      }
+
       pushControlEntry({
         kind: 'timer',
         title: 'Race timer started',
@@ -528,17 +540,7 @@ export default function ControlPanel() {
     if (!canWrite) return;
     tickingRef.current = false;
 
-    // Clear all driver lap timers SYNCHRONOUSLY before network round-trip
-    // Ensures local operator sees immediate reset
-    drivers.forEach((driver) => {
-      try {
-        const key = `timekeeper.currentLapStart.${sessionId}.${driver.id}`;
-        window.localStorage.removeItem(key);
-      } catch {
-        // ignore localStorage errors
-      }
-    });
-
+    // Server-side lap timers are cleared by reset_session command
     try {
       const didPersist = await persistSessionPatch({ command: 'reset_session', race_time_ms: 0 });
       if (!didPersist) return;
@@ -552,7 +554,7 @@ export default function ControlPanel() {
       console.error('Failed to reset session', error);
       setSessionError('Unable to reset session.');
     }
-  }, [canWrite, persistSessionPatch, pushControlEntry, drivers, sessionId]);
+  }, [canWrite, persistSessionPatch, pushControlEntry]);
 
   const finishRace = useCallback(async () => {
     if (!canWrite) return;
@@ -564,16 +566,7 @@ export default function ControlPanel() {
     const current = computeDisplayTime();
     tickingRef.current = false;
 
-    // Clear all driver lap timers
-    drivers.forEach((driver) => {
-      try {
-        const key = `timekeeper.currentLapStart.${sessionId}.${driver.id}`;
-        window.localStorage.removeItem(key);
-      } catch {
-        // ignore localStorage errors
-      }
-    });
-
+    // Server-side lap timers are cleared by finish_session command
     try {
       const didPersist = await persistSessionPatch({ command: 'finish_session', race_time_ms: current });
       if (!didPersist) return;
@@ -593,24 +586,9 @@ export default function ControlPanel() {
       console.error('Failed to finish race', error);
       setSessionError(error.message || 'Unable to finish race.');
     }
-  }, [canWrite, computeDisplayTime, isSupabaseConfigured, persistSessionPatch, pushControlEntry, drivers, sessionId, sessionState.eventType, supabase]);
+  }, [canWrite, computeDisplayTime, isSupabaseConfigured, persistSessionPatch, pushControlEntry, sessionId, sessionState.eventType, supabase]);
 
-  // SAFETY NET: Clear driver lap timers for REMOTE clients/observers
-  // When remote clients see procedurePhase change to 'setup' via realtime,
-  // they need their timers cleared. Local operator already cleared synchronously
-  // in resetTimer callback above.
-  useEffect(() => {
-    if (sessionState.procedurePhase === 'setup' && !sessionState.isTiming) {
-      drivers.forEach((driver) => {
-        try {
-          const key = `timekeeper.currentLapStart.${sessionId}.${driver.id}`;
-          window.localStorage.removeItem(key);
-        } catch {
-          // ignore localStorage errors
-        }
-      });
-    }
-  }, [sessionState.procedurePhase, sessionState.isTiming, drivers, sessionId]);
+  // Server-side lap timing automatically cleared on reset/finish via database
 
   // Periodic clock persistence for backward compatibility with LiveTimingBoard
   // The clock is now calculated from race_started_at and accumulated_pause_ms,
