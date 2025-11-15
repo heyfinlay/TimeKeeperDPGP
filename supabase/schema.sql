@@ -81,6 +81,90 @@ create trigger wallet_transactions_enforce_direction
   for each row
   execute function public.wallet_transactions_enforce_direction();
 
+create table if not exists public.market_wallets (
+  market_id uuid primary key references public.markets(id) on delete cascade,
+  balance bigint not null default 0,
+  updated_at timestamptz not null default timezone('utc', now()),
+  constraint market_wallets_balance_nonnegative check (balance >= 0)
+);
+
+create table if not exists public.market_wallet_transactions (
+  id uuid primary key default gen_random_uuid(),
+  market_id uuid not null references public.market_wallets(market_id) on delete cascade,
+  kind text not null,
+  amount bigint not null,
+  direction text not null check (direction in ('credit', 'debit')),
+  reference_type text,
+  reference_id uuid,
+  meta jsonb,
+  created_at timestamptz not null default timezone('utc', now())
+);
+
+create index if not exists market_wallet_transactions_market_idx
+  on public.market_wallet_transactions (market_id, created_at desc);
+
+create or replace function public.adjust_market_wallet(
+  p_market_id uuid,
+  p_amount bigint,
+  p_kind text,
+  p_direction text,
+  p_reference_type text default null,
+  p_reference_id uuid default null,
+  p_meta jsonb default null
+)
+returns void
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  v_effect bigint;
+  v_direction text := lower(coalesce(p_direction, ''));
+  v_kind text := lower(coalesce(nullif(trim(coalesce(p_kind, '')), ''), 'adjustment'));
+begin
+  if p_market_id is null then
+    raise exception 'market id is required';
+  end if;
+
+  if p_amount is null or p_amount <= 0 then
+    raise exception 'amount must be greater than zero';
+  end if;
+
+  if v_direction not in ('credit', 'debit') then
+    raise exception 'Invalid market wallet direction: %', p_direction;
+  end if;
+
+  v_effect := case when v_direction = 'credit' then p_amount else -p_amount end;
+
+  insert into public.market_wallets (market_id, balance, updated_at)
+  values (p_market_id, v_effect, timezone('utc', now()))
+  on conflict (market_id)
+  do update set
+    balance = public.market_wallets.balance + v_effect,
+    updated_at = excluded.updated_at;
+
+  insert into public.market_wallet_transactions (
+    market_id,
+    kind,
+    amount,
+    direction,
+    reference_type,
+    reference_id,
+    meta
+  ) values (
+    p_market_id,
+    v_kind,
+    v_effect,
+    v_direction,
+    p_reference_type,
+    p_reference_id,
+    coalesce(p_meta, '{}'::jsonb)
+  );
+end;
+$$;
+
+grant execute on function public.adjust_market_wallet(uuid, bigint, text, text, text, uuid, jsonb) to authenticated;
+
 create table if not exists public.wagers (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references auth.users(id) on delete cascade,
@@ -142,6 +226,9 @@ create unique index if not exists pending_settlements_unique_pending
   on public.pending_settlements (market_id)
   where status = 'pending';
 
+alter table if exists public.drivers
+  add column if not exists team_color text;
+
 drop view if exists public.pending_settlements_with_context;
 create view public.pending_settlements_with_context as
 select
@@ -169,13 +256,14 @@ select
   s.status as session_status,
   proposer.display_name as proposed_by_name,
   reviewer.display_name as reviewed_by_name,
-  (select count(*) from public.wagers w where w.market_id = m.id and w.status = 'pending') as total_wagers,
-  (select coalesce(sum(stake), 0) from public.wagers w where w.market_id = m.id) as total_pool,
+  (select count(*) from public.wagers w where w.market_id = m.id and w.status = 'accepted') as total_wagers,
+  (select coalesce(sum(stake), 0) from public.wagers w where w.market_id = m.id and w.status = 'accepted') as total_pool,
   (
     select coalesce(sum(stake), 0)
     from public.wagers w
     where w.market_id = m.id
       and w.outcome_id = o.id
+      and w.status = 'accepted'
   ) as winning_pool
 from public.pending_settlements ps
 join public.markets m on m.id = ps.market_id
@@ -203,6 +291,35 @@ create policy "Admins update pending settlements"
   on public.pending_settlements
   for update
   using (public.is_admin());
+
+alter table if exists public.market_wallets enable row level security;
+
+create policy "market_wallets_admin_read"
+  on public.market_wallets
+  for select
+  using (public.is_admin());
+
+create policy "market_wallets_admin_all"
+  on public.market_wallets
+  for all
+  using (public.is_admin())
+  with check (public.is_admin());
+
+alter table if exists public.market_wallet_transactions enable row level security;
+
+create policy "market_wallet_transactions_admin_read"
+  on public.market_wallet_transactions
+  for select
+  using (public.is_admin());
+
+create policy "market_wallet_transactions_admin_all"
+  on public.market_wallet_transactions
+  for all
+  using (public.is_admin())
+  with check (public.is_admin());
+
+grant select on public.market_wallets to authenticated;
+grant select on public.market_wallet_transactions to authenticated;
 
 alter table public.markets
   add constraint markets_takeout_check check (takeout >= 0 and takeout <= 0.25);
@@ -396,6 +513,10 @@ BEGIN
   )
   returning * into v_market;
 
+  insert into public.market_wallets (market_id, balance)
+  values (v_market.id, 0)
+  on conflict (market_id) do nothing;
+
   for v_outcome in
     select value, ordinality as idx
     from jsonb_array_elements(p_outcomes) with ordinality
@@ -456,6 +577,322 @@ $$;
 
 grant execute on function public.admin_create_market(uuid, text, jsonb, int, timestamptz, text, numeric, boolean) to authenticated;
 
+----------------------------
+-- preview_wager
+----------------------------
+create or replace function public.preview_wager(
+  p_market_id uuid,
+  p_outcome_id uuid,
+  p_stake bigint default 0,
+  p_sample_rate numeric default 1.0
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  v_market record;
+  v_total_pool numeric := 0;
+  v_outcome_pool numeric := 0;
+  v_net_pool numeric := 0;
+  v_baseline numeric;
+  v_effective numeric;
+  v_new_total numeric;
+  v_new_outcome numeric;
+  v_share_before numeric := 0;
+  v_share_after numeric := 0;
+  v_price_impact numeric := 0;
+  v_takeout numeric := 0;
+  v_balance bigint;
+  v_user uuid := auth.uid();
+begin
+  if p_stake < 0 then
+    raise exception 'Stake must be non-negative';
+  end if;
+
+  select id, status, takeout, requires_approval
+  into v_market
+  from public.markets
+  where id = p_market_id;
+
+  if v_market.id is null then
+    raise exception 'Market not found';
+  end if;
+
+  if v_market.status is distinct from 'open' then
+    raise exception 'Market is not accepting wagers';
+  end if;
+
+  v_takeout := coalesce(v_market.takeout, 0.10);
+
+  select
+    coalesce(sum(stake)::numeric, 0),
+    coalesce(sum(stake)::numeric filter (where outcome_id = p_outcome_id), 0)
+  into v_total_pool, v_outcome_pool
+  from public.wagers
+  where market_id = p_market_id
+    and status = 'accepted';
+
+  v_net_pool := v_total_pool * (1 - v_takeout);
+
+  if v_total_pool > 0 then
+    v_share_before := v_outcome_pool / v_total_pool;
+  end if;
+
+  if v_outcome_pool > 0 then
+    v_baseline := case when v_net_pool > 0 then v_net_pool / v_outcome_pool else null end;
+  else
+    v_baseline := null;
+  end if;
+
+  v_new_total := v_total_pool + p_stake;
+  v_new_outcome := v_outcome_pool + p_stake;
+
+  if v_new_total > 0 then
+    v_share_after := v_new_outcome / v_new_total;
+    v_price_impact := (v_share_after - v_share_before) * 100;
+  end if;
+
+  v_effective := case
+    when v_new_outcome > 0 then (v_new_total * (1 - v_takeout)) / v_new_outcome
+    else null
+  end;
+
+  if v_user is not null then
+    select balance into v_balance
+    from public.wallet_accounts
+    where user_id = v_user;
+  end if;
+
+  if p_stake > 0 then
+    perform public.log_quote_telemetry(
+      p_market_id,
+      p_outcome_id,
+      p_stake,
+      v_baseline,
+      v_effective,
+      v_price_impact,
+      coalesce(nullif(p_sample_rate, 0), 1.0)
+    );
+  end if;
+
+  return jsonb_build_object(
+    'marketId', p_market_id,
+    'outcomeId', p_outcome_id,
+    'stake', p_stake,
+    'takeout', v_takeout,
+    'requiresApproval', v_market.requires_approval,
+    'totalPoolBefore', v_total_pool,
+    'totalPoolAfter', v_new_total,
+    'outcomePoolBefore', v_outcome_pool,
+    'outcomePoolAfter', v_new_outcome,
+    'baselineOdds', v_baseline,
+    'effectiveOdds', v_effective,
+    'shareBefore', v_share_before,
+    'shareAfter', v_share_after,
+    'priceImpactPercent', v_price_impact,
+    'takeoutAmount', p_stake * v_takeout,
+    'impliedProbability', v_share_after,
+    'maxPayout', case when v_effective is null then null else p_stake * v_effective end,
+    'estimatedPayout', case when v_effective is null then null else p_stake * v_effective end,
+    'userBalance', v_balance
+  );
+end;
+$$;
+
+----------------------------
+-- place_wager (Betting V2)
+----------------------------
+create or replace function public.place_wager(
+  p_market_id uuid,
+  p_outcome_id uuid,
+  p_stake bigint,
+  p_idempotency_key text default null,
+  p_sample_rate numeric default 1.0
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  v_user_id uuid := auth.uid();
+  v_wallet_balance bigint;
+  v_market record;
+  v_outcome_exists boolean;
+  v_existing_wager uuid;
+  v_existing_balance bigint;
+  v_status public.wager_status := 'accepted';
+  v_baseline numeric;
+  v_effective numeric;
+  v_price_impact numeric;
+  v_preview jsonb;
+  v_wager_id uuid;
+begin
+  if v_user_id is null then
+    raise exception 'Authentication required';
+  end if;
+
+  if p_stake is null or p_stake <= 0 then
+    raise exception 'Stake must be positive';
+  end if;
+
+  if p_idempotency_key is not null then
+    select wager_id into v_existing_wager
+    from public.wager_idempotency
+    where idempotency_key = p_idempotency_key
+      and user_id = v_user_id;
+
+    if v_existing_wager is not null then
+      select balance into v_existing_balance
+      from public.wallet_accounts
+      where user_id = v_user_id;
+
+      return jsonb_build_object(
+        'success', true,
+        'idempotent', true,
+        'wagerId', v_existing_wager,
+        'newBalance', v_existing_balance
+      );
+    end if;
+  end if;
+
+  select id, status, takeout, requires_approval, closes_at
+  into v_market
+  from public.markets
+  where id = p_market_id
+  for update;
+
+  if v_market.id is null then
+    raise exception 'Market not found';
+  end if;
+
+  if v_market.status is distinct from 'open' then
+    raise exception 'Market is not accepting wagers';
+  end if;
+
+  if v_market.closes_at is not null and v_market.closes_at <= now() then
+    raise exception 'Market has closed';
+  end if;
+
+  select exists(
+    select 1
+    from public.outcomes
+    where id = p_outcome_id
+      and market_id = p_market_id
+  ) into v_outcome_exists;
+
+  if not v_outcome_exists then
+    raise exception 'Outcome does not belong to market';
+  end if;
+
+  select balance into v_wallet_balance
+  from public.wallet_accounts
+  where user_id = v_user_id
+  for update;
+
+  if v_wallet_balance is null then
+    insert into public.wallet_accounts (user_id, balance)
+    values (v_user_id, 0)
+    returning balance into v_wallet_balance;
+  end if;
+
+  if v_wallet_balance < p_stake then
+    raise exception 'Insufficient funds';
+  end if;
+
+  v_preview := public.preview_wager(p_market_id, p_outcome_id, p_stake, p_sample_rate);
+  v_baseline := (v_preview->>'baselineOdds')::numeric;
+  v_effective := (v_preview->>'effectiveOdds')::numeric;
+  v_price_impact := (v_preview->>'priceImpactPercent')::numeric;
+
+  update public.wallet_accounts
+  set balance = balance - p_stake,
+      updated_at = timezone('utc', now())
+  where user_id = v_user_id;
+
+  if v_market.requires_approval then
+    v_status := 'pending';
+  end if;
+
+  insert into public.wagers (
+    user_id,
+    market_id,
+    outcome_id,
+    stake,
+    status,
+    odds_before,
+    odds_after,
+    price_impact_pp
+  )
+  values (
+    v_user_id,
+    p_market_id,
+    p_outcome_id,
+    p_stake,
+    v_status,
+    v_baseline,
+    v_effective,
+    v_price_impact
+  )
+  returning id into v_wager_id;
+
+  insert into public.wallet_transactions (
+    user_id,
+    kind,
+    amount,
+    direction,
+    reference_type,
+    reference_id,
+    meta
+  )
+  values (
+    v_user_id,
+    'wager',
+    -p_stake,
+    'debit',
+    'wager',
+    v_wager_id,
+    jsonb_build_object(
+      'market_id', p_market_id,
+      'outcome_id', p_outcome_id,
+      'idempotency_key', p_idempotency_key
+    )
+  );
+
+  perform public.adjust_market_wallet(
+    p_market_id,
+    p_stake,
+    'wager_in',
+    'credit',
+    'wager',
+    v_wager_id,
+    jsonb_build_object(
+      'user_id', v_user_id,
+      'outcome_id', p_outcome_id,
+      'status', v_status
+    )
+  );
+
+  if p_idempotency_key is not null then
+    insert into public.wager_idempotency (idempotency_key, user_id, wager_id)
+    values (p_idempotency_key, v_user_id, v_wager_id)
+    on conflict (idempotency_key, user_id) do nothing;
+  end if;
+
+  return jsonb_build_object(
+    'success', true,
+    'idempotent', false,
+    'wagerId', v_wager_id,
+    'status', v_status,
+    'requiresApproval', v_market.requires_approval,
+    'newBalance', (v_wallet_balance - p_stake),
+    'preview', v_preview
+  );
+end;
+$$;
+
 -- Tote v2 historical snapshots and quote telemetry
 create table if not exists public.pool_snapshots (
   id uuid primary key default gen_random_uuid(),
@@ -491,9 +928,9 @@ create unique index if not exists pool_snapshots_1m_unique
 create or replace view public.market_pools as
 select
   m.id as market_id,
-  coalesce(sum(case when w.status = 'pending' then w.stake else 0 end), 0)::numeric as total_pool,
-  count(*) filter (where w.status = 'pending')::bigint as total_wagers,
-  count(distinct w.user_id) filter (where w.status = 'pending')::bigint as unique_bettors,
+  coalesce(sum(case when w.status = 'accepted' then w.stake else 0 end), 0)::numeric as total_pool,
+  count(*) filter (where w.status = 'accepted')::bigint as total_wagers,
+  count(distinct w.user_id) filter (where w.status = 'accepted')::bigint as unique_bettors,
   m.takeout
 from public.markets m
 left join public.wagers w on w.market_id = m.id
@@ -504,8 +941,8 @@ create or replace view public.outcome_pools as
 select
   o.id as outcome_id,
   o.market_id,
-  coalesce(sum(case when w.status = 'pending' then w.stake else 0 end), 0)::numeric as total_staked,
-  count(*) filter (where w.status = 'pending')::bigint as wager_count
+  coalesce(sum(case when w.status = 'accepted' then w.stake else 0 end), 0)::numeric as total_staked,
+  count(*) filter (where w.status = 'accepted')::bigint as wager_count
 from public.outcomes o
 left join public.wagers w on w.outcome_id = o.id
 where o.market_id is not null
@@ -533,12 +970,12 @@ declare
   v_inserted integer := 0;
 begin
   with market_totals as (
-    select market_id, sum(case when status = 'pending' then stake else 0 end)::numeric as total_pool
+    select market_id, sum(case when status = 'accepted' then stake else 0 end)::numeric as total_pool
     from public.wagers
     group by market_id
   ),
   outcome_totals as (
-    select outcome_id, sum(case when status = 'pending' then stake else 0 end)::numeric as outcome_pool
+    select outcome_id, sum(case when status = 'accepted' then stake else 0 end)::numeric as outcome_pool
     from public.wagers
     group by outcome_id
   ),
@@ -592,7 +1029,7 @@ begin
     raise exception 'Market not found';
   end if;
 
-  select coalesce(sum(case when status = 'pending' then stake else 0 end), 0)::numeric
+  select coalesce(sum(case when status = 'accepted' then stake else 0 end), 0)::numeric
   into v_total
   from public.wagers
   where market_id = p_market_id;
@@ -602,8 +1039,8 @@ begin
       'outcomeId', o.id,
       'label', o.label,
       'sortOrder', o.sort_order,
-      'pool', coalesce(sum(case when w.status = 'pending' then w.stake else 0 end), 0)::numeric,
-      'wagerCount', count(*) filter (where w.status = 'pending')::bigint
+      'pool', coalesce(sum(case when w.status = 'accepted' then w.stake else 0 end), 0)::numeric,
+      'wagerCount', count(*) filter (where w.status = 'accepted')::bigint
     )
     order by o.sort_order, o.label
   ), '[]'::jsonb)
@@ -685,8 +1122,8 @@ begin
     select
       o.id as outcome_id,
       o.label,
-      coalesce(sum(case when w.status = 'pending' then w.stake else 0 end), 0)::numeric as outcome_pool,
-      count(*) filter (where w.status = 'pending')::bigint as wager_count,
+      coalesce(sum(case when w.status = 'accepted' then w.stake else 0 end), 0)::numeric as outcome_pool,
+      count(*) filter (where w.status = 'accepted')::bigint as wager_count,
       o.sort_order
     from public.outcomes o
     left join public.wagers w on w.outcome_id = o.id
@@ -846,12 +1283,12 @@ begin
 
   v_takeout := coalesce(v_market.takeout, 0.10);
 
-  select coalesce(sum(case when status = 'pending' then stake else 0 end), 0)::numeric
+  select coalesce(sum(case when status = 'accepted' then stake else 0 end), 0)::numeric
   into v_total
   from public.wagers
   where market_id = p_market_id;
 
-  select coalesce(sum(case when status = 'pending' then stake else 0 end), 0)::numeric
+  select coalesce(sum(case when status = 'accepted' then stake else 0 end), 0)::numeric
   into v_runner
   from public.wagers
   where outcome_id = p_outcome_id;
@@ -1012,7 +1449,7 @@ begin
   perform 1
     from public.wagers
     where market_id = p_market_id
-      and status = 'pending'
+      and status = 'accepted'
     for update;
 
   select
@@ -1021,7 +1458,7 @@ begin
   into v_total_pool, v_winning_pool
   from public.wagers
   where market_id = p_market_id
-    and status = 'pending';
+    and status = 'accepted';
 
   if v_total_pool = 0 then
     update public.markets set status = 'settled' where id = p_market_id;
@@ -1041,7 +1478,7 @@ begin
       for v_wager in
         select id, user_id, stake
         from public.wagers
-        where market_id = p_market_id and status = 'pending'
+        where market_id = p_market_id and status = 'accepted'
       loop
         insert into public.wallet_accounts (user_id, balance)
         values (v_wager.user_id, v_wager.stake)
@@ -1057,6 +1494,16 @@ begin
           jsonb_build_object('market_id', p_market_id, 'wager_id', v_wager.id, 'reason', 'no_winners')
         );
 
+        perform public.adjust_market_wallet(
+          p_market_id,
+          v_wager.stake,
+          'wager_refund',
+          'debit',
+          'wager',
+          v_wager.id,
+          jsonb_build_object('reason', 'no_winners')
+        );
+
         update public.wagers set status = 'refunded' where id = v_wager.id;
       end loop;
 
@@ -1069,8 +1516,17 @@ begin
         'takeout', v_takeout
       );
     else
-      update public.wagers set status = 'lost' where market_id = p_market_id and status = 'pending';
+      update public.wagers set status = 'lost' where market_id = p_market_id and status = 'accepted';
       update public.markets set status = 'settled' where id = p_market_id;
+      perform public.adjust_market_wallet(
+        p_market_id,
+        v_total_pool,
+        'takeout',
+        'debit',
+        'market',
+        p_market_id,
+        jsonb_build_object('reason', 'house_wins_no_winners')
+      );
       return jsonb_build_object(
         'success', true,
         'message', 'House wins (no winning wagers)',
@@ -1089,7 +1545,7 @@ begin
     from public.wagers
     where market_id = p_market_id
       and outcome_id = p_winning_outcome_id
-      and status = 'pending'
+      and status = 'accepted'
     order by placed_at asc
   loop
     v_payout := floor((v_wager.stake::numeric / v_winning_pool::numeric) * v_net_pool);
@@ -1112,6 +1568,16 @@ begin
       )
     );
 
+    perform public.adjust_market_wallet(
+      p_market_id,
+      v_payout,
+      'payout',
+      'debit',
+      'wager',
+      v_wager.id,
+      jsonb_build_object('outcome_id', p_winning_outcome_id)
+    );
+
     update public.wagers set status = 'won' where id = v_wager.id;
 
     v_total_paid := v_total_paid + v_payout;
@@ -1120,11 +1586,35 @@ begin
 
   v_dust := v_net_pool - v_total_paid;
 
+  if v_rake_amount > 0 then
+    perform public.adjust_market_wallet(
+      p_market_id,
+      v_rake_amount,
+      'takeout',
+      'debit',
+      'market',
+      p_market_id,
+      jsonb_build_object('reason', 'rake')
+    );
+  end if;
+
+  if v_dust > 0 then
+    perform public.adjust_market_wallet(
+      p_market_id,
+      v_dust,
+      'adjustment',
+      'debit',
+      'market',
+      p_market_id,
+      jsonb_build_object('reason', 'rounding_dust')
+    );
+  end if;
+
   update public.wagers
   set status = 'lost'
   where market_id = p_market_id
     and outcome_id != p_winning_outcome_id
-    and status = 'pending';
+    and status = 'accepted';
 
   update public.markets set status = 'settled' where id = p_market_id;
 
@@ -1553,24 +2043,64 @@ security definer
 set search_path = public, pg_temp
 as $$
 declare
-  v_status text;
+  v_wager record;
 begin
   if not public.is_admin() then
     raise exception 'Admin access required';
   end if;
 
-  select status into v_status
-  from public.wagers
-  where id = p_wager_id
+  select w.*
+    into v_wager
+  from public.wagers w
+  where w.id = p_wager_id
   for update;
 
-  if v_status is null then
+  if v_wager.id is null then
     raise exception 'Wager not found';
   end if;
 
-  if v_status <> 'pending' then
+  if v_wager.status <> 'pending' then
     raise exception 'Wager is not pending approval';
   end if;
+
+  insert into public.wallet_accounts (user_id, balance)
+  values (v_wager.user_id, v_wager.stake)
+  on conflict (user_id)
+  do update set balance = public.wallet_accounts.balance + v_wager.stake,
+               updated_at = timezone('utc', now());
+
+  insert into public.wallet_transactions (
+    user_id,
+    kind,
+    amount,
+    direction,
+    reference_type,
+    reference_id,
+    meta
+  )
+  values (
+    v_wager.user_id,
+    'wager_refund',
+    v_wager.stake,
+    'credit',
+    'wager',
+    p_wager_id,
+    jsonb_build_object(
+      'market_id', v_wager.market_id,
+      'outcome_id', v_wager.outcome_id,
+      'reason', coalesce(nullif(p_reason, ''), 'rejected')
+    )
+  );
+
+  perform public.adjust_market_wallet(
+    v_wager.market_id,
+    v_wager.stake,
+    'wager_refund',
+    'debit',
+    'wager',
+    p_wager_id,
+    jsonb_build_object('reason', coalesce(nullif(p_reason, ''), 'rejected'))
+  );
 
   update public.wagers
   set status = 'rejected',
@@ -1582,7 +2112,8 @@ begin
   return jsonb_build_object(
     'success', true,
     'wagerId', p_wager_id,
-    'status', 'rejected'
+    'status', 'rejected',
+    'refunded', v_wager.stake
   );
 end;
 $$;
@@ -1868,6 +2399,112 @@ grant execute on function public.update_session_state_atomic(jsonb, uuid) to aut
 comment on function public.update_session_state_atomic(uuid, jsonb) is 'Atomic session_state mutation for race control (session-first signature).';
 comment on function public.update_session_state_atomic(jsonb, uuid) is 'Atomic session_state mutation for race control (patch-first overload for Supabase rpc).';
 
+----------------------------
+-- create_session_atomic
+----------------------------
+create or replace function public.create_session_atomic(p_session jsonb)
+returns uuid
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  v_session_id uuid;
+  v_creator_id uuid := auth.uid();
+  v_driver record;
+  v_event_type text;
+  v_total_laps integer;
+  v_total_duration integer;
+begin
+  if v_creator_id is null then
+    raise exception 'auth.uid() is required to create a session';
+  end if;
+
+  insert into public.sessions (name, status, starts_at, created_by)
+  values (
+    coalesce(nullif(trim(p_session->>'name'), ''), 'Session'),
+    coalesce(nullif(trim(p_session->>'status'), ''), 'draft'),
+    nullif(p_session->>'starts_at', '')::timestamptz,
+    v_creator_id
+  )
+  returning id into v_session_id;
+
+  insert into public.session_members (session_id, user_id, role)
+  values (v_session_id, v_creator_id, 'owner'::session_member_role)
+  on conflict (session_id, user_id)
+  do update set role = excluded.role, inserted_at = timezone('utc', now());
+
+  insert into public.session_members (session_id, user_id, role)
+  select v_session_id,
+         (member->>'user_id')::uuid,
+         coalesce(nullif(member->>'role', ''), 'marshal')::session_member_role
+  from jsonb_array_elements(coalesce(p_session->'members', '[]'::jsonb)) as member
+  where nullif(member->>'user_id', '') is not null
+  on conflict (session_id, user_id)
+  do update set role = excluded.role, inserted_at = timezone('utc', now());
+
+  v_event_type := coalesce(nullif(trim(p_session->>'event_type'), ''), 'race');
+  v_total_laps := coalesce((p_session->>'total_laps')::integer, 50);
+  v_total_duration := coalesce((p_session->>'total_duration')::integer, 60);
+
+  if exists (
+    select 1 from information_schema.tables where table_schema = 'public' and table_name = 'session_state'
+  ) then
+    insert into public.session_state (id, session_id, event_type, total_laps, total_duration)
+    values (v_session_id, v_session_id, v_event_type, v_total_laps, v_total_duration)
+    on conflict (session_id)
+    do update set
+      event_type = excluded.event_type,
+      total_laps = excluded.total_laps,
+      total_duration = excluded.total_duration;
+  end if;
+
+  if jsonb_typeof(p_session->'drivers') = 'array' then
+    for v_driver in
+      select
+        coalesce((driver->>'id')::uuid, gen_random_uuid()) as id,
+        (driver->>'number')::integer as number,
+        coalesce(nullif(trim(driver->>'name'), ''), 'Driver') as name,
+        nullif(trim(driver->>'team'), '') as team,
+        coalesce(
+          nullif(trim(driver->>'team_color'), ''),
+          nullif(trim(driver->>'teamColor'), ''),
+          nullif(trim(driver->>'team_colour'), ''),
+          nullif(trim(driver->>'teamColour'), ''),
+          nullif(trim(driver->>'color'), '')
+        ) as team_color
+      from jsonb_array_elements(p_session->'drivers') as driver
+    loop
+      if exists (
+        select 1 from information_schema.tables where table_schema = 'public' and table_name = 'drivers'
+      ) then
+        insert into public.drivers (
+          id, session_id, number, name, team, team_color,
+          laps, last_lap_ms, best_lap_ms, pits,
+          status, driver_flag, pit_complete, total_time_ms
+        )
+        values (
+          v_driver.id, v_session_id, v_driver.number, v_driver.name, v_driver.team, v_driver.team_color,
+          0, null, null, 0,
+          'ready', 'none', false, 0
+        )
+        on conflict (id)
+        do update set
+          session_id = excluded.session_id,
+          number = excluded.number,
+          name = excluded.name,
+          team = excluded.team,
+          team_color = excluded.team_color;
+      end if;
+    end loop;
+  end if;
+
+  return v_session_id;
+end;
+$$;
+
+grant execute on function public.create_session_atomic(jsonb) to authenticated, service_role;
+
 -- Ensure a profile exists for the authenticated user without needing direct INSERTs
 create or replace function public.ensure_profile_for_current_user(
   display_name text default null,
@@ -1891,27 +2528,29 @@ begin
   from public.profiles
   where id = v_user_id;
 
-  if found then
-    return v_profile;
+  if not found then
+    v_display_name := nullif(trim(coalesce(display_name, '')), '');
+    if v_display_name is null then
+      v_display_name := 'Marshal';
+    end if;
+
+    v_role := lower(coalesce(role_hint, 'marshal'));
+    if v_role not in ('spectator', 'driver', 'marshal', 'admin') then
+      v_role := 'marshal';
+    end if;
+
+    if v_role = 'admin' and not public.is_admin() then
+      v_role := 'marshal';
+    end if;
+
+    insert into public.profiles (id, role, display_name)
+    values (v_user_id, v_role, v_display_name)
+    returning * into v_profile;
   end if;
 
-  v_display_name := nullif(trim(coalesce(display_name, '')), '');
-  if v_display_name is null then
-    v_display_name := 'Marshal';
-  end if;
-
-  v_role := lower(coalesce(role_hint, 'marshal'));
-  if v_role not in ('spectator', 'driver', 'marshal', 'admin') then
-    v_role := 'marshal';
-  end if;
-
-  if v_role = 'admin' and not public.is_admin() then
-    v_role := 'marshal';
-  end if;
-
-  insert into public.profiles (id, role, display_name)
-  values (v_user_id, v_role, v_display_name)
-  returning * into v_profile;
+  insert into public.wallet_accounts (user_id, balance)
+  values (v_user_id, 0)
+  on conflict (user_id) do nothing;
 
   return v_profile;
 end;

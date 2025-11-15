@@ -3,7 +3,7 @@ import { useSessionContext, useSessionId } from '@/state/SessionContext.jsx';
 import { isSupabaseConfigured, subscribeToTable, supabase } from '@/lib/supabaseClient.js';
 
 const DRIVERS_SELECT_COLUMNS =
-  'id, number, name, team, laps, last_lap_ms, best_lap_ms, pits, total_time_ms, marshal_user_id, status, driver_flag, pit_complete';
+  'id, number, name, team, laps, last_lap_ms, best_lap_ms, pits, total_time_ms, marshal_user_id, status, driver_flag, pit_complete, current_lap_started_at';
 
 export function useSessionDrivers({ onlyMine = false, userId } = {}) {
   const sessionId = useSessionId();
