@@ -29,7 +29,7 @@ const statHighlights = [
 ];
 
 const WelcomePage = () => {
-  const { signInWithDiscord, status, isSupabaseConfigured } = useAuth();
+  const { status } = useAuth();
 
   const isAuthenticated = status === 'authenticated';
   const isCheckingAuth = status === 'loading';
@@ -42,20 +42,27 @@ const WelcomePage = () => {
   const legalDisclaimer =
     'All wagers settled in Diamonds (in-game currency). Parody product; no real-world stakes.';
 
-  const handleSignIn = () => {
+  const handleSignIn = async () => {
     if (isAuthenticated) {
       return;
     }
 
-    if (isSupabaseConfigured && typeof signInWithDiscord === 'function') {
-      signInWithDiscord().catch((error) => {
-        console.error('Supabase Discord sign-in failed. Redirecting to Discord OAuth.', error);
-        window.location.href = FALLBACK_DISCORD_AUTH_URL;
-      });
+    if (!supabase) {
+      console.error('Supabase is not configured. Unable to initiate Discord sign-in.');
       return;
     }
 
-    window.location.href = FALLBACK_DISCORD_AUTH_URL;
+    try {
+      await supabase.auth.signInWithOAuth({
+        provider: 'discord',
+        options: {
+          scopes: 'identify email guilds',
+          redirectTo: 'https://time-keeper-dpgp.vercel.app/auth/callback',
+        },
+      });
+    } catch (error) {
+      console.error('Supabase Discord sign-in failed.', error);
+    }
   };
 
   return (
